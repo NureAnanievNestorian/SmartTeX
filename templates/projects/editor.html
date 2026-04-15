@@ -1,0 +1,1281 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }} — SmartTeX{% endblock %}
+{% block head %}
+<style>
+  main.wrap { max-width: none; padding: 0; }
+
+  :root {
+    --e-bg:      #08101e;
+    --e-surface: #0c1525;
+    --e-raised:  #111e30;
+    --e-soft:    #162437;
+    --e-border:  #1b2b40;
+    --e-text:    #e6eeff;
+    --e-text2:   #b0c4e0;
+    --e-muted:   #566f8a;
+    --e-accent:  #22c55e;
+    --e-blue:    #3b82f6;
+    --e-danger:  #ef4444;
+    --e-warn:    #f59e0b;
+  }
+
+  .editor-shell {
+    height: calc(100vh - 56px); display: flex; flex-direction: column;
+    overflow: hidden; background: var(--e-bg); color: var(--e-text);
+  }
+
+  /* ── Topbar ─────────────────────────────────────────── */
+  .e-topbar {
+    height: 50px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; gap: 12px;
+    background: #060e1b; border-bottom: 1px solid var(--e-border);
+  }
+  .e-title-group { display: flex; align-items: center; gap: 10px; }
+  .e-proj-name { font-weight: 700; font-size: 16px; }
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 999px; font-size: 11px;
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    background: rgba(148,163,184,.15); border: 1px solid rgba(148,163,184,.3); color: #94a3b8;
+  }
+  .status-chip.success { color: #4ade80; border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.1); }
+  .status-chip.error   { color: #f87171; border-color: rgba(248,113,113,.4); background: rgba(248,113,113,.1); }
+  .status-chip.pending { color: #fde68a; border-color: rgba(253,230,138,.4); background: rgba(253,230,138,.1); }
+  .e-actions { display: flex; gap: 6px; align-items: center; }
+  .e-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--e-border); background: var(--e-raised); color: var(--e-text2);
+    border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: border-color .12s, background .12s, color .12s; text-decoration: none;
+    white-space: nowrap;
+  }
+  .e-btn:hover { border-color: #3a5a80; background: var(--e-soft); color: var(--e-text); }
+  .e-btn.primary { background: linear-gradient(120deg,#22c55e,#16a34a); border-color: transparent; color: #062010; }
+  .e-btn.primary:hover { background: linear-gradient(120deg,#16a34a,#0e8a36); }
+
+  /* ── 3-column grid ─────────────────────────────────── */
+  .e-body {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: 256px 1fr 420px;
+    overflow: hidden;
+  }
+  @media (max-width: 1200px) { .e-body { grid-template-columns: 230px 1fr 360px; } }
+
+  /* ── Left panel ────────────────────────────────────── */
+  .e-left {
+    display: flex; flex-direction: column;
+    border-right: 1px solid var(--e-border);
+    background: #070e1b; overflow: hidden;
+  }
+  .e-tabs {
+    display: grid; grid-template-columns: 1fr 1fr; flex-shrink: 0;
+    border-bottom: 1px solid var(--e-border);
+  }
+  .e-tab {
+    padding: 9px 0; font-size: 11px; font-weight: 700; text-align: center;
+    text-transform: uppercase; letter-spacing: 0.5px; color: var(--e-muted);
+    background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer;
+    transition: color .12s;
+  }
+  .e-tab.active { color: var(--e-text); border-bottom-color: var(--e-accent); }
+  .e-tabpanel { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
+  .e-tabpanel.active { display: flex; }
+
+  .e-sec-head {
+    padding: 7px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--e-muted); border-bottom: 1px solid var(--e-border);
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+  }
+  .e-sec-btn {
+    padding: 3px 8px; font-size: 12px; font-weight: 600; border-radius: 6px;
+    border: 1px solid var(--e-border); background: var(--e-raised);
+    color: var(--e-muted); cursor: pointer; line-height: 1;
+  }
+  .e-sec-btn:hover { color: var(--e-text); border-color: #3a5a80; }
+
+  /* File list */
+  .e-file-list {
+    list-style: none; margin: 0; padding: 5px; display: grid; gap: 2px;
+    flex: 1; overflow-y: auto;
+  }
+  .e-file-btn {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    gap: 6px; padding: 6px 8px; background: transparent;
+    border: 1px solid transparent; border-radius: 6px; color: var(--e-text2);
+    font-size: 12px; cursor: pointer; text-align: left;
+    transition: background .1s, border-color .1s;
+  }
+  .e-file-btn:hover { background: var(--e-raised); border-color: var(--e-border); }
+  .e-file-btn.active { background: #0d2218; border-color: #1a5436; color: #ceffd8; }
+  .e-file-sz { font-size: 11px; color: var(--e-muted); flex-shrink: 0; }
+
+  /* History tab */
+  .e-history { flex: 1; overflow-y: auto; padding: 5px; display: flex; flex-direction: column; gap: 3px; }
+  .e-ver-item {
+    border: 1px solid var(--e-border); border-radius: 8px; background: var(--e-surface);
+    overflow: hidden; transition: border-color .1s; flex-shrink: 0;
+  }
+  .e-ver-item:hover { border-color: #3a5a80; }
+  .e-ver-item.active { border-color: var(--e-accent); }
+  .e-ver-item.is-loading { opacity: .72; }
+  .e-ver-head {
+    padding: 8px 10px; display: flex; justify-content: space-between;
+    align-items: flex-start; gap: 6px; cursor: pointer;
+  }
+  .e-ver-left { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .e-ver-row1 { display: flex; align-items: center; gap: 5px; }
+  .e-ver-num { font-size: 11px; font-weight: 700; color: var(--e-muted); flex-shrink: 0; }
+  .e-ver-op {
+    font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; flex-shrink: 0;
+    background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.25); color: #7ab4f0;
+    max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .e-ver-summary { font-size: 12px; color: var(--e-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .e-ver-date { font-size: 11px; color: var(--e-muted); flex-shrink: 0; white-space: nowrap; }
+
+  /* Diff area */
+  .e-diff-scroll {
+    max-height: min(70vh, 680px); overflow-y: auto; overflow-x: auto;
+    padding: 8px 10px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px; line-height: 1.45;
+  }
+  .diff-empty {
+    color: var(--e-muted);
+    font-style: italic;
+    display: block;
+    padding: 4px 0;
+  }
+  .diff-summary {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+    color: #8fa8c5;
+    font-size: 11px;
+  }
+  .diff-chip {
+    border: 1px solid var(--e-border);
+    border-radius: 6px;
+    padding: 1px 6px;
+    background: #0b1426;
+  }
+  .diff-chip.add { color: #4ade80; border-color: rgba(34, 197, 94, .35); }
+  .diff-chip.del { color: #f87171; border-color: rgba(248, 113, 113, .35); }
+  .diff-table {
+    border: 1px solid var(--e-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #070f1d;
+  }
+  .diff-row {
+    display: grid;
+    grid-template-columns: 18px 44px 44px minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .diff-row + .diff-row { border-top: 1px solid rgba(40, 60, 90, 0.35); }
+  .diff-meta, .diff-hunk {
+    display: block;
+    padding: 3px 8px;
+    color: #7b93af;
+    background: #081326;
+    border-bottom: 1px solid rgba(40, 60, 90, 0.35);
+  }
+  .diff-hunk {
+    color: #5eaabb;
+    font-weight: 700;
+    background: #07192c;
+  }
+  .diff-sign, .diff-ln, .diff-code {
+    display: block;
+    padding: 2px 8px;
+    white-space: pre;
+  }
+  .diff-sign {
+    text-align: center;
+    color: #6882a5;
+    border-right: 1px solid rgba(40, 60, 90, 0.35);
+  }
+  .diff-ln {
+    text-align: right;
+    color: #6882a5;
+    border-right: 1px solid rgba(40, 60, 90, 0.35);
+  }
+  .diff-code {
+    overflow-x: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    color: #b4c7df;
+  }
+  .diff-row.ctx-empty {
+    background: transparent;
+  }
+  .diff-row.ctx-empty .diff-sign,
+  .diff-row.ctx-empty .diff-ln,
+  .diff-row.ctx-empty .diff-code {
+    color: #415a78;
+  }
+  .diff-row.add { background: rgba(34, 197, 94, .12); }
+  .diff-row.add .diff-sign,
+  .diff-row.add .diff-code { color: #4ade80; }
+  .diff-row.del { background: rgba(248, 113, 113, .12); }
+  .diff-row.del .diff-sign,
+  .diff-row.del .diff-code { color: #f87171; }
+  .diff-row.ctx { background: transparent; }
+  .diff-row.ctx .diff-sign { color: #4f6685; }
+  .e-diff-footer {
+    padding: 8px 10px 10px; display: flex; justify-content: flex-end;
+    border-top: 1px solid var(--e-border);
+  }
+  .e-rollback {
+    padding: 5px 11px; font-size: 12px; font-weight: 600; border-radius: 7px;
+    background: var(--e-raised); border: 1px solid var(--e-border); color: var(--e-text2); cursor: pointer;
+    transition: border-color .1s, color .1s, background .1s;
+  }
+  .e-rollback:hover { border-color: var(--e-danger); color: #f87171; background: rgba(239,68,68,.08); }
+  .e-empty-msg { padding: 20px; color: var(--e-muted); font-size: 12px; text-align: center; }
+
+  /* Diff modal */
+  .diff-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    background: rgba(0, 0, 0, .72);
+    backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .diff-modal-overlay.open { display: flex; }
+  .diff-modal {
+    width: min(980px, 96vw);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    background: #081325;
+    border: 1px solid #244064;
+    border-radius: 14px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.62);
+    overflow: hidden;
+  }
+  .diff-modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--e-border);
+    background: #071122;
+  }
+  .diff-modal-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .diff-modal-title strong { font-size: 13px; }
+  .diff-modal-meta { color: var(--e-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .diff-truncate-note {
+    margin: 0 0 8px;
+    padding: 7px 9px;
+    border: 1px solid rgba(59,130,246,.35);
+    background: rgba(59,130,246,.08);
+    color: #9ac3f8;
+    border-radius: 8px;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .diff-expand-btn {
+    border: 1px solid rgba(59,130,246,.35);
+    background: #0b1b33;
+    color: #b9d7ff;
+    border-radius: 7px;
+    font-size: 11px;
+    padding: 4px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .diff-expand-btn:hover { border-color: rgba(96,165,250,.6); color: #dcecff; }
+  .diff-modal-close {
+    border: 1px solid var(--e-border);
+    background: var(--e-raised);
+    color: var(--e-text2);
+    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .diff-modal-close:hover { color: #fff; border-color: #3a5a80; }
+  .diff-modal-body { padding: 10px 12px 0; min-height: 0; }
+  .diff-modal-footer {
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--e-border);
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* Outline (bottom of left panel, always visible) */
+  .e-outline-wrap {
+    flex-shrink: 0; border-top: 1px solid var(--e-border);
+  }
+  .e-outline {
+    list-style: none; margin: 0; padding: 4px 6px;
+    max-height: 210px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .e-outline-btn {
+    width: 100%; border: 0; background: transparent;
+    text-align: left; padding: 4px 6px; cursor: pointer;
+    font-size: 12px; line-height: 1.35;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    border-radius: 5px; transition: background .1s;
+    display: block;
+  }
+  .e-outline-btn:hover { background: var(--e-raised); }
+  /* Level styles */
+  .e-ol-0 { color: #e0eaff; font-weight: 700; font-size: 12px; }
+  .e-ol-2 { color: #c8dcf8; font-weight: 600; border-left: 2px solid #3b5a8a; padding-left: 8px; }
+  .e-ol-3 { color: #a8c4e8; padding-left: 18px; border-left: 2px solid #2a4060; }
+  .e-ol-4 { color: #88a8c8; font-size: 11px; padding-left: 28px; border-left: 2px solid #1e3050; }
+  .e-ol-5, .e-ol-6 { color: #6890a8; font-size: 11px; padding-left: 36px; }
+
+  /* ── Center panel ───────────────────────────────────── */
+  .e-center { display: flex; flex-direction: column; background: #090f1d; overflow: hidden; position: relative; }
+  .e-editor-bar {
+    height: 38px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    border-bottom: 1px solid var(--e-border); background: #06101d;
+  }
+  .e-file-label { font-weight: 700; font-size: 13px; color: var(--e-text); }
+  .e-save-hint { margin-left: auto; font-size: 11px; color: var(--e-muted); }
+  .e-save-hint.saving { color: var(--e-warn); }
+  .e-save-hint.saved  { color: var(--e-accent); }
+  .e-save-hint.error  { color: var(--e-danger); }
+
+  /* Syntax highlight overlay */
+  .e-editor-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  #editor-hl {
+    position: absolute; inset: 0; z-index: 0; margin: 0;
+    pointer-events: none; user-select: none;
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 14px; line-height: 1.65; padding: 14px 18px;
+    background: #07101e; border: 0; overflow: hidden;
+    white-space: pre; word-break: normal; overflow-wrap: normal;
+    tab-size: 2; color: transparent;
+  }
+  #editor {
+    position: absolute; inset: 0; z-index: 1;
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 14px; line-height: 1.65; padding: 14px 18px;
+    background: transparent; color: transparent; caret-color: #e6eeff;
+    border: 0; resize: none; outline: none;
+    overflow-y: auto; overflow-x: auto;
+    white-space: pre; tab-size: 2;
+  }
+  #editor::selection { background: rgba(59,130,246,.3); }
+  /* Highlight token colors */
+  .hl-cmd     { color: #c084fc; }
+  .hl-comment { color: #6a94b8; font-style: italic; }
+  .hl-math    { color: #86efac; }
+  .hl-brace   { color: #fbbf24; }
+  .hl-bracket { color: #c89b3c; }
+  .hl-num     { color: #fb923c; }
+  .hl-text    { color: #d0dff4; }
+
+  /* Drag & drop overlay */
+  .e-drop-overlay {
+    display: none; position: absolute; inset: 0; z-index: 20;
+    background: rgba(34,197,94,.08);
+    border: 2px dashed var(--e-accent);
+    border-radius: 8px;
+    align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 700; color: var(--e-accent);
+    pointer-events: none;
+  }
+  .e-center.drag-active .e-drop-overlay { display: flex; }
+
+  .e-asset-view { display: none; flex: 1; padding: 12px; overflow: auto; min-height: 0; }
+  .e-asset-box {
+    background: #060e1c; border: 1px solid var(--e-border); border-radius: 8px;
+    padding: 12px; color: #c8deff; height: 100%; overflow: auto; white-space: pre-wrap;
+    font-family: "JetBrains Mono", monospace; font-size: 13px;
+  }
+  .e-asset-img { max-width: 100%; border-radius: 8px; display: block; }
+
+  .e-log-panel { border-top: 1px solid var(--e-border); flex-shrink: 0; }
+  .e-log-toggle {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    padding: 5px 14px; background: #06101d; border: 0; cursor: pointer;
+    color: var(--e-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .e-log-toggle:hover { color: var(--e-text2); }
+  .e-log-toggle .arr { transition: transform .15s; display: inline-block; }
+  .e-log-toggle.open .arr { transform: rotate(180deg); }
+  #log {
+    display: none; max-height: 120px; overflow-y: auto;
+    background: #04090f; color: #8fb4e0; padding: 8px 14px;
+    font-family: "JetBrains Mono", monospace; font-size: 12px; line-height: 1.5;
+    border-top: 1px solid var(--e-border); margin: 0; white-space: pre-wrap;
+  }
+  #log.open { display: block; }
+
+  /* ── PDF panel ─────────────────────────────────────── */
+  .e-pdf {
+    display: flex; flex-direction: column;
+    border-left: 1px solid var(--e-border); background: #07101e; overflow: hidden;
+  }
+  .e-pdf-bar {
+    height: 38px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
+    border-bottom: 1px solid var(--e-border); background: #06101d;
+  }
+  .e-pdf-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--e-muted); }
+  .e-pdf-actions { display: flex; gap: 5px; }
+  .e-pdf-wrap { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+  #pdf-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+  .e-pdf-empty {
+    position: absolute; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    background: repeating-linear-gradient(-45deg, #0c1726, #0c1726 12px, #0f1e30 12px, #0f1e30 24px);
+    color: var(--e-muted); font-size: 13px; font-weight: 600;
+  }
+  .e-pdf-empty svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .5; }
+
+  /* ── Custom confirm modal ──────────────────────────── */
+  .confirm-overlay {
+    display: none; position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,.65); backdrop-filter: blur(5px);
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  .confirm-overlay.open { display: flex; }
+  .confirm-box {
+    background: var(--e-surface); border: 1px solid var(--e-border);
+    border-radius: 14px; padding: 24px; max-width: 340px; width: 100%;
+    box-shadow: 0 24px 60px rgba(0,0,0,.6);
+  }
+  .confirm-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+  .confirm-msg { font-size: 14px; color: var(--e-text2); line-height: 1.55; margin-bottom: 22px; }
+  .confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Custom confirm dialog -->
+<div id="confirm-overlay" class="confirm-overlay">
+  <div class="confirm-box">
+    <div class="confirm-title">Підтвердження</div>
+    <div class="confirm-msg" id="confirm-msg"></div>
+    <div class="confirm-btns">
+      <button class="e-btn" id="confirm-cancel" type="button">Скасувати</button>
+      <button class="e-btn" id="confirm-ok" type="button"
+        style="background:var(--e-danger);border-color:transparent;color:#fff;">Підтвердити</button>
+    </div>
+  </div>
+</div>
+
+<div id="diff-modal-overlay" class="diff-modal-overlay">
+  <div class="diff-modal" role="dialog" aria-modal="true" aria-labelledby="diff-modal-title">
+    <div class="diff-modal-head">
+      <div class="diff-modal-title">
+        <strong id="diff-modal-title">Diff версії</strong>
+        <span id="diff-modal-meta" class="diff-modal-meta"></span>
+      </div>
+      <button id="diff-modal-close" class="diff-modal-close" type="button" aria-label="Закрити">×</button>
+    </div>
+    <div class="diff-modal-body">
+      <div id="diff-modal-content" class="e-diff-scroll"></div>
+    </div>
+    <div class="diff-modal-footer">
+      <button id="diff-modal-rollback" class="e-rollback" type="button">Відкотити до цієї версії</button>
+    </div>
+  </div>
+</div>
+
+<div class="editor-shell">
+  <!-- Topbar -->
+  <div class="e-topbar">
+    <div class="e-title-group">
+      <span class="e-proj-name">{{ project.title }}</span>
+      <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
+    </div>
+    <div class="e-actions">
+      <button id="compile-btn" class="e-btn primary" type="button">Recompile</button>
+      <a id="download-pdf" class="e-btn" href="/api/projects/{{ project.id }}/pdf/" target="_blank">PDF</a>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="e-body">
+
+    <!-- ── Left panel ──────────────────────────── -->
+    <aside class="e-left">
+      <div class="e-tabs">
+        <button class="e-tab active" data-tab="files">Файли</button>
+        <button class="e-tab" data-tab="history">Історія</button>
+      </div>
+
+      <!-- Files tab -->
+      <div id="tab-files" class="e-tabpanel active">
+        <div class="e-sec-head">
+          <span>Файли</span>
+          <label style="cursor:pointer; padding:3px 8px; font-size:11px; font-weight:600;
+            border-radius:6px; border:1px solid var(--e-border); background:var(--e-raised); color:var(--e-muted);">
+            + Додати
+            <input id="file-upload" type="file" style="display:none;">
+          </label>
+        </div>
+        <ul id="file-list" class="e-file-list"></ul>
+      </div>
+
+      <!-- History tab -->
+      <div id="tab-history" class="e-tabpanel">
+        <div class="e-sec-head">
+          <span>Версії</span>
+          <button id="refresh-versions" class="e-sec-btn" type="button">↻</button>
+        </div>
+        <div id="versions-list" class="e-history"></div>
+      </div>
+
+      <!-- Outline — always visible at bottom -->
+      <div class="e-outline-wrap">
+        <div class="e-sec-head">
+          <span>Outline</span>
+          <button id="refresh-outline" class="e-sec-btn" type="button">↻</button>
+        </div>
+        <ul id="outline-list" class="e-outline"></ul>
+      </div>
+    </aside>
+
+    <!-- ── Editor ──────────────────────────────── -->
+    <section class="e-center" id="drop-zone">
+      <div class="e-editor-bar">
+        <span id="current-file-label" class="e-file-label">main.tex</span>
+        <span id="save-hint" class="e-save-hint">Автозбереження</span>
+      </div>
+      <div class="e-editor-wrap" id="editor-wrap">
+        <pre id="editor-hl" aria-hidden="true"></pre>
+        <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+        <div class="e-drop-overlay">Перетягніть файли сюди</div>
+      </div>
+      <div class="e-asset-view" id="asset-view">
+        <div class="e-asset-box" id="asset-box">Оберіть файл.</div>
+      </div>
+      <div class="e-log-panel">
+        <button class="e-log-toggle" id="log-toggle" type="button">
+          <span>Лог компіляції</span>
+          <span class="arr">▾</span>
+        </button>
+        <pre id="log"></pre>
+      </div>
+    </section>
+
+    <!-- ── PDF ─────────────────────────────────── -->
+    <section class="e-pdf">
+      <div class="e-pdf-bar">
+        <span class="e-pdf-label">PDF Preview</span>
+        <div class="e-pdf-actions">
+          <button id="refresh-pdf" class="e-btn" type="button"
+            style="padding:4px 10px;font-size:12px;">↻</button>
+          <a id="open-pdf" class="e-btn" target="_blank"
+            href="/api/projects/{{ project.id }}/pdf/"
+            style="padding:4px 10px;font-size:12px;">Відкрити</a>
+        </div>
+      </div>
+      <div class="e-pdf-wrap">
+        <iframe id="pdf-frame" src="/api/projects/{{ project.id }}/pdf/"></iframe>
+        <div id="pdf-empty" class="e-pdf-empty">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          PDF ще не згенеровано
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const projectId  = {{ project.id }};
+  const csrfToken  = "{{ csrf_token }}";
+
+  const statusEl      = document.getElementById("status");
+  const saveHintEl    = document.getElementById("save-hint");
+  const editor        = document.getElementById("editor");
+  const editorHl      = document.getElementById("editor-hl");
+  const logEl         = document.getElementById("log");
+  const logToggleBtn  = document.getElementById("log-toggle");
+  const fileListEl    = document.getElementById("file-list");
+  const outlineEl     = document.getElementById("outline-list");
+  const currentFileLbl= document.getElementById("current-file-label");
+  const assetView     = document.getElementById("asset-view");
+  const assetBox      = document.getElementById("asset-box");
+  const uploadInput   = document.getElementById("file-upload");
+  const pdfFrame      = document.getElementById("pdf-frame");
+  const pdfEmpty      = document.getElementById("pdf-empty");
+  const openPdfLink   = document.getElementById("open-pdf");
+  const versionsListEl= document.getElementById("versions-list");
+  const dropZone      = document.getElementById("drop-zone");
+  const diffModalOverlay = document.getElementById("diff-modal-overlay");
+  const diffModalTitle = document.getElementById("diff-modal-title");
+  const diffModalMeta = document.getElementById("diff-modal-meta");
+  const diffModalContent = document.getElementById("diff-modal-content");
+  const diffModalRollbackBtn = document.getElementById("diff-modal-rollback");
+  const diffModalCloseBtn = document.getElementById("diff-modal-close");
+
+  let saveTimer      = null;
+  let saving         = false;
+  let selectedFile   = {name:"main.tex", type:"main"};
+  let projectFiles   = [];
+  let sections       = [];
+  let versions       = [];
+  let versionsHasMore = true;
+  let versionsCursor = null;
+  let versionsLoading = false;
+  let activeDiffVersionId = null;
+  let activeDiffRenderFull = false;
+  let lastPdfVersion = null;
+  let statusPollTimer= null;
+  let _confirmResolve= null;
+  let hasUnsavedChanges = false;
+  let projectWs = null;
+  let projectWsReconnectTimer = null;
+  let lastSeenMcpVersionId = 0;
+  let externalReloadScheduled = false;
+
+  // ── Custom confirm ──────────────────────────────────────────────────────
+  document.getElementById("confirm-ok").addEventListener("click", () => {
+    document.getElementById("confirm-overlay").classList.remove("open");
+    if (_confirmResolve) { _confirmResolve(true); _confirmResolve = null; }
+  });
+  document.getElementById("confirm-cancel").addEventListener("click", () => {
+    document.getElementById("confirm-overlay").classList.remove("open");
+    if (_confirmResolve) { _confirmResolve(false); _confirmResolve = null; }
+  });
+  function showConfirm(msg) {
+    return new Promise(resolve => {
+      document.getElementById("confirm-msg").textContent = msg;
+      document.getElementById("confirm-overlay").classList.add("open");
+      _confirmResolve = resolve;
+    });
+  }
+
+  function closeDiffModal() {
+    activeDiffVersionId = null;
+    diffModalOverlay.classList.remove("open");
+  }
+
+  function scheduleExternalReload(reason = "Проєкт оновлено через MCP. Оновлюємо…") {
+    if (externalReloadScheduled) return;
+    externalReloadScheduled = true;
+    setSaveHint(reason, "saving");
+    setTimeout(() => {
+      window.location.reload();
+    }, 250);
+  }
+
+  function connectProjectUpdatesWebSocket() {
+    const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
+    const wsUrl = `${wsProto}://${window.location.host}/ws/projects/${projectId}/updates/`;
+
+    const cleanupReconnect = () => {
+      if (projectWsReconnectTimer) {
+        clearTimeout(projectWsReconnectTimer);
+        projectWsReconnectTimer = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (externalReloadScheduled || projectWsReconnectTimer) return;
+      projectWsReconnectTimer = setTimeout(() => {
+        projectWsReconnectTimer = null;
+        connectProjectUpdatesWebSocket();
+      }, 1500);
+    };
+
+    try {
+      projectWs = new WebSocket(wsUrl);
+    } catch (_) {
+      scheduleReconnect();
+      return;
+    }
+
+    projectWs.addEventListener("open", cleanupReconnect);
+    projectWs.addEventListener("message", ev => {
+      let data = null;
+      try { data = JSON.parse(ev.data || "{}"); } catch (_) { return; }
+      if (!data || typeof data !== "object") return;
+      if (data.type === "connected") {
+        lastSeenMcpVersionId = Number(data.latest_mcp_version_id || 0);
+        return;
+      }
+      if (data.type !== "project_updated" || data.source !== "mcp") return;
+      const incoming = Number(data.version_id || 0);
+      if (!incoming || incoming <= lastSeenMcpVersionId) return;
+      lastSeenMcpVersionId = incoming;
+
+      if (hasUnsavedChanges) {
+        setSaveHint("Проєкт змінено через MCP. Спершу збережіть локальні правки або перезавантажте сторінку.", "error");
+        return;
+      }
+      scheduleExternalReload("Проєкт оновлено через MCP. Оновлюємо…");
+    });
+    projectWs.addEventListener("close", scheduleReconnect);
+    projectWs.addEventListener("error", () => {
+      try { projectWs.close(); } catch (_) {}
+    });
+  }
+
+  diffModalCloseBtn.addEventListener("click", closeDiffModal);
+  diffModalOverlay.addEventListener("click", e => {
+    if (e.target === diffModalOverlay) closeDiffModal();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && diffModalOverlay.classList.contains("open")) closeDiffModal();
+  });
+
+  // ── Syntax highlighting ─────────────────────────────────────────────────
+  function escHtml(s) {
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function hlLaTeX(src) {
+    let out = "", i = 0, n = src.length;
+    while (i < n) {
+      const ch = src[i];
+      // Comment: % to EOL
+      if (ch === "%" && (i === 0 || src[i-1] !== "\\")) {
+        let j = i; while (j < n && src[j] !== "\n") j++;
+        out += `<span class="hl-comment">${escHtml(src.slice(i, j))}</span>`;
+        i = j; continue;
+      }
+      // LaTeX command: \word
+      if (ch === "\\") {
+        let j = i + 1;
+        if (j < n) {
+          while (j < n && /[a-zA-Z@*]/.test(src[j])) j++;
+          if (j === i + 1) j++; // single non-alpha escape char
+          out += `<span class="hl-cmd">${escHtml(src.slice(i, j))}</span>`;
+          i = j; continue;
+        }
+      }
+      // Math: $$ first, then $
+      if (ch === "$") {
+        if (i+1 < n && src[i+1] === "$") {
+          const e = src.indexOf("$$", i+2);
+          if (e !== -1) { out += `<span class="hl-math">${escHtml(src.slice(i, e+2))}</span>`; i = e+2; continue; }
+        } else {
+          const e = src.indexOf("$", i+1);
+          if (e !== -1 && e-i < 300) { out += `<span class="hl-math">${escHtml(src.slice(i, e+1))}</span>`; i = e+1; continue; }
+        }
+      }
+      // Braces & brackets
+      if (ch === "{" || ch === "}") { out += `<span class="hl-brace">${escHtml(ch)}</span>`; i++; continue; }
+      if (ch === "[" || ch === "]") { out += `<span class="hl-bracket">${escHtml(ch)}</span>`; i++; continue; }
+      // Plain text — batch consecutive plain chars
+      let j = i;
+      while (j < n) {
+        const c = src[j];
+        if (c === "%" || c === "\\" || c === "$" || c === "{" || c === "}" || c === "[" || c === "]") break;
+        j++;
+      }
+      out += `<span class="hl-text">${escHtml(src.slice(i, j))}</span>`;
+      i = j;
+    }
+    return out;
+  }
+  function syncHighlight() {
+    editorHl.innerHTML = hlLaTeX(editor.value);
+    editorHl.scrollTop  = editor.scrollTop;
+    editorHl.scrollLeft = editor.scrollLeft;
+  }
+  editor.addEventListener("scroll", () => {
+    editorHl.scrollTop  = editor.scrollTop;
+    editorHl.scrollLeft = editor.scrollLeft;
+  });
+
+  // ── Log ─────────────────────────────────────────────────────────────────
+  logToggleBtn.addEventListener("click", () => {
+    const open = logEl.classList.toggle("open");
+    logToggleBtn.classList.toggle("open", open);
+  });
+  function openLog() { logEl.classList.add("open"); logToggleBtn.classList.add("open"); }
+
+  // ── Status & hint ────────────────────────────────────────────────────────
+  function setStatus(v) { statusEl.textContent = v; statusEl.className = `status-chip ${v}`; }
+  function setSaveHint(t, type="") { saveHintEl.textContent = t; saveHintEl.className = `e-save-hint${type ? " "+type : ""}`; }
+
+  // ── API ──────────────────────────────────────────────────────────────────
+  async function api(url, opts={}) {
+    const h = {"X-CSRFToken": csrfToken};
+    if (!(opts.body instanceof FormData)) h["Content-Type"] = "application/json";
+    const r = await fetch(url, {credentials:"same-origin", headers:h, ...opts});
+    if (!r.ok) { const t = await r.text(); throw new Error(t || `HTTP ${r.status}`); }
+    const ct = r.headers.get("content-type") || "";
+    return ct.includes("application/json") ? r.json() : r.text();
+  }
+  function fmtBytes(n) { if (n<1024) return `${n} B`; if (n<1048576) return `${(n/1024).toFixed(1)} KB`; return `${(n/1048576).toFixed(1)} MB`; }
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso); if (isNaN(d)) return iso;
+    return d.toLocaleString("uk-UA",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
+  }
+
+  // ── Tabs ─────────────────────────────────────────────────────────────────
+  document.querySelectorAll(".e-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".e-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".e-tabpanel").forEach(p => p.classList.remove("active"));
+      tab.classList.add("active");
+      document.getElementById(`tab-${tab.dataset.tab}`).classList.add("active");
+    });
+  });
+
+  // ── File list ────────────────────────────────────────────────────────────
+  function renderFileList() {
+    const all = [{name:"main.tex", is_text:true, size:editor.value.length, type:"main"}, ...projectFiles];
+    fileListEl.innerHTML = "";
+    all.forEach(f => {
+      const li  = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.className = `e-file-btn${selectedFile.name===f.name ? " active" : ""}`;
+      btn.innerHTML = `<span>${f.name}</span><span class="e-file-sz">${f.size ? fmtBytes(f.size) : ""}</span>`;
+      btn.addEventListener("click", () => selectFile(f));
+      li.appendChild(btn); fileListEl.appendChild(li);
+    });
+  }
+
+  // ── Outline ──────────────────────────────────────────────────────────────
+  const OL_CLASS = {0:"e-ol-0", 1:"e-ol-2", 2:"e-ol-2", 3:"e-ol-3", 4:"e-ol-4", 5:"e-ol-5", 6:"e-ol-6"};
+  function renderOutline() {
+    outlineEl.innerHTML = "";
+    sections.forEach(s => {
+      const lvl = Math.min(s.level, 6);
+      const li  = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.className = `e-outline-btn ${OL_CLASS[lvl] || "e-ol-3"}`;
+      btn.textContent = s.title;
+      btn.title = `${s.command} · Рядки ${s.start_line}–${s.end_line}`;
+      btn.addEventListener("click", () => jumpToLine(s.start_line));
+      li.appendChild(btn); outlineEl.appendChild(li);
+    });
+  }
+  function jumpToLine(n) {
+    if (selectedFile.name !== "main.tex") return;
+    const lines = editor.value.split("\n");
+    let pos = 0;
+    for (let i=0; i<Math.max(0,n-1) && i<lines.length; i++) pos += lines[i].length + 1;
+    editor.focus(); editor.setSelectionRange(pos, pos);
+    editor.scrollTop = Math.max(0, (n-5) * 23);
+  }
+
+  // ── Diff rendering ───────────────────────────────────────────────────────
+  function parseHunkStart(line) {
+    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (!m) return null;
+    return { oldLine: Number(m[1]), newLine: Number(m[2]) };
+  }
+  function renderDiff(raw, opts={}) {
+    if (!raw || raw === "(no changes)") return { html: `<span class="diff-empty">Без змін</span>`, truncated: false };
+    const maxRows = Number.isFinite(opts.maxRows) ? opts.maxRows : Infinity;
+    const lines = raw.split("\n");
+    let oldLine = 0;
+    let newLine = 0;
+    let addCount = 0;
+    let delCount = 0;
+    const chunks = [];
+    let pendingEmptyCtx = 0;
+    const EMPTY_CONTEXT_COLLAPSE_THRESHOLD = 4;
+    let renderedRows = 0;
+    let truncated = false;
+
+    function canAppend(rows = 1) {
+      if (renderedRows + rows <= maxRows) return true;
+      truncated = true;
+      return false;
+    }
+
+    function appendContextRow(text, oldNo, newNo) {
+      if (!canAppend(1)) return;
+      chunks.push(
+        `<div class="diff-row ctx">` +
+        `<span class="diff-sign"> </span>` +
+        `<span class="diff-ln">${oldNo}</span>` +
+        `<span class="diff-ln">${newNo}</span>` +
+        `<span class="diff-code">${escHtml(text)}</span>` +
+        `</div>`
+      );
+      renderedRows += 1;
+    }
+
+    function flushEmptyContext() {
+      if (!pendingEmptyCtx) return;
+      if (pendingEmptyCtx < EMPTY_CONTEXT_COLLAPSE_THRESHOLD) {
+        const fromOld = oldLine - pendingEmptyCtx;
+        const fromNew = newLine - pendingEmptyCtx;
+        for (let i = 0; i < pendingEmptyCtx; i += 1) {
+          appendContextRow("", fromOld + i, fromNew + i);
+          if (truncated) break;
+        }
+        pendingEmptyCtx = 0;
+        return;
+      }
+      if (!canAppend(1)) { pendingEmptyCtx = 0; return; }
+      chunks.push(
+        `<div class="diff-row ctx-empty">` +
+        `<span class="diff-sign">…</span>` +
+        `<span class="diff-ln"></span>` +
+        `<span class="diff-ln"></span>` +
+        `<span class="diff-code">пропущено порожніх рядків: ${pendingEmptyCtx}</span>` +
+        `</div>`
+      );
+      renderedRows += 1;
+      pendingEmptyCtx = 0;
+    }
+
+    for (let li = 0; li < lines.length; li += 1) {
+      if (truncated) break;
+      const line = lines[li];
+      const e = escHtml(line);
+
+      if (line.startsWith("---") || line.startsWith("+++")) {
+        flushEmptyContext();
+        if (truncated) break;
+        if (!canAppend(1)) break;
+        chunks.push(`<span class="diff-meta">${e}</span>`);
+        renderedRows += 1;
+        continue;
+      }
+
+      if (line.startsWith("@@")) {
+        flushEmptyContext();
+        if (truncated) break;
+        const start = parseHunkStart(line);
+        if (start) { oldLine = start.oldLine; newLine = start.newLine; }
+        if (!canAppend(1)) break;
+        chunks.push(`<span class="diff-hunk">${e}</span>`);
+        renderedRows += 1;
+        continue;
+      }
+
+      if (line.startsWith("+")) {
+        flushEmptyContext();
+        if (truncated) break;
+        addCount += 1;
+        if (!canAppend(1)) break;
+        chunks.push(
+          `<div class="diff-row add">` +
+          `<span class="diff-sign">+</span>` +
+          `<span class="diff-ln"></span>` +
+          `<span class="diff-ln">${newLine++}</span>` +
+          `<span class="diff-code">${escHtml(line.slice(1))}</span>` +
+          `</div>`
+        );
+        renderedRows += 1;
+        continue;
+      }
+
+      if (line.startsWith("-")) {
+        flushEmptyContext();
+        if (truncated) break;
+        delCount += 1;
+        if (!canAppend(1)) break;
+        chunks.push(
+          `<div class="diff-row del">` +
+          `<span class="diff-sign">-</span>` +
+          `<span class="diff-ln">${oldLine++}</span>` +
+          `<span class="diff-ln"></span>` +
+          `<span class="diff-code">${escHtml(line.slice(1))}</span>` +
+          `</div>`
+        );
+        renderedRows += 1;
+        continue;
+      }
+
+      const ctx = line.startsWith(" ") ? line.slice(1) : line;
+      if (!ctx.trim()) {
+        pendingEmptyCtx += 1;
+        oldLine += 1;
+        newLine += 1;
+        continue;
+      }
+      flushEmptyContext();
+      if (truncated) break;
+      appendContextRow(ctx, oldLine++, newLine++);
+    }
+    flushEmptyContext();
+
+    const previewNote = truncated ? (
+      `<div class="diff-truncate-note">` +
+      `<span>Показано лише частину diff для швидкості.</span>` +
+      `<button type="button" class="diff-expand-btn" data-expand-diff="1">Показати весь diff</button>` +
+      `</div>`
+    ) : "";
+
+    return { html: (
+      previewNote +
+      `<div class="diff-summary">` +
+      `<span class="diff-chip add">+${addCount}</span>` +
+      `<span class="diff-chip del">-${delCount}</span>` +
+      `</div>` +
+      `<div class="diff-table">${chunks.join("")}</div>`
+    ), truncated };
+  }
+
+  // ── Version history ──────────────────────────────────────────────────────
+  function renderVersions() {
+    versionsListEl.innerHTML = "";
+    if (!versions.length) {
+      const d = document.createElement("div"); d.className = "e-empty-msg";
+      d.textContent = versionsLoading ? "Завантаження версій…" : "Версій ще немає.";
+      versionsListEl.appendChild(d);
+      return;
+    }
+    versions.forEach(v => {
+      const wrap = document.createElement("div");
+      wrap.className = `e-ver-item${v._loading ? " is-loading" : ""}`;
+
+      const head = document.createElement("div");
+      head.className = "e-ver-head";
+      head.innerHTML = `
+        <div class="e-ver-left">
+          <div class="e-ver-row1">
+            <span class="e-ver-num">#${v.id}</span>
+            <span class="e-ver-op">${v.operation}</span>
+          </div>
+          <span class="e-ver-summary">${v.summary || "(без опису)"}</span>
+        </div>
+        <span class="e-ver-date">${fmtDate(v.created_at)}</span>`;
+      head.addEventListener("click", () => openDiffModal(v.id));
+      wrap.appendChild(head);
+      versionsListEl.appendChild(wrap);
+    });
+    if (versionsLoading || versionsHasMore) {
+      const d = document.createElement("div");
+      d.className = "e-empty-msg";
+      d.style.padding = "10px";
+      d.style.fontSize = "11px";
+      d.textContent = versionsLoading ? "Завантаження…" : "Прокрутіть нижче для підвантаження";
+      versionsListEl.appendChild(d);
+    }
+  }
+
+  async function openDiffModal(vid) {
+    activeDiffVersionId = vid;
+    activeDiffRenderFull = false;
+    const v = versions.find(x => x.id === vid);
+    if (!v) return;
+
+    diffModalTitle.textContent = `Diff версії #${v.id}`;
+    diffModalMeta.textContent = `${v.operation || "change"} · ${fmtDate(v.created_at)} · ${v.summary || "(без опису)"}`;
+    diffModalContent.innerHTML = `<span class="diff-empty">Завантаження…</span>`;
+    diffModalRollbackBtn.onclick = () => rollbackVersion(v.id);
+    diffModalOverlay.classList.add("open");
+
+    if (v._diff === undefined) {
+      v._loading = true; renderVersions();
+      try { const d = await api(`/api/projects/${projectId}/versions/${vid}/`,{method:"GET"}); v._diff = d.diff || "(no changes)"; }
+      catch (err) { v._diff = `Помилка: ${err.message}`; }
+      v._loading = false;
+      renderVersions();
+    }
+    if (activeDiffVersionId !== vid) return;
+    const render = renderDiff(v._diff || "", { maxRows: activeDiffRenderFull ? Infinity : 900 });
+    diffModalContent.innerHTML = render.html;
+    const expandBtn = diffModalContent.querySelector("[data-expand-diff='1']");
+    if (expandBtn) {
+      expandBtn.addEventListener("click", () => {
+        activeDiffRenderFull = true;
+        const full = renderDiff(v._diff || "", { maxRows: Infinity });
+        diffModalContent.innerHTML = full.html;
+      });
+    }
+  }
+
+  async function rollbackVersion(vid) {
+    const ok = await showConfirm(`Відкотити проєкт до стану версії #${vid}? Поточні зміни будуть замінені.`);
+    if (!ok) return;
+    try {
+      await api(`/api/projects/${projectId}/versions/${vid}/rollback/`,
+        {method:"POST", body:JSON.stringify({summary:`Rollback to version ${vid}`})});
+      closeDiffModal();
+      await loadMainFile();
+      await Promise.all([loadSections(), loadVersions(true)]);
+      setSaveHint(`Відкотили до версії #${vid}`, "saved");
+      setStatus("pending");
+    } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+  }
+
+  // ── Load ─────────────────────────────────────────────────────────────────
+  async function loadMainFile() {
+    const data = await api(`/api/projects/${projectId}/file/`, {method:"GET"});
+    editor.value = data.content || "";
+    hasUnsavedChanges = false;
+    syncHighlight();
+    setSaveHint("Завантажено", "saved");
+  }
+  async function loadFiles() {
+    const p = await api(`/api/projects/${projectId}/files/`, {method:"GET"});
+    projectFiles = p.files || []; renderFileList();
+  }
+  async function loadSections() {
+    const p = await api(`/api/projects/${projectId}/sections/`, {method:"GET"});
+    sections = p.sections || []; renderOutline();
+  }
+  async function loadVersions(reset=false) {
+    if (versionsLoading) return;
+    if (reset) {
+      versions = [];
+      versionsHasMore = true;
+      versionsCursor = null;
+    } else if (!versionsHasMore) {
+      return;
+    }
+    versionsLoading = true;
+    renderVersions();
+    try {
+      const q = new URLSearchParams({limit: "30"});
+      if (versionsCursor) q.set("before_id", String(versionsCursor));
+      const p = await api(`/api/projects/${projectId}/versions/?${q.toString()}`, {method:"GET"});
+      const seen = new Set(versions.map(v => v.id));
+      const incoming = (p.versions||[]).map(v => ({...v, _diff:undefined, _loading:false}));
+      incoming.forEach(v => { if (!seen.has(v.id)) versions.push(v); });
+      versionsHasMore = Boolean(p.has_more);
+      versionsCursor = p.next_before_id ?? null;
+    } finally {
+      versionsLoading = false;
+      renderVersions();
+    }
+  }
+
+  // ── Save ─────────────────────────────────────────────────────────────────
+  async function saveMainFile() {
+    if (saving || selectedFile.name !== "main.tex") return;
+    saving = true; setSaveHint("Збереження…", "saving");
+    try {
+      await api(`/api/projects/${projectId}/file/`, {method:"PUT", body:JSON.stringify({content:editor.value})});
+      hasUnsavedChanges = false;
+      setSaveHint("Збережено", "saved"); setStatus("pending");
+      loadVersions(true).catch(()=>{});
+    } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+    finally { saving = false; }
+  }
+
+  // ── Compile ──────────────────────────────────────────────────────────────
+  async function compileProject() {
+    logEl.textContent = "Компіляція…"; openLog();
+    try {
+      if (selectedFile.name === "main.tex") await saveMainFile();
+      const data = await api(`/api/projects/${projectId}/compile/`, {method:"POST"});
+      setStatus(data.status); logEl.textContent = data.log || "";
+      if (data.pdf_url) {
+        lastPdfVersion = data.pdf_version ?? Date.now();
+        pdfFrame.src = `${data.pdf_url}?t=${lastPdfVersion}`;
+        openPdfLink.href = data.pdf_url; pdfEmpty.style.display = "none";
+      } else { pdfEmpty.style.display = "flex"; }
+    } catch (err) { setStatus("error"); logEl.textContent = `Помилка: ${err.message}`; }
+  }
+
+  // ── Select file ──────────────────────────────────────────────────────────
+  async function selectFile(file) {
+    selectedFile = {name:file.name, type:file.type||"asset", ...file};
+    currentFileLbl.textContent = file.name;
+    renderFileList();
+    if (file.name === "main.tex") {
+      document.getElementById("editor-wrap").style.display = ""; assetView.style.display = "none"; return;
+    }
+    document.getElementById("editor-wrap").style.display = "none"; assetView.style.display = "flex";
+    const url = `/api/projects/${projectId}/files/${encodeURIComponent(file.name)}/`;
+    if (file.is_image) { assetBox.innerHTML = `<img class="e-asset-img" src="${url}?t=${Date.now()}" alt="${file.name}">`; return; }
+    if (file.is_text) { try { assetBox.textContent = await api(url,{method:"GET"}); } catch (err) { assetBox.textContent = `Помилка: ${err.message}`; } return; }
+    assetBox.innerHTML = `Бінарний файл: <strong>${file.name}</strong><br><br><a class="e-btn" href="${url}" target="_blank">Завантажити</a>`;
+  }
+
+  async function uploadFile(file) {
+    const fd = new FormData(); fd.append("file", file);
+    await api(`/api/projects/${projectId}/files/`, {method:"POST", body:fd});
+    await Promise.all([loadFiles(), loadVersions(true)]);
+    setSaveHint(`Завантажено: ${file.name}`, "saved");
+  }
+
+  // ── Drag & drop ──────────────────────────────────────────────────────────
+  let dragCounter = 0;
+  dropZone.addEventListener("dragenter", e => { e.preventDefault(); dragCounter++; dropZone.classList.add("drag-active"); });
+  dropZone.addEventListener("dragleave", () => { if (--dragCounter <= 0) { dragCounter=0; dropZone.classList.remove("drag-active"); } });
+  dropZone.addEventListener("dragover",  e => e.preventDefault());
+  dropZone.addEventListener("drop", async e => {
+    e.preventDefault(); dragCounter=0; dropZone.classList.remove("drag-active");
+    for (const f of [...(e.dataTransfer.files||[])]) {
+      try { await uploadFile(f); }
+      catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+    }
+  });
+
+  // ── Poll ─────────────────────────────────────────────────────────────────
+  async function pollCompileStatus() {
+    try {
+      const d = await api(`/api/projects/${projectId}/compile/`, {method:"GET"});
+      setStatus(d.status);
+      if (d.pdf_url && d.pdf_version && d.pdf_version !== lastPdfVersion) {
+        lastPdfVersion = d.pdf_version; pdfFrame.src = `${d.pdf_url}?t=${lastPdfVersion}`;
+        openPdfLink.href = d.pdf_url; pdfEmpty.style.display = "none";
+      }
+      if (!d.pdf_url) pdfEmpty.style.display = "flex";
+    } catch(_) {}
+  }
+
+  // ── Events ───────────────────────────────────────────────────────────────
+  document.getElementById("compile-btn").addEventListener("click", compileProject);
+  document.getElementById("refresh-pdf").addEventListener("click", () => { pdfFrame.src = `/api/projects/${projectId}/pdf/?t=${Date.now()}`; });
+  document.getElementById("refresh-outline").addEventListener("click", loadSections);
+  document.getElementById("refresh-versions").addEventListener("click", () => loadVersions(true).catch(()=>{}));
+  versionsListEl.addEventListener("scroll", () => {
+    const nearBottom = versionsListEl.scrollTop + versionsListEl.clientHeight >= versionsListEl.scrollHeight - 120;
+    if (nearBottom) loadVersions(false).catch(()=>{});
+  });
+  uploadInput.addEventListener("change", async e => {
+    const f = e.target.files?.[0]; if (!f) return;
+    try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка upload: ${err.message}`, "error"); }
+    finally { uploadInput.value = ""; }
+  });
+
+  // Autosave + highlight
+  editor.addEventListener("input", () => {
+    syncHighlight();
+    if (selectedFile.name !== "main.tex") return;
+    hasUnsavedChanges = true;
+    setSaveHint("Є незбережені зміни…", "saving");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => saveMainFile().then(loadSections).catch(()=>{}), 1200);
+  });
+
+  // ── Init ─────────────────────────────────────────────────────────────────
+  async function init() {
+    await loadMainFile();
+    await Promise.all([loadFiles(), loadSections(), loadVersions(true)]);
+    const cd = await api(`/api/projects/${projectId}/compile/`, {method:"GET"});
+    setStatus(cd.status);
+    if (cd.log) { logEl.textContent = cd.log; openLog(); }
+    if (cd.pdf_url) {
+      lastPdfVersion = cd.pdf_version ?? Date.now();
+      pdfFrame.src = `${cd.pdf_url}?t=${lastPdfVersion}`;
+      openPdfLink.href = cd.pdf_url; pdfEmpty.style.display = "none";
+    } else { pdfEmpty.style.display = "flex"; }
+    renderFileList();
+    connectProjectUpdatesWebSocket();
+    statusPollTimer = setInterval(pollCompileStatus, 5000);
+  }
+
+  init().catch(err => setSaveHint(`Помилка ініціалізації: ${err.message}`, "error"));
+  window.addEventListener("beforeunload", () => {
+    if (statusPollTimer) clearInterval(statusPollTimer);
+    if (projectWsReconnectTimer) clearTimeout(projectWsReconnectTimer);
+    if (projectWs) {
+      try { projectWs.close(); } catch (_) {}
+      projectWs = null;
+    }
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SmartTeX{% endblock %}</title>
+  <style>
+    :root {
+      --bg:             #0b1220;
+      --surface:        #0f1829;
+      --surface-raised: #141f33;
+      --surface-soft:   #18233d;
+      --border:         #2c3a5b;
+      --border-soft:    #1f2a44;
+      --text:           #eaf0ff;
+      --text-2:         #c4d3ef;
+      --muted:          #7a8fa8;
+      --accent:         #22c55e;
+      --accent-h:       #16a34a;
+      --accent-dim:     rgba(34, 197, 94, 0.14);
+      --blue:           #3b82f6;
+      --blue-dim:       rgba(59, 130, 246, 0.14);
+      --danger:         #ef4444;
+      --danger-dim:     rgba(239, 68, 68, 0.14);
+      --warn:           #f59e0b;
+      --warn-dim:       rgba(245, 158, 11, 0.12);
+      --ok:             var(--accent);
+      --card:           var(--surface);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
+
+    /* ── Navigation ── */
+    .top {
+      background: rgba(9, 14, 28, 0.96);
+      border-bottom: 1px solid var(--border-soft);
+      position: sticky; top: 0; z-index: 100;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+    .top .wrap {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-top: 0; padding-bottom: 0; height: 56px;
+    }
+    .brand {
+      font-weight: 700; font-size: 17px; text-decoration: none;
+      color: var(--text); display: flex; align-items: center; gap: 9px;
+      letter-spacing: -0.2px;
+    }
+    .brand-mark {
+      width: 30px; height: 30px;
+      background: linear-gradient(145deg, #22c55e 0%, #14a34a 100%);
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 900; color: #052010; flex-shrink: 0;
+      box-shadow: 0 0 16px rgba(34, 197, 94, 0.28);
+    }
+    .brand em { font-style: normal; color: var(--accent); }
+
+    .nav { display: flex; align-items: center; gap: 2px; }
+    .nav a {
+      text-decoration: none; color: var(--muted); padding: 7px 12px;
+      border-radius: 8px; font-size: 14px; font-weight: 500;
+      border: 1px solid transparent;
+      transition: background .15s, color .15s, border-color .15s;
+    }
+    .nav a:hover { background: var(--surface-soft); border-color: var(--border); color: var(--text); }
+    .nav .nav-user {
+      color: var(--muted); font-size: 13px; padding: 5px 11px;
+      background: var(--surface); border: 1px solid var(--border-soft);
+      border-radius: 8px; margin-right: 4px;
+    }
+    .nav .nav-exit { color: #f87171; }
+    .nav .nav-exit:hover { background: var(--danger-dim); border-color: rgba(239,68,68,.3); color: #f87171; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface); border: 1px solid var(--border-soft);
+      border-radius: 14px; padding: 22px; margin-bottom: 16px;
+    }
+    .card > h2:first-child { margin: 0 0 18px; font-size: 17px; font-weight: 700; letter-spacing: -0.2px; }
+
+    /* ── Layout ── */
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+
+    /* ── Typography ── */
+    .small { color: var(--muted); font-size: 12px; }
+    a { color: var(--accent); }
+
+    /* ── Forms ── */
+    input, select, textarea, button { font: inherit; }
+
+    label {
+      display: block; font-size: 11.5px; font-weight: 700;
+      color: var(--muted); margin-bottom: 6px;
+      text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    input:not([type="file"]):not([type="hidden"]):not([type="checkbox"]),
+    select,
+    textarea {
+      width: 100%; padding: 10px 13px;
+      background: var(--surface-raised); border: 1px solid var(--border);
+      border-radius: 9px; color: var(--text); outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:not([type="file"]):not([type="hidden"]):not([type="checkbox"]):focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-dim);
+    }
+    input::placeholder { color: var(--muted); }
+    select { cursor: pointer; }
+    select option { background: #141f33; color: var(--text); }
+
+    /* ── Buttons ── */
+    button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: 1px solid transparent; border-radius: 9px;
+      background: var(--accent); color: #062012;
+      padding: 10px 18px; font-weight: 700; font-size: 14px; cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    button:hover { background: var(--accent-h); }
+
+    button.secondary {
+      background: var(--surface-raised); border-color: var(--border);
+      color: var(--text-2);
+    }
+    button.secondary:hover { background: var(--surface-soft); border-color: #3b5080; color: var(--text); }
+
+    button.danger { background: var(--danger); color: #fff; }
+    button.danger:hover { background: #c0392b; }
+
+    /* ── Status ── */
+    .status { font-weight: 600; font-size: 13px; }
+    .status.success { color: var(--accent); }
+    .status.error   { color: var(--danger); }
+    .status.pending { color: var(--warn); }
+
+    /* ── Code / Pre ── */
+    pre {
+      background: #071127; color: #d5e4ff; padding: 14px 16px;
+      border-radius: 10px; overflow: auto; border: 1px solid var(--border-soft);
+      font-size: 13px; line-height: 1.65; margin: 0;
+    }
+    .mono { font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace; }
+
+    /* ── Messages ── */
+    .msg {
+      padding: 12px 16px; border-radius: 10px; margin-bottom: 10px;
+      border: 1px solid var(--border); font-size: 14px;
+      background: var(--surface); color: var(--text-2);
+    }
+
+    /* ── Django form p-wrapper ── */
+    form p { margin: 0 0 14px; }
+    form p:last-of-type { margin-bottom: 0; }
+    form ul.errorlist {
+      list-style: none; margin: 6px 0 0; padding: 0;
+      color: #f87171; font-size: 12px;
+    }
+    form ul.errorlist li::before { content: "✕  "; }
+    form .helptext { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="/">
+        <span class="brand-mark">T</span>
+        Smart<em>TeX</em>
+      </a>
+      <nav class="nav">
+        {% if request.user.is_authenticated %}
+          <span class="nav-user">{{ request.user.username }}</span>
+          <a href="/">Проєкти</a>
+          <a href="/templates/">Шаблони</a>
+          <a href="/logout/" class="nav-exit">Вийти</a>
+        {% else %}
+          <a href="/login/">Вхід</a>
+          <a href="/register/">Реєстрація</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    {% if messages %}
+      {% for m in messages %}
+        <div class="msg">{{ m }}</div>
+      {% endfor %}
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

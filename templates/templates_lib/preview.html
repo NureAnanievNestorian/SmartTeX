@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ template_obj.title }} — SmartTeX{% endblock %}
+{% block head %}
+<style>
+  .preview-header { margin-bottom: 20px; }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 500;
+    padding: 6px 10px; border-radius: 8px; border: 1px solid transparent;
+    transition: background .15s, border-color .15s, color .15s;
+    margin-bottom: 16px;
+  }
+  .back-link:hover { background: var(--surface-soft); border-color: var(--border); color: var(--text); }
+  .back-link svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .preview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .preview-grid { grid-template-columns: 1fr; } }
+
+  .preview-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; overflow: hidden; }
+  .preview-card-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border-soft); }
+  .preview-card-header h1 { margin: 0 0 10px; font-size: 20px; font-weight: 700; }
+  .preview-card-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .cat-badge {
+    display: inline-block; padding: 3px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    background: var(--blue-dim); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd;
+  }
+  .preview-desc { color: var(--muted); font-size: 14px; }
+  .preview-code { padding: 0; }
+  .preview-code pre {
+    border-radius: 0 0 14px 14px; border: 0; border-top: 1px solid var(--border-soft);
+    padding: 20px 24px; font-size: 13px; line-height: 1.7; max-height: 74vh;
+  }
+
+  .pdf-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+  .pdf-card-header { padding: 16px 20px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .pdf-card-header strong { font-size: 15px; }
+  .pdf-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+  .pdf-status.ready { color: #4ade80; }
+  .pdf-status.pending { color: #fde68a; }
+  .pdf-status.none { color: var(--muted); }
+  .pdf-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  .pdf-canvas {
+    flex: 1; min-height: 60vh;
+    background: linear-gradient(180deg, #f1f5f9 0%, #dbe5f1 100%);
+    position: relative; overflow: hidden;
+  }
+  #pdf-frame { width: 100%; height: 100%; min-height: 60vh; border: 0; background: #fff; }
+  .pdf-placeholder {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+    background: repeating-linear-gradient(-45deg, #f8fafc, #f8fafc 12px, #eef2f7 12px, #eef2f7 24px);
+    color: #64748b; font-size: 14px; font-weight: 600;
+  }
+  .pdf-placeholder svg { width: 32px; height: 32px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: 0.6; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="preview-header">
+  <a class="back-link" href="/templates/">
+    <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+    Назад до шаблонів
+  </a>
+</div>
+
+<div class="preview-grid">
+  <!-- Left: source code -->
+  <div class="preview-card">
+    <div class="preview-card-header">
+      <h1>{{ template_obj.title }}</h1>
+      <div class="preview-card-meta">
+        <span class="cat-badge">{{ template_obj.get_category_display }}</span>
+        {% if template_obj.description %}
+          <span class="preview-desc">{{ template_obj.description }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="preview-code">
+      <pre class="mono">{{ template_obj.content }}</pre>
+    </div>
+  </div>
+
+  <!-- Right: PDF preview -->
+  <div class="pdf-card">
+    <div class="pdf-card-header">
+      <strong>PDF Preview</strong>
+      {% if pdf_exists %}
+        <span class="pdf-status ready"><span class="pdf-status-dot"></span>Готово</span>
+      {% else %}
+        <span class="pdf-status pending"><span class="pdf-status-dot"></span>Генерується...</span>
+      {% endif %}
+    </div>
+    <div class="pdf-canvas">
+      {% if pdf_exists %}
+        <iframe id="pdf-frame" src="{{ pdf_url }}"></iframe>
+      {% else %}
+        <div class="pdf-placeholder">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          PDF генерується у фоні...
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

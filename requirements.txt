@@ -1,0 +1,5 @@
+Django>=5.1,<6.1
+psycopg[binary]>=3.2,<4
+gunicorn>=22.0,<23
+fastmcp>=3.2,<4
+uvicorn>=0.30,<1

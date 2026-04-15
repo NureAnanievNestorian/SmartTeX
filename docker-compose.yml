@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: smarttex-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    container_name: smarttex-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "${WEB_PORT}:8000"
+    volumes:
+      - .:/app
+      - "${DOCKER_SOCK_PATH}:/var/run/docker.sock"
+
+  mcp:
+    build: .
+    container_name: smarttex-mcp
+    restart: unless-stopped
+    depends_on:
+      - web
+    env_file:
+      - .env
+    command: python mcp_http_server.py
+    ports:
+      - "${MCP_PORT}:${MCP_PORT}"
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:

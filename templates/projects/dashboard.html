@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Мої проєкти — SmartTeX{% endblock %}
+{% block head %}
+<style>
+  .create-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; padding: 22px; margin-bottom: 28px; }
+  .create-card h2 { margin: 0 0 18px; font-size: 17px; font-weight: 700; }
+  .create-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .create-field { flex: 1 1 220px; }
+  .create-field label { display: block; font-size: 11px; font-weight: 700; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px; }
+
+  .section-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .section-bar h2 { margin: 0; font-size: 17px; font-weight: 700; }
+  .count-badge {
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: var(--surface-raised); border: 1px solid var(--border); color: var(--muted);
+  }
+
+  .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .scroll-sentinel { height: 1px; }
+
+  .project-card {
+    display: block; text-decoration: none; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border-soft);
+    border-radius: 13px; padding: 18px; position: relative; overflow: hidden;
+    transition: border-color .15s, background .15s, transform .12s, box-shadow .15s;
+  }
+  .project-card::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 3px; border-radius: 13px 0 0 13px;
+    background: var(--border);
+  }
+  .project-card.st-success::before { background: var(--accent); }
+  .project-card.st-error::before { background: var(--danger); }
+  .project-card.st-pending::before { background: var(--warn); }
+  .project-card:hover { border-color: var(--border); background: var(--surface-raised); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.35); }
+
+  .project-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+  .project-title { font-weight: 700; font-size: 15px; line-height: 1.3; color: var(--text); }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0;
+    background: rgba(148,163,184,0.15); border: 1px solid rgba(148,163,184,0.3); color: #94a3b8;
+  }
+  .status-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .status-pill.success { color: #4ade80; border-color: rgba(74,222,128,0.4); background: rgba(74,222,128,0.1); }
+  .status-pill.error   { color: #f87171; border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.1); }
+  .status-pill.pending { color: #fde68a; border-color: rgba(253,230,138,0.4); background: rgba(253,230,138,0.1); }
+
+  .project-time { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  .empty-state {
+    text-align: center; padding: 60px 20px;
+    background: var(--surface); border: 1px dashed var(--border); border-radius: 14px;
+  }
+  .empty-state .empty-icon {
+    width: 48px; height: 48px; border-radius: 14px;
+    background: var(--surface-raised); border: 1px solid var(--border);
+    margin: 0 auto 16px; display: flex; align-items: center; justify-content: center;
+  }
+  .empty-state .empty-icon svg { width: 22px; height: 22px; fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .empty-state .empty-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .empty-state .empty-sub { color: var(--muted); font-size: 14px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="create-card">
+  <h2>Новий проєкт</h2>
+  <form method="post" action="{% url 'projects:create' %}">
+    {% csrf_token %}
+    <div class="create-row">
+      <div class="create-field">
+        <label>Назва проєкту</label>
+        <input type="text" name="title" placeholder="Напр. Лабораторна робота №3" required>
+      </div>
+      <div class="create-field">
+        <label>Шаблон</label>
+        <select name="template_id">
+          <option value="">— Без шаблону —</option>
+          {% for tpl in templates %}
+            <option value="{{ tpl.id }}">{{ tpl.title }} · {{ tpl.get_category_display }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <button type="submit">Створити</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="section-bar">
+  <h2>Мої проєкти</h2>
+  {% if projects_count %}
+    <span id="projects-count" class="count-badge">{{ projects_count }}</span>
+  {% endif %}
+</div>
+
+{% if projects %}
+  <div id="projects-grid" class="projects-grid"
+       data-next-before-id="{% if projects_next_before_id %}{{ projects_next_before_id }}{% endif %}"
+       data-has-more="{% if projects_has_more %}1{% else %}0{% endif %}">
+    {% for p in projects %}
+      <a href="{% url 'projects:editor' p.id %}" class="project-card st-{{ p.last_status }}">
+        <div class="project-top">
+          <div class="project-title">{{ p.title }}</div>
+          {% if p.last_status %}
+            <span class="status-pill {{ p.last_status }}">{{ p.last_status }}</span>
+          {% endif %}
+        </div>
+        <div class="project-time">{{ p.updated_at|date:"d M Y, H:i" }}</div>
+      </a>
+    {% endfor %}
+  </div>
+  <div id="projects-sentinel" class="scroll-sentinel"></div>
+{% else %}
+  <div id="projects-empty" class="empty-state">
+    <div class="empty-icon">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+    </div>
+    <div class="empty-title">Проєктів ще немає</div>
+    <div class="empty-sub">Створіть перший LaTeX-проєкт за допомогою форми вище</div>
+  </div>
+{% endif %}
+<script>
+(() => {
+  const grid = document.getElementById("projects-grid");
+  if (!grid) return;
+  const sentinel = document.getElementById("projects-sentinel");
+  const empty = document.getElementById("projects-empty");
+  let hasMore = grid.dataset.hasMore === "1";
+  let nextBeforeId = grid.dataset.nextBeforeId || "";
+  let loading = false;
+  const seen = new Set([...grid.querySelectorAll(".project-card")].map(a => a.getAttribute("href")));
+
+  function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso || "";
+    return d.toLocaleString("uk-UA", {day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit"});
+  }
+  function renderCard(p) {
+    const href = `/projects/${p.id}/`;
+    if (seen.has(href)) return;
+    seen.add(href);
+    const a = document.createElement("a");
+    a.href = href;
+    a.className = `project-card st-${esc(p.last_status || "pending")}`;
+    a.innerHTML =
+      `<div class="project-top">` +
+      `<div class="project-title">${esc(p.title || "Без назви")}</div>` +
+      `${p.last_status ? `<span class="status-pill ${esc(p.last_status)}">${esc(p.last_status)}</span>` : ""}` +
+      `</div>` +
+      `<div class="project-time">${esc(fmtDate(p.updated_at))}</div>`;
+    grid.appendChild(a);
+  }
+  async function loadMore() {
+    if (!hasMore || loading) return;
+    loading = true;
+    try {
+      const url = new URL("/api/projects/", window.location.origin);
+      url.searchParams.set("limit", "24");
+      if (nextBeforeId) url.searchParams.set("before_id", nextBeforeId);
+      const r = await fetch(url.toString(), {credentials: "same-origin"});
+      if (!r.ok) return;
+      const data = await r.json();
+      (data.projects || []).forEach(renderCard);
+      hasMore = Boolean(data.has_more);
+      nextBeforeId = data.next_before_id || "";
+      if (empty && grid.children.length) empty.style.display = "none";
+    } finally {
+      loading = false;
+    }
+  }
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) loadMore(); });
+  }, {root: null, rootMargin: "1000px 0px"});
+  io.observe(sentinel);
+})();
+</script>
+{% endblock %}

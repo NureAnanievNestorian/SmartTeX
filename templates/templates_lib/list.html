@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Шаблони — SmartTeX{% endblock %}
+{% block head %}
+<style>
+  .page-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .page-bar h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  .count-badge {
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: var(--surface-raised); border: 1px solid var(--border); color: var(--muted);
+  }
+
+  .templates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .scroll-sentinel { height: 1px; }
+
+  .tpl-card {
+    background: var(--surface); border: 1px solid var(--border-soft);
+    border-radius: 13px; padding: 20px; display: flex; flex-direction: column; gap: 10px;
+    transition: border-color .15s, background .15s, transform .12s;
+  }
+  .tpl-card:hover { border-color: var(--border); background: var(--surface-raised); transform: translateY(-2px); }
+
+  .tpl-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .tpl-name { font-weight: 700; font-size: 15px; color: var(--text); line-height: 1.3; }
+  .cat-badge {
+    display: inline-block; padding: 3px 9px; border-radius: 999px; flex-shrink: 0;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    background: var(--blue-dim); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd;
+  }
+
+  .tpl-desc { color: var(--muted); font-size: 13px; line-height: 1.5; flex: 1; }
+
+  .tpl-footer { margin-top: 4px; }
+  .tpl-footer a {
+    display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none; color: var(--accent); font-size: 13px; font-weight: 600;
+    padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(34,197,94,0.3);
+    background: var(--accent-dim);
+    transition: background .15s, border-color .15s;
+  }
+  .tpl-footer a:hover { background: rgba(34,197,94,0.22); border-color: rgba(34,197,94,0.5); }
+
+  .empty-state {
+    text-align: center; padding: 60px 20px;
+    background: var(--surface); border: 1px dashed var(--border); border-radius: 14px;
+  }
+  .empty-state .empty-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .empty-state .empty-sub { color: var(--muted); font-size: 14px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-bar">
+  <h1>Бібліотека шаблонів</h1>
+  {% if templates_count %}
+    <span id="templates-count" class="count-badge">{{ templates_count }}</span>
+  {% endif %}
+</div>
+
+{% if templates %}
+  <div id="templates-grid" class="templates-grid"
+       data-next-before-id="{% if templates_next_before_id %}{{ templates_next_before_id }}{% endif %}"
+       data-has-more="{% if templates_has_more %}1{% else %}0{% endif %}">
+    {% for t in templates %}
+      <div class="tpl-card">
+        <div class="tpl-top">
+          <div class="tpl-name">{{ t.title }}</div>
+          <span class="cat-badge">{{ t.get_category_display }}</span>
+        </div>
+        <div class="tpl-desc">{{ t.description|default:"Без опису" }}</div>
+        <div class="tpl-footer">
+          <a href="/templates/{{ t.id }}/preview/">Переглянути →</a>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <div id="templates-sentinel" class="scroll-sentinel"></div>
+{% else %}
+  <div id="templates-empty" class="empty-state">
+    <div class="empty-title">Шаблонів поки немає</div>
+    <div class="empty-sub">Активних шаблонів ще не додано</div>
+  </div>
+{% endif %}
+<script>
+(() => {
+  const grid = document.getElementById("templates-grid");
+  if (!grid) return;
+  const sentinel = document.getElementById("templates-sentinel");
+  const empty = document.getElementById("templates-empty");
+  let hasMore = grid.dataset.hasMore === "1";
+  let nextBeforeId = grid.dataset.nextBeforeId || "";
+  let loading = false;
+  const seen = new Set([...grid.querySelectorAll(".tpl-footer a")].map(a => a.getAttribute("href")));
+
+  function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function renderCard(t) {
+    const href = `/templates/${t.id}/preview/`;
+    if (seen.has(href)) return;
+    seen.add(href);
+    const card = document.createElement("div");
+    card.className = "tpl-card";
+    card.innerHTML =
+      `<div class="tpl-top">` +
+      `<div class="tpl-name">${esc(t.title || "Без назви")}</div>` +
+      `<span class="cat-badge">${esc(t.category_display || t.category || "")}</span>` +
+      `</div>` +
+      `<div class="tpl-desc">${esc(t.description || "Без опису")}</div>` +
+      `<div class="tpl-footer"><a href="${href}">Переглянути →</a></div>`;
+    grid.appendChild(card);
+  }
+  async function loadMore() {
+    if (!hasMore || loading) return;
+    loading = true;
+    try {
+      const url = new URL("/api/templates/", window.location.origin);
+      url.searchParams.set("limit", "24");
+      if (nextBeforeId) url.searchParams.set("before_id", nextBeforeId);
+      const r = await fetch(url.toString(), {credentials: "same-origin"});
+      if (!r.ok) return;
+      const data = await r.json();
+      (data.templates || []).forEach(renderCard);
+      hasMore = Boolean(data.has_more);
+      nextBeforeId = data.next_before_id || "";
+      if (empty && grid.children.length) empty.style.display = "none";
+    } finally {
+      loading = false;
+    }
+  }
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) loadMore(); });
+  }, {root: null, rootMargin: "1000px 0px"});
+  io.observe(sentinel);
+})();
+</script>
+{% endblock %}

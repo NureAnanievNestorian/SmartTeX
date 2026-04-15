@@ -1,0 +1,37 @@
+from django.urls import path
+
+from .views import (
+    api_project_asset,
+    api_project_assets,
+    api_project_compile,
+    api_project_detail,
+    api_project_file,
+    api_project_insert,
+    api_project_pdf,
+    api_project_read_window,
+    api_project_search,
+    api_project_section,
+    api_project_sections,
+    api_project_version_detail,
+    api_project_version_rollback,
+    api_project_versions,
+    api_projects,
+)
+
+urlpatterns = [
+    path("projects/", api_projects),
+    path("projects/<int:project_id>/", api_project_detail),
+    path("projects/<int:project_id>/file/", api_project_file),
+    path("projects/<int:project_id>/search/", api_project_search),
+    path("projects/<int:project_id>/read-window/", api_project_read_window),
+    path("projects/<int:project_id>/files/", api_project_assets),
+    path("projects/<int:project_id>/files/<str:filename>/", api_project_asset),
+    path("projects/<int:project_id>/sections/", api_project_sections),
+    path("projects/<int:project_id>/sections/<int:section_index>/", api_project_section),
+    path("projects/<int:project_id>/insert/", api_project_insert),
+    path("projects/<int:project_id>/versions/", api_project_versions),
+    path("projects/<int:project_id>/versions/<int:version_id>/", api_project_version_detail),
+    path("projects/<int:project_id>/versions/<int:version_id>/rollback/", api_project_version_rollback),
+    path("projects/<int:project_id>/compile/", api_project_compile),
+    path("projects/<int:project_id>/pdf/", api_project_pdf),
+]

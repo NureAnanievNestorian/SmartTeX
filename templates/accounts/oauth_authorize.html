@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Надати доступ — SmartTeX{% endblock %}
+{% block head %}
+<style>
+  .oauth-wrap { max-width: 520px; margin: 48px auto 0; }
+  .oauth-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 16px; overflow: hidden; }
+  .oauth-header {
+    padding: 24px 28px 20px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .oauth-header h2 { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
+  .oauth-header .client-name { color: var(--accent); font-weight: 700; font-size: 17px; }
+  .oauth-header .subtitle { color: var(--muted); font-size: 14px; margin-top: 4px; }
+  .oauth-meta { padding: 16px 28px; border-bottom: 1px solid var(--border-soft); display: grid; gap: 8px; }
+  .oauth-meta-row { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+  .oauth-meta-label { color: var(--muted); min-width: 100px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .oauth-meta-val { color: var(--text-2); font-family: "JetBrains Mono", monospace; font-size: 12px; word-break: break-all; }
+  .oauth-scopes { padding: 16px 28px; border-bottom: 1px solid var(--border-soft); }
+  .oauth-scopes-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 10px; }
+  .scope-badge {
+    display: inline-block; padding: 4px 10px; border-radius: 999px;
+    background: var(--blue-dim); border: 1px solid rgba(59,130,246,0.3);
+    color: #93c5fd; font-size: 12px; font-weight: 600; margin: 2px 4px 2px 0;
+  }
+  .oauth-actions { padding: 20px 28px; display: flex; gap: 10px; }
+  .oauth-actions button { flex: 1; padding: 11px; font-size: 14px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="oauth-wrap">
+  <div class="oauth-card">
+    <div class="oauth-header">
+      <h2>Запит на доступ</h2>
+      <div>
+        <span class="client-name">{{ client.client_name|default:client.client_id }}</span>
+        <span class="subtitle">запитує доступ до вашого акаунта SmartTeX</span>
+      </div>
+    </div>
+    <div class="oauth-meta">
+      <div class="oauth-meta-row">
+        <span class="oauth-meta-label">Client ID</span>
+        <span class="oauth-meta-val">{{ client.client_id }}</span>
+      </div>
+      <div class="oauth-meta-row">
+        <span class="oauth-meta-label">Redirect URI</span>
+        <span class="oauth-meta-val">{{ redirect_uri }}</span>
+      </div>
+    </div>
+    <div class="oauth-scopes">
+      <div class="oauth-scopes-label">Запитувані дозволи</div>
+      {% for s in scope.split %}
+        <span class="scope-badge">{{ s }}</span>
+      {% empty %}
+        <span class="scope-badge">{{ scope }}</span>
+      {% endfor %}
+    </div>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="response_type" value="{{ response_type }}">
+      <input type="hidden" name="client_id" value="{{ client.client_id }}">
+      <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+      <input type="hidden" name="scope" value="{{ scope }}">
+      <input type="hidden" name="state" value="{{ state }}">
+      <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+      <input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">
+      <div class="oauth-actions">
+        <button type="submit" name="action" value="approve">Дозволити</button>
+        <button type="submit" name="action" value="deny" class="secondary">Відхилити</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

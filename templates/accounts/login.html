@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Вхід — SmartTeX{% endblock %}
+{% block head %}
+<style>
+  main.wrap { display: flex; align-items: center; justify-content: center; min-height: calc(100vh - 56px); padding: 40px 20px; }
+  .auth-box {
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: 18px;
+    padding: 36px 32px;
+    width: 100%; max-width: 420px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+  }
+  .auth-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 30px; }
+  .auth-logo-mark {
+    width: 36px; height: 36px;
+    background: linear-gradient(145deg, #22c55e, #14a34a);
+    border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 900; color: #052010;
+    box-shadow: 0 0 22px rgba(34,197,94,0.28);
+  }
+  .auth-logo-text { font-size: 20px; font-weight: 700; }
+  .auth-logo-text em { font-style: normal; color: var(--accent); }
+  .auth-heading { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+  .auth-sub { color: var(--muted); font-size: 14px; margin: 0 0 26px; }
+  .auth-box form button { width: 100%; padding: 12px; font-size: 15px; margin-top: 4px; }
+  .auth-footer { margin-top: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+  .auth-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .auth-footer a:hover { text-decoration: underline; }
+  .divider { border: 0; border-top: 1px solid var(--border-soft); margin: 22px 0; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="auth-box">
+  <div class="auth-logo">
+    <span class="auth-logo-mark">T</span>
+    <span class="auth-logo-text">Smart<em>TeX</em></span>
+  </div>
+  <h1 class="auth-heading">Вхід в акаунт</h1>
+  <p class="auth-sub">Введіть логін і пароль для входу</p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Увійти</button>
+  </form>
+  <hr class="divider">
+  <div class="auth-footer">
+    Немає акаунту? <a href="/register/">Зареєструватися</a>
+  </div>
+</div>
+{% endblock %}
