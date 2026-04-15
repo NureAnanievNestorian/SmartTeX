@@ -42,6 +42,9 @@ jobs:
             type=raw,value=latest
             type=sha,prefix={{branch}}-
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -50,6 +53,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     name: Deploy to VPS
@@ -81,8 +86,8 @@ jobs:
           script: |
             set -euo pipefail
 
+            mkdir -p /opt/smarttex
             cd /opt/smarttex
-            git pull --ff-only origin "${{ github.ref_name }}"
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
