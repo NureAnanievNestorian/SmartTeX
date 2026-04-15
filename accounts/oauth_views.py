@@ -24,6 +24,30 @@ def _json_body(request: HttpRequest) -> dict:
         return {}
 
 
+def _request_value(request: HttpRequest, json_body: dict, key: str, default: str = "") -> str:
+    val = request.POST.get(key, None)
+    if val is None or str(val).strip() == "":
+        val = json_body.get(key, default)
+    return str(val or default).strip()
+
+
+def _client_id_from_basic_auth(request: HttpRequest) -> str:
+    header = request.headers.get("Authorization", "").strip()
+    if not header.lower().startswith("basic "):
+        return ""
+    encoded = header[6:].strip()
+    if not encoded:
+        return ""
+    try:
+        decoded = base64.b64decode(encoded).decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+    if ":" not in decoded:
+        return ""
+    client_id, _secret = decoded.split(":", 1)
+    return client_id.strip()
+
+
 def _issuer_url(request: HttpRequest) -> str:
     configured = getattr(settings, "OAUTH_ISSUER_URL", "").strip()
     if configured:
@@ -74,7 +98,8 @@ def oauth_register(request: HttpRequest) -> JsonResponse:
     redirect_uris = body.get("redirect_uris")
     if not isinstance(redirect_uris, list) or not redirect_uris:
         return JsonResponse({"error": "invalid_redirect_uri"}, status=400)
-    if body.get("token_endpoint_auth_method", "none") != "none":
+    token_auth_method = str(body.get("token_endpoint_auth_method", "none")).strip() or "none"
+    if token_auth_method not in {"none", "client_secret_basic", "client_secret_post"}:
         return JsonResponse({"error": "invalid_client_metadata"}, status=400)
 
     client_id = OAuthClient.issue_client_id()
@@ -87,7 +112,7 @@ def oauth_register(request: HttpRequest) -> JsonResponse:
         redirect_uris=redirect_uris,
         grant_types=body.get("grant_types") or ["authorization_code"],
         response_types=body.get("response_types") or ["code"],
-        token_endpoint_auth_method="none",
+        token_endpoint_auth_method=token_auth_method,
         scope=str(body.get("scope", "openid profile smarttex:read smarttex:write")).strip(),
     )
     return JsonResponse(
@@ -172,15 +197,18 @@ def oauth_authorize(request: HttpRequest):
 @csrf_exempt
 @require_http_methods(["POST"])
 def oauth_token(request: HttpRequest) -> JsonResponse:
-    grant_type = request.POST.get("grant_type", "")
-    code = request.POST.get("code", "").strip()
-    client_id = request.POST.get("client_id", "").strip()
-    redirect_uri = request.POST.get("redirect_uri", "").strip()
-    code_verifier = request.POST.get("code_verifier", "").strip()
+    body = _json_body(request)
+    grant_type = _request_value(request, body, "grant_type")
+    code = _request_value(request, body, "code")
+    client_id = _request_value(request, body, "client_id")
+    redirect_uri = _request_value(request, body, "redirect_uri")
+    code_verifier = _request_value(request, body, "code_verifier")
+    if not client_id:
+        client_id = _client_id_from_basic_auth(request)
 
     if grant_type != "authorization_code":
         return JsonResponse({"error": "unsupported_grant_type"}, status=400)
-    if not code or not client_id or not redirect_uri or not code_verifier:
+    if not code or not redirect_uri or not code_verifier:
         return JsonResponse({"error": "invalid_request"}, status=400)
 
     auth_code = (
@@ -190,7 +218,8 @@ def oauth_token(request: HttpRequest) -> JsonResponse:
     )
     if not auth_code or not auth_code.is_active():
         return JsonResponse({"error": "invalid_grant"}, status=400)
-    if auth_code.client.client_id != client_id or auth_code.redirect_uri != redirect_uri:
+    effective_client_id = client_id or auth_code.client.client_id
+    if auth_code.client.client_id != effective_client_id or auth_code.redirect_uri != redirect_uri:
         return JsonResponse({"error": "invalid_grant"}, status=400)
     if not _pkce_ok(code_verifier, auth_code.code_challenge, auth_code.code_challenge_method):
         return JsonResponse({"error": "invalid_grant"}, status=400)

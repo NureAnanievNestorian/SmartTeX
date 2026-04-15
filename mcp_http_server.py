@@ -178,6 +178,32 @@ def list_projects() -> list[dict[str, Any]]:
 
 
 @mcp.tool
+def find_project(project_id: int | None = None, name_query: str | None = None) -> list[dict[str, Any]]:
+    projects = _call("GET", "/api/projects/")
+    if not isinstance(projects, list):
+        return []
+
+    normalized_query = (name_query or "").strip().lower()
+    results: list[dict[str, Any]] = []
+
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+
+        pid = project.get("id")
+        title = str(project.get("title", ""))
+
+        if project_id is not None and pid != project_id:
+            continue
+        if normalized_query and normalized_query not in title.lower():
+            continue
+
+        results.append(project)
+
+    return results
+
+
+@mcp.tool
 def get_project_file(project_id: int) -> dict[str, Any]:
     return _call("GET", f"/api/projects/{project_id}/file/")
 
