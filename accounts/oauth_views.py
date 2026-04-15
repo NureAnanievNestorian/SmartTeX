@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .models import OAuthAccessToken, OAuthAuthorizationCode, OAuthClient
+from .models import MCPToken, OAuthAccessToken, OAuthAuthorizationCode, OAuthClient
 
 
 def _json_body(request: HttpRequest) -> dict:
@@ -269,16 +269,29 @@ def oauth_introspect(request: HttpRequest) -> JsonResponse:
         .filter(token=token)
         .first()
     )
-    if not obj or obj.is_expired():
-        return JsonResponse({"active": False})
+    if obj and not obj.is_expired():
+        return JsonResponse(
+            {
+                "active": True,
+                "client_id": obj.client.client_id if obj.client else "",
+                "username": obj.user.username,
+                "sub": str(obj.user_id),
+                "scope": obj.scope,
+                "exp": int(obj.expires_at.timestamp()),
+            }
+        )
 
-    return JsonResponse(
-        {
-            "active": True,
-            "client_id": obj.client.client_id if obj.client else "",
-            "username": obj.user.username,
-            "sub": str(obj.user_id),
-            "scope": obj.scope,
-            "exp": int(obj.expires_at.timestamp()),
-        }
-    )
+    # Backward-compatible support for long-lived MCP tokens issued from the web UI.
+    mcp_token = MCPToken.objects.select_related("user").filter(token=token).first()
+    if mcp_token:
+        return JsonResponse(
+            {
+                "active": True,
+                "client_id": "mcp_token",
+                "username": mcp_token.user.username,
+                "sub": str(mcp_token.user_id),
+                "scope": "openid profile smarttex:read smarttex:write",
+            }
+        )
+
+    return JsonResponse({"active": False})

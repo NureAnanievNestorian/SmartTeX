@@ -321,6 +321,18 @@ class MCPCompatibilityMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class QueryTokenAuthMiddleware(BaseHTTPMiddleware):
+    """Allow token auth via query string: /mcp?token=... as fallback to Authorization header."""
+
+    async def dispatch(self, request: Request, call_next):
+        token = request.query_params.get("token", "").strip()
+        if token and not request.headers.get("authorization", "").strip():
+            headers = list(request.scope.get("headers", []))
+            headers.append((b"authorization", f"Bearer {token}".encode("utf-8")))
+            request.scope["headers"] = headers
+        return await call_next(request)
+
+
 @mcp.tool
 def list_projects() -> list[dict[str, Any]]:
     return _call("GET", "/api/projects/")
@@ -596,6 +608,7 @@ def list_templates() -> list[dict[str, Any]]:
 
 if __name__ == "__main__":
     app = mcp.http_app(path=MCP_PATH, transport=MCP_TRANSPORT)
+    app.add_middleware(QueryTokenAuthMiddleware)
     app.add_middleware(MCPCompatibilityMiddleware)
     app.add_middleware(
         CORSMiddleware,

@@ -62,6 +62,16 @@
   .empty-state .empty-icon svg { width: 22px; height: 22px; fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .empty-state .empty-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
   .empty-state .empty-sub { color: var(--muted); font-size: 14px; }
+
+  .mcp-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; padding: 18px; margin-bottom: 20px; }
+  .mcp-card h3 { margin: 0 0 10px; font-size: 15px; }
+  .mcp-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .mcp-token {
+    flex: 1 1 420px; min-height: 42px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    background: var(--surface-raised); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; color: var(--text);
+    overflow-x: auto; white-space: nowrap;
+  }
+  .mcp-help { margin-top: 8px; color: var(--muted); font-size: 12px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -88,6 +98,18 @@
       </div>
     </div>
   </form>
+</div>
+
+<div class="mcp-card">
+  <h3>MCP токен</h3>
+  <div class="mcp-row">
+    <div id="mcp-token" class="mcp-token">Натисніть "Отримати токен"</div>
+    <button type="button" id="mcp-token-load">Отримати токен</button>
+    <button type="button" id="mcp-token-copy">Копіювати</button>
+  </div>
+  <div class="mcp-help">
+    Для MCP можна використовувати як Bearer, так і URL з параметром: <code>?token=ВАШ_ТОКЕН</code>.
+  </div>
 </div>
 
 <div class="section-bar">
@@ -125,6 +147,38 @@
 {% endif %}
 <script>
 (() => {
+  const tokenBox = document.getElementById("mcp-token");
+  const loadBtn = document.getElementById("mcp-token-load");
+  const copyBtn = document.getElementById("mcp-token-copy");
+  if (tokenBox && loadBtn && copyBtn) {
+    let currentToken = "";
+    loadBtn.addEventListener("click", async () => {
+      loadBtn.disabled = true;
+      try {
+        const r = await fetch("/api/mcp/token/", {credentials: "same-origin"});
+        if (!r.ok) throw new Error("Не вдалося отримати токен");
+        const data = await r.json();
+        currentToken = String(data.token || "");
+        tokenBox.textContent = currentToken || "Токен порожній";
+      } catch (e) {
+        tokenBox.textContent = e?.message || "Помилка";
+      } finally {
+        loadBtn.disabled = false;
+      }
+    });
+    copyBtn.addEventListener("click", async () => {
+      if (!currentToken) return;
+      try {
+        await navigator.clipboard.writeText(currentToken);
+        copyBtn.textContent = "Скопійовано";
+        setTimeout(() => { copyBtn.textContent = "Копіювати"; }, 1200);
+      } catch {
+        copyBtn.textContent = "Не вдалося";
+        setTimeout(() => { copyBtn.textContent = "Копіювати"; }, 1200);
+      }
+    });
+  }
+
   const grid = document.getElementById("projects-grid");
   if (!grid) return;
   const sentinel = document.getElementById("projects-sentinel");
