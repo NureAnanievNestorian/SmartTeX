@@ -396,6 +396,44 @@ def list_project_sections(project_id: int, compact: bool = True) -> dict[str, An
 
 
 @mcp.tool
+def find_project_section_by_title(
+    project_id: int,
+    title_query: str,
+    compact: bool = True,
+    exact: bool = False,
+) -> dict[str, Any]:
+    query = (title_query or "").strip().lower()
+    if not query:
+        raise ValueError("title_query is required")
+
+    payload = _call("GET", f"/api/projects/{project_id}/sections/")
+    if not isinstance(payload, dict):
+        return {"sections": [], "total_matches": 0}
+
+    sections = payload.get("sections")
+    if not isinstance(sections, list):
+        return {"sections": [], "total_matches": 0}
+
+    matches: list[dict[str, Any]] = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        title = str(section.get("title", "")).strip()
+        normalized_title = title.lower()
+        if exact:
+            ok = normalized_title == query
+        else:
+            ok = query in normalized_title
+        if ok:
+            matches.append(section)
+
+    out: dict[str, Any] = {"sections": matches, "total_matches": len(matches)}
+    if compact:
+        out = _compact_sections_payload(out, compact=True)
+    return out
+
+
+@mcp.tool
 def get_project_section(
     project_id: int,
     section_index: int,
