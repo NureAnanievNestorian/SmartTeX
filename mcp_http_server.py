@@ -121,13 +121,63 @@ def _absolute_url(path: str | None) -> str | None:
     return f"{PUBLIC_BASE_URL}{path if path.startswith('/') else '/' + path}"
 
 
-def _enrich_compile_payload(project_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+def _compact_latex_log(log_text: str, max_chars: int = 4000) -> tuple[str, bool]:
+    text = str(log_text or "")
+    if not text:
+        return "", False
+
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return "", False
+
+    markers = (
+        "!",
+        "error",
+        "warning",
+        "not found",
+        "undefined",
+        "overfull",
+        "underfull",
+        "timed out",
+    )
+    important = [ln for ln in lines if any(m in ln.lower() for m in markers)]
+    tail = lines[-50:]
+
+    picked: list[str] = []
+    seen: set[str] = set()
+    for ln in [*important[:80], *tail]:
+        if ln not in seen:
+            picked.append(ln)
+            seen.add(ln)
+
+    compact = "\n".join(picked if picked else tail)
+    if len(compact) <= max_chars:
+        return compact, compact != text
+
+    truncated = compact[:max_chars].rstrip() + "\n...[log truncated]"
+    return truncated, True
+
+
+def _enrich_compile_payload(
+    project_id: int,
+    payload: dict[str, Any],
+    compact_log: bool = True,
+    max_log_chars: int = 4000,
+) -> dict[str, Any]:
     pdf_url = payload.get("pdf_url")
-    return {
+    enriched = {
         **payload,
         "pdf_url_external": _absolute_url(pdf_url),
         "pdf_download_url": _absolute_url(f"/api/projects/{project_id}/pdf/"),
     }
+    if compact_log and "log" in enriched:
+        raw_log = str(enriched.get("log") or "")
+        compact, was_truncated = _compact_latex_log(raw_log, max_chars=max_log_chars)
+        enriched["log"] = compact
+        enriched["log_compacted"] = True
+        enriched["log_truncated"] = was_truncated
+        enriched["log_original_length"] = len(raw_log)
+    return enriched
 
 
 auth_provider = None
@@ -334,15 +384,25 @@ def rollback_project_version(project_id: int, version_id: int, summary: str) -> 
 
 
 @mcp.tool
-def compile_project(project_id: int) -> dict[str, Any]:
+def compile_project(project_id: int, compact_log: bool = True, max_log_chars: int = 4000) -> dict[str, Any]:
     payload = _call("POST", f"/api/projects/{project_id}/compile/")
-    return _enrich_compile_payload(project_id, payload)
+    return _enrich_compile_payload(
+        project_id,
+        payload,
+        compact_log=bool(compact_log),
+        max_log_chars=max(500, min(int(max_log_chars), 20000)),
+    )
 
 
 @mcp.tool
-def get_compile_log(project_id: int) -> dict[str, Any]:
+def get_compile_log(project_id: int, compact_log: bool = True, max_log_chars: int = 4000) -> dict[str, Any]:
     payload = _call("GET", f"/api/projects/{project_id}/compile/")
-    return _enrich_compile_payload(project_id, payload)
+    return _enrich_compile_payload(
+        project_id,
+        payload,
+        compact_log=bool(compact_log),
+        max_log_chars=max(500, min(int(max_log_chars), 20000)),
+    )
 
 
 @mcp.tool
