@@ -180,6 +180,105 @@ def _enrich_compile_payload(
     return enriched
 
 
+def _compact_sections_payload(payload: dict[str, Any], compact: bool = True) -> dict[str, Any]:
+    if not compact:
+        return payload
+    sections = payload.get("sections")
+    if not isinstance(sections, list):
+        return payload
+
+    compact_sections: list[dict[str, Any]] = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        compact_sections.append(
+            {
+                "index": section.get("index"),
+                "level": section.get("level"),
+                "command": section.get("command"),
+                "title": section.get("title"),
+                "start_line": section.get("start_line"),
+                "end_line": section.get("end_line"),
+                "line_count": section.get("line_count"),
+            }
+        )
+
+    return {
+        **payload,
+        "sections": compact_sections,
+        "sections_compacted": True,
+    }
+
+
+def _compact_single_section_payload(
+    payload: dict[str, Any],
+    *,
+    include_content: bool = False,
+    content_preview_chars: int = 800,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    content = str(payload.get("content") or "")
+    compact: dict[str, Any] = {
+        "index": payload.get("index"),
+        "command": payload.get("command"),
+        "level": payload.get("level"),
+        "title": payload.get("title"),
+        "start_line": payload.get("start_line"),
+        "end_line": payload.get("end_line"),
+        "start_char": payload.get("start_char"),
+        "end_char": payload.get("end_char"),
+        "content_length": len(content),
+    }
+    if include_content:
+        limit = max(100, min(int(content_preview_chars), 20000))
+        compact["content"] = content[:limit]
+        compact["content_truncated"] = len(content) > limit
+    return compact
+
+
+def _compact_search_payload(
+    payload: dict[str, Any],
+    *,
+    include_line_text: bool = False,
+    max_matches: int = 50,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    matches = payload.get("matches")
+    if not isinstance(matches, list):
+        return payload
+
+    safe_max = max(1, min(int(max_matches), 500))
+    sliced = matches[:safe_max]
+
+    compact_matches: list[dict[str, Any]] = []
+    for m in sliced:
+        if not isinstance(m, dict):
+            continue
+        item = {
+            "file_name": m.get("file_name"),
+            "line": m.get("line"),
+            "column": m.get("column"),
+            "match_text": m.get("match_text"),
+        }
+        if include_line_text:
+            item["line_text"] = m.get("line_text")
+        compact_matches.append(item)
+
+    original_count = len(matches)
+    return {
+        **payload,
+        "matches": compact_matches,
+        "matches_compacted": True,
+        "matches_original_count": original_count,
+        "matches_returned": len(compact_matches),
+        "truncated": bool(payload.get("truncated")) or original_count > safe_max,
+    }
+
+
 auth_provider = None
 if MCP_OAUTH_ENABLED:
     verifier = DjangoIntrospectionTokenVerifier(
@@ -289,22 +388,57 @@ def upload_project_file(project_id: int, filename: str, content_base64: str, cha
 
 
 @mcp.tool
-def list_project_sections(project_id: int) -> dict[str, Any]:
-    return _call("GET", f"/api/projects/{project_id}/sections/")
+def list_project_sections(project_id: int, compact: bool = True) -> dict[str, Any]:
+    payload = _call("GET", f"/api/projects/{project_id}/sections/")
+    if isinstance(payload, dict):
+        return _compact_sections_payload(payload, compact=bool(compact))
+    return {"sections": [], "sections_compacted": bool(compact)}
 
 
 @mcp.tool
-def get_project_section(project_id: int, section_index: int) -> dict[str, Any]:
-    return _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
+def get_project_section(
+    project_id: int,
+    section_index: int,
+    compact: bool = True,
+    include_content: bool = False,
+    content_preview_chars: int = 800,
+) -> dict[str, Any]:
+    payload = _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
+    if not isinstance(payload, dict):
+        return {}
+    if not compact:
+        return payload
+    return _compact_single_section_payload(
+        payload,
+        include_content=bool(include_content),
+        content_preview_chars=int(content_preview_chars),
+    )
 
 
 @mcp.tool
-def update_project_section(project_id: int, section_index: int, content: str, change_summary: str) -> dict[str, Any]:
+def update_project_section(
+    project_id: int,
+    section_index: int,
+    content: str,
+    change_summary: str,
+    compact: bool = True,
+    include_content: bool = False,
+    content_preview_chars: int = 800,
+) -> dict[str, Any]:
     summary = _require_summary(change_summary)
-    return _call(
+    payload = _call(
         "PUT",
         f"/api/projects/{project_id}/sections/{section_index}/",
         {"content": content, "change_summary": summary, "change_source": "mcp"},
+    )
+    if not isinstance(payload, dict):
+        return {}
+    if not compact:
+        return payload
+    return _compact_single_section_payload(
+        payload,
+        include_content=bool(include_content),
+        content_preview_chars=int(content_preview_chars),
     )
 
 
@@ -327,6 +461,9 @@ def search_project_content(
     max_results: int = 200,
     include_main: bool = True,
     include_assets: bool = True,
+    compact: bool = True,
+    include_line_text: bool = False,
+    max_matches_in_response: int = 50,
 ) -> dict[str, Any]:
     params = urlencode(
         {
@@ -338,7 +475,16 @@ def search_project_content(
             "include_assets": str(bool(include_assets)).lower(),
         }
     )
-    return _call("GET", f"/api/projects/{project_id}/search/?{params}")
+    payload = _call("GET", f"/api/projects/{project_id}/search/?{params}")
+    if not isinstance(payload, dict):
+        return {}
+    if not compact:
+        return payload
+    return _compact_search_payload(
+        payload,
+        include_line_text=bool(include_line_text),
+        max_matches=int(max_matches_in_response),
+    )
 
 
 @mcp.tool
