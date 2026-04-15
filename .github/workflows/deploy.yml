@@ -60,6 +60,9 @@ jobs:
       packages: read
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Copy Docker files to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
