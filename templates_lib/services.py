@@ -33,7 +33,8 @@ def has_template_pdf(template: Template) -> bool:
 
 
 def template_pdf_url(template: Template) -> str:
-    return f"{settings.MEDIA_URL}templates/{template.id}/preview.pdf"
+    # Expose preview only via authenticated Django view.
+    return f"/templates/{template.id}/pdf/"
 
 
 def template_pdf_version(template: Template) -> int | None:

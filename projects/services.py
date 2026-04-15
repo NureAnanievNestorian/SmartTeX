@@ -7,6 +7,7 @@ from datetime import datetime, UTC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from django.conf import settings
 
@@ -156,7 +157,7 @@ def list_project_assets(project: Project) -> list[dict[str, Any]]:
                 "is_image": ext in IMAGE_EXTENSIONS,
                 "is_text": ext in TEXT_EXTENSIONS,
                 "extension": ext,
-                "url": f"{settings.MEDIA_URL}projects/{project.owner_id}/{project.id}/{path.name}",
+                "url": f"/api/projects/{project.id}/files/{quote(path.name)}",
             }
         )
     return assets
@@ -176,7 +177,7 @@ def save_project_asset(project: Project, filename: str, data: bytes) -> dict[str
         "is_image": ext in IMAGE_EXTENSIONS,
         "is_text": ext in TEXT_EXTENSIONS,
         "extension": ext,
-        "url": f"{settings.MEDIA_URL}projects/{project.owner_id}/{project.id}/{path.name}",
+        "url": f"/api/projects/{project.id}/files/{quote(path.name)}",
     }
 
 
@@ -687,7 +688,8 @@ def has_pdf(project: Project) -> bool:
 
 
 def pdf_relative_url(project: Project) -> str:
-    return f"{settings.MEDIA_URL}projects/{project.owner_id}/{project.id}/main.pdf"
+    # Keep PDF access behind authenticated API endpoint instead of public /media path.
+    return f"/api/projects/{project.id}/pdf/"
 
 
 def pdf_version(project: Project) -> int | None:
