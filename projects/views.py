@@ -32,6 +32,7 @@ from .services import (
     read_compile_log,
     read_tex_content,
     read_project_window,
+    write_project_window,
     rollback_to_version,
     save_project_asset,
     search_project_content,
@@ -311,6 +312,61 @@ def api_project_read_window(request: HttpRequest, project_id: int) -> JsonRespon
         )
     except (ValueError, TypeError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_write_window(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    body = _json_body(request)
+
+    replacement = body.get("replacement")
+    if not isinstance(replacement, str):
+        return JsonResponse({"detail": "replacement must be a string"}, status=400)
+
+    def _to_int(v) -> int | None:
+        if v is None or str(v).strip() == "":
+            return None
+        return int(v)
+
+    try:
+        meta = _change_meta(request, body)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    before = read_tex_content(project)
+    try:
+        payload = write_project_window(
+            project,
+            file_name=str(body.get("file_name", "main.tex")),
+            replacement=replacement,
+            start_line=_to_int(body.get("start_line")),
+            end_line=_to_int(body.get("end_line")),
+            start_char=_to_int(body.get("start_char")),
+            end_char=_to_int(body.get("end_char")),
+        )
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    project.last_status = Project.CompileStatus.PENDING
+    project.save(update_fields=["last_status", "updated_at"])
+    after = read_tex_content(project)
+    if meta["source"] == "mcp" and before != after:
+        target = f"{payload.get('file_name', 'main.tex')}:{payload.get('mode', 'window')}"
+        create_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="write_project_window",
+            target=target,
+            summary=meta["summary"],
+            before_content=before,
+            after_content=after,
+        )
     return JsonResponse(payload)
 
 

@@ -560,6 +560,35 @@ def read_project_window(
 
 
 @mcp.tool
+def rewrite_project_window(
+    project_id: int,
+    replacement: str,
+    file_name: str = "main.tex",
+    start_line: int | None = None,
+    end_line: int | None = None,
+    start_char: int | None = None,
+    end_char: int | None = None,
+    change_summary: str = "",
+) -> dict[str, Any]:
+    summary = _require_summary(change_summary)
+    payload = {
+        "file_name": file_name,
+        "replacement": replacement,
+        "change_summary": summary,
+        "change_source": "mcp",
+    }
+    if start_line is not None:
+        payload["start_line"] = int(start_line)
+    if end_line is not None:
+        payload["end_line"] = int(end_line)
+    if start_char is not None:
+        payload["start_char"] = int(start_char)
+    if end_char is not None:
+        payload["end_char"] = int(end_char)
+    return _call("POST", f"/api/projects/{project_id}/write-window/", payload)
+
+
+@mcp.tool
 def list_project_versions(project_id: int) -> dict[str, Any]:
     return _call("GET", f"/api/projects/{project_id}/versions/")
 

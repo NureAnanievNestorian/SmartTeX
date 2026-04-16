@@ -420,6 +420,87 @@ def read_project_window(
     }
 
 
+def write_project_window(
+    project: Project,
+    *,
+    replacement: str,
+    file_name: str = "main.tex",
+    start_line: int | None = None,
+    end_line: int | None = None,
+    start_char: int | None = None,
+    end_char: int | None = None,
+) -> dict[str, Any]:
+    if not isinstance(replacement, str):
+        raise ValueError("replacement must be a string")
+
+    path = _resolve_text_file_path(project, file_name)
+    source = _read_text_file(path)
+    lines_keepends = source.splitlines(keepends=True)
+    lines = source.splitlines()
+
+    has_line_window = start_line is not None or end_line is not None
+    has_char_window = start_char is not None or end_char is not None
+    if has_line_window and has_char_window:
+        raise ValueError("use either line window or char window, not both")
+
+    if has_char_window:
+        s_char = 0 if start_char is None else int(start_char)
+        e_char = len(source) if end_char is None else int(end_char)
+        if s_char < 0 or e_char < 0:
+            raise ValueError("char offsets must be non-negative")
+        if e_char < s_char:
+            raise ValueError("end_char must be >= start_char")
+        if s_char > len(source) or e_char > len(source):
+            raise ValueError("char offsets out of bounds")
+
+        updated = source[:s_char] + replacement + source[e_char:]
+        if is_tex_too_large(updated):
+            raise ValueError("File exceeds 1MB")
+        path.write_text(updated, encoding="utf-8")
+        return {
+            "file_name": path.name,
+            "mode": "chars",
+            "start_char": s_char,
+            "end_char": e_char,
+            "replaced_chars": e_char - s_char,
+            "inserted_chars": len(replacement),
+            "new_total_chars": len(updated),
+            "new_total_lines": len(updated.splitlines()),
+        }
+
+    s_line = 1 if start_line is None else int(start_line)
+    e_line = min(len(lines), s_line + 199) if end_line is None else int(end_line)
+    if s_line < 1 or e_line < 1:
+        raise ValueError("line numbers are 1-based and must be positive")
+    if e_line < s_line:
+        raise ValueError("end_line must be >= start_line")
+    if s_line > max(1, len(lines)):
+        raise ValueError("start_line out of bounds")
+    e_line = min(e_line, len(lines))
+
+    start_idx = s_line - 1
+    end_idx = e_line
+    replacement_text = replacement
+    if replacement_text and not replacement_text.endswith("\n"):
+        replacement_text = f"{replacement_text}\n"
+    replacement_lines = replacement_text.splitlines(keepends=True)
+    updated = "".join(lines_keepends[:start_idx] + replacement_lines + lines_keepends[end_idx:])
+    if is_tex_too_large(updated):
+        raise ValueError("File exceeds 1MB")
+    path.write_text(updated, encoding="utf-8")
+
+    return {
+        "file_name": path.name,
+        "mode": "lines",
+        "start_line": s_line,
+        "end_line": e_line,
+        "replaced_lines": max(0, e_line - s_line + 1),
+        "inserted_lines": len(replacement_text.splitlines()),
+        "new_total_chars": len(updated),
+        "new_total_lines": len(updated.splitlines()),
+    }
+
+
 def search_project_content(
     project: Project,
     *,
