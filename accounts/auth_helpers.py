@@ -31,7 +31,13 @@ def get_api_user(request: HttpRequest) -> Optional[User]:
             .filter(token=token, expires_at__gt=timezone.now())
             .first()
         )
-        return access.user if access else None
+        if access:
+            return access.user
+        # Backward-compatible fallback: allow MCP tokens passed as Bearer.
+        try:
+            return MCPToken.objects.select_related("user").get(token=token).user
+        except MCPToken.DoesNotExist:
+            return None
     elif request.headers.get("X-API-Token"):
         token = request.headers["X-API-Token"].strip()
         if not token:
