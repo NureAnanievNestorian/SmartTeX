@@ -3,12 +3,15 @@ import subprocess
 import threading
 import re
 import difflib
+import base64
+import io
 from datetime import datetime, UTC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import pypdfium2 as pdfium
 from django.conf import settings
 
 from .models import Project, ProjectVersion
@@ -687,6 +690,7 @@ def compile_project(project: Project) -> CompileResult:
     latex_args = [
         "lualatex",
         "-interaction=nonstopmode",
+        "-synctex=1",
     ]
     if strict_errors:
         latex_args.append("-halt-on-error")
@@ -779,3 +783,151 @@ def pdf_version(project: Project) -> int | None:
         return None
     # Nanoseconds avoid collisions when multiple compiles finish within the same second.
     return int(path.stat().st_mtime_ns)
+
+
+def _docker_mount_source(project: Project) -> Path:
+    workdir = ensure_project_dir(project)
+    host_project_root = str(getattr(settings, "HOST_PROJECT_ROOT", "")).strip()
+    if host_project_root:
+        host_path = Path(host_project_root) / "media" / "projects" / str(project.owner_id) / str(project.id)
+        host_path.mkdir(parents=True, exist_ok=True)
+        return host_path
+    return workdir
+
+
+def render_pdf_page_image(
+    project: Project,
+    *,
+    page: int = 1,
+    scale: float = 1.5,
+    image_format: str = "png",
+) -> dict[str, Any]:
+    pdf_path = pdf_file_path(project)
+    if not pdf_path.exists():
+        raise ValueError("PDF not found")
+    if page < 1:
+        raise ValueError("page must be >= 1")
+
+    fmt = (image_format or "png").strip().upper()
+    if fmt not in {"PNG", "JPEG", "WEBP"}:
+        raise ValueError("image_format must be one of: png, jpeg, webp")
+    safe_scale = max(0.5, min(float(scale), 4.0))
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    page_count = len(doc)
+    if page > page_count:
+        raise ValueError(f"page out of bounds (1..{page_count})")
+
+    pdf_page = doc[page - 1]
+    bitmap = pdf_page.render(scale=safe_scale)
+    image = bitmap.to_pil()
+    if fmt in {"JPEG", "WEBP"} and image.mode not in {"RGB", "L"}:
+        image = image.convert("RGB")
+
+    buf = io.BytesIO()
+    save_kwargs: dict[str, Any] = {}
+    if fmt == "JPEG":
+        save_kwargs["quality"] = 88
+        save_kwargs["optimize"] = True
+    image.save(buf, format=fmt, **save_kwargs)
+    image_bytes = buf.getvalue()
+    mime = "image/png" if fmt == "PNG" else ("image/jpeg" if fmt == "JPEG" else "image/webp")
+
+    return {
+        "page": page,
+        "page_count": page_count,
+        "scale": safe_scale,
+        "image_format": fmt.lower(),
+        "mime_type": mime,
+        "width": int(image.width),
+        "height": int(image.height),
+        "image_base64": base64.b64encode(image_bytes).decode("ascii"),
+    }
+
+
+def synctex_line_to_pdf(
+    project: Project,
+    *,
+    line: int,
+    file_name: str = "main.tex",
+    column: int = 1,
+) -> dict[str, Any]:
+    if line < 1:
+        raise ValueError("line must be >= 1")
+    if column < 1:
+        raise ValueError("column must be >= 1")
+
+    tex_path = _resolve_text_file_path(project, file_name)
+    pdf_path = pdf_file_path(project)
+    if not pdf_path.exists():
+        raise ValueError("PDF not found; compile project first")
+
+    mount_source = _docker_mount_source(project)
+    image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
+    query = f"{line}:{column}:{tex_path.name}"
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--memory=300m",
+        "--cpus=0.5",
+        "-v",
+        f"{mount_source}:/workspace:rw",
+        "-w",
+        "/workspace",
+        image,
+        "synctex",
+        "view",
+        "-i",
+        query,
+        "-o",
+        "main.pdf",
+    ]
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=40,
+        check=False,
+    )
+    out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+
+    matches: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw in out.splitlines():
+        line_text = raw.strip()
+        if line_text.startswith("Page:"):
+            if current:
+                matches.append(current)
+            try:
+                page_no = int(line_text.split(":", 1)[1].strip())
+            except Exception:
+                page_no = 0
+            current = {"page": page_no}
+            continue
+        if current and ":" in line_text:
+            key, value = line_text.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key in {"x", "y", "h", "v"}:
+                try:
+                    current[key] = float(value)
+                except ValueError:
+                    current[key] = value
+    if current:
+        matches.append(current)
+
+    pages = sorted({int(m.get("page", 0)) for m in matches if int(m.get("page", 0)) > 0})
+    if not pages and proc.returncode != 0:
+        tail = "\n".join(out.splitlines()[-20:]).strip()
+        raise ValueError(tail or "SyncTeX command failed")
+
+    return {
+        "file_name": tex_path.name,
+        "line": int(line),
+        "column": int(column),
+        "pages": pages,
+        "matches": matches,
+    }

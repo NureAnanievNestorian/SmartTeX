@@ -589,6 +589,40 @@ def rewrite_project_window(
 
 
 @mcp.tool
+def get_project_pdf_page_image(
+    project_id: int,
+    page: int = 1,
+    scale: float = 1.5,
+    image_format: str = "png",
+) -> dict[str, Any]:
+    params = urlencode(
+        {
+            "page": int(page),
+            "scale": float(scale),
+            "image_format": image_format,
+        }
+    )
+    return _call("GET", f"/api/projects/{project_id}/pdf-page-image/?{params}")
+
+
+@mcp.tool
+def synctex_line_to_page(
+    project_id: int,
+    line: int,
+    file_name: str = "main.tex",
+    column: int = 1,
+) -> dict[str, Any]:
+    params = urlencode(
+        {
+            "line": int(line),
+            "column": int(column),
+            "file_name": file_name,
+        }
+    )
+    return _call("GET", f"/api/projects/{project_id}/synctex/line/?{params}")
+
+
+@mcp.tool
 def list_project_versions(project_id: int) -> dict[str, Any]:
     return _call("GET", f"/api/projects/{project_id}/versions/")
 

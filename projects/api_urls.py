@@ -8,9 +8,11 @@ from .views import (
     api_project_file,
     api_project_insert,
     api_project_pdf,
+    api_project_pdf_page_image,
     api_project_read_window,
     api_project_write_window,
     api_project_search,
+    api_project_synctex_line,
     api_project_section,
     api_project_sections,
     api_project_version_detail,
@@ -36,4 +38,6 @@ urlpatterns = [
     path("projects/<int:project_id>/versions/<int:version_id>/rollback/", api_project_version_rollback),
     path("projects/<int:project_id>/compile/", api_project_compile),
     path("projects/<int:project_id>/pdf/", api_project_pdf),
+    path("projects/<int:project_id>/pdf-page-image/", api_project_pdf_page_image),
+    path("projects/<int:project_id>/synctex/line/", api_project_synctex_line),
 ]

@@ -32,6 +32,8 @@ from .services import (
     read_compile_log,
     read_tex_content,
     read_project_window,
+    render_pdf_page_image,
+    synctex_line_to_pdf,
     write_project_window,
     rollback_to_version,
     save_project_asset,
@@ -692,6 +694,52 @@ def api_project_pdf(request: HttpRequest, project_id: int):
         return HttpResponseNotFound("PDF not found")
 
     return FileResponse(open(path, "rb"), content_type="application/pdf")
+
+
+@csrf_exempt
+@require_GET
+def api_project_pdf_page_image(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    try:
+        page = int(request.GET.get("page", "1"))
+        scale = float(request.GET.get("scale", "1.5"))
+        image_format = str(request.GET.get("image_format", "png"))
+        payload = render_pdf_page_image(
+            project,
+            page=page,
+            scale=scale,
+            image_format=image_format,
+        )
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+@require_GET
+def api_project_synctex_line(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    try:
+        line = int(request.GET.get("line", "0"))
+        column = int(request.GET.get("column", "1"))
+        file_name = str(request.GET.get("file_name", "main.tex"))
+        payload = synctex_line_to_pdf(
+            project,
+            line=line,
+            column=column,
+            file_name=file_name,
+        )
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    return JsonResponse(payload)
 
 
 @login_required
