@@ -26,6 +26,7 @@ services:
       - "${WEB_PORT:-8000}:8000"
     command: sh -c "python manage.py migrate && python manage.py collectstatic --noinput && uvicorn SmartTeX.asgi:application --host 0.0.0.0 --port 8000"
     volumes:
+      - /opt/smarttex/static:/app/staticfiles
       - /opt/smarttex/media:/app/media
       - "${DOCKER_SOCK_PATH:-/var/run/docker.sock}:/var/run/docker.sock"
 
