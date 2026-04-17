@@ -595,7 +595,7 @@
       </div>
       <div class="e-editor-wrap" id="editor-wrap">
         <pre id="editor-hl" aria-hidden="true"></pre>
-        <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+        <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off" wrap="off"></textarea>
         <div class="e-drop-overlay">Перетягніть файли сюди</div>
       </div>
       <div class="e-asset-view" id="asset-view">
@@ -1079,13 +1079,21 @@
       li.appendChild(btn); outlineEl.appendChild(li);
     });
   }
+  function getEditorLineHeightPx() {
+    const raw = window.getComputedStyle(editor).lineHeight;
+    const parsed = Number.parseFloat(raw || "");
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const fontSize = Number.parseFloat(window.getComputedStyle(editor).fontSize || "14");
+    return Math.max(14, fontSize * 1.65);
+  }
   function jumpToLine(n) {
     if (selectedFile.name !== "main.tex") return;
     const lines = editor.value.split("\n");
     let pos = 0;
     for (let i=0; i<Math.max(0,n-1) && i<lines.length; i++) pos += lines[i].length + 1;
     editor.focus(); editor.setSelectionRange(pos, pos);
-    editor.scrollTop = Math.max(0, (n-5) * 23);
+    const lineH = getEditorLineHeightPx();
+    editor.scrollTop = Math.max(0, (n - 5) * lineH);
   }
 
 
