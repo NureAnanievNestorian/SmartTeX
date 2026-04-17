@@ -698,9 +698,9 @@
   let pdfDoc = null;
   let pdfRendering = false;
   let pdfCurrentUrl = null;
-  let pdfViewports = []; // scale-applied viewports per page
+  let pdfViewports = [];
 
-  // ── Panel resize ────────────────────────────────────────────────────────
+
   (function() {
     const body = document.getElementById("e-body");
     const MIN_W = 160, MAX_FRAC = 0.45;
@@ -741,7 +741,7 @@
             applyWidths(startLW, nw);
             localStorage.setItem("st_right_w", nw);
           }
-          // re-render PDF pages if right panel resized
+
           if (side === "right" && pdfDoc) renderPdfPages(true);
         }
         function onUp() {
@@ -757,10 +757,11 @@
     makeDragger("resize-right", "right");
   })();
 
-  // ── PDF.js viewer ───────────────────────────────────────────────────────
+
   async function renderPdfPages(sizeOnly = false) {
     if (!pdfDoc || pdfRendering) return;
     pdfRendering = true;
+    const dpr = window.devicePixelRatio || 1;
     const containerW = pdfCanvasContainer.clientWidth - 16;
     const savedScroll = pdfCanvasContainer.scrollTop;
     if (!sizeOnly) pdfCanvasContainer.innerHTML = "";
@@ -770,7 +771,8 @@
       const page = await pdfDoc.getPage(i);
       const base = page.getViewport({ scale: 1 });
       const scale = Math.max(0.5, containerW / base.width);
-      const vp = page.getViewport({ scale });
+      const vp   = page.getViewport({ scale });
+      const vpHD = page.getViewport({ scale: scale * dpr });
       pdfViewports.push(vp);
 
       let wrap, canvas;
@@ -787,19 +789,18 @@
         wrap.appendChild(canvas);
         pdfCanvasContainer.appendChild(wrap);
 
-        // SyncTeX: click on canvas to jump to LaTeX source
+
         canvas.addEventListener("click", async (e) => {
           const rect = canvas.getBoundingClientRect();
           const clickX = e.clientX - rect.left;
           const clickY = e.clientY - rect.top;
-          // PDF coordinate system: origin bottom-left, y-axis flipped
-          const pdfX = (clickX / scale) * 65536;
-          const pdfY = (base.height - clickY / scale) * 65536;
+
+          const pdfX = clickX / scale;
+          const pdfY = base.height - (clickY / scale);
           try {
-            const r = await api(`/api/projects/${projectId}/synctex/pdf/?page=${i}&x=${pdfX.toFixed(0)}&y=${pdfY.toFixed(0)}`);
+            const r = await api(`/api/projects/${projectId}/synctex/pdf/?page=${i}&x=${pdfX.toFixed(4)}&y=${pdfY.toFixed(4)}`);
             if (r.line) {
               jumpToLine(r.line);
-              // show pulse marker at click location
               const marker = document.createElement("div");
               marker.className = "pdf-synctex-marker";
               marker.style.left = clickX + "px";
@@ -811,11 +812,14 @@
         });
       }
 
-      canvas.width = Math.round(vp.width);
-      canvas.height = Math.round(vp.height);
-      wrap.style.width = canvas.width + "px";
-      wrap.style.height = canvas.height + "px";
-      await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+
+      canvas.width  = Math.round(vpHD.width);
+      canvas.height = Math.round(vpHD.height);
+      canvas.style.width  = Math.round(vp.width)  + "px";
+      canvas.style.height = Math.round(vp.height) + "px";
+      wrap.style.width  = Math.round(vp.width)  + "px";
+      wrap.style.height = Math.round(vp.height) + "px";
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport: vpHD }).promise;
     }
 
     if (!sizeOnly) pdfCanvasContainer.scrollTop = savedScroll;
@@ -842,7 +846,7 @@
     }
   }
 
-  // Update page info on scroll
+
   pdfCanvasContainer.addEventListener("scroll", () => {
     if (!pdfDoc) return;
     const pages = pdfCanvasContainer.querySelectorAll(".pdf-page-wrap");
@@ -856,7 +860,7 @@
     }
   });
 
-  // ── Custom confirm ──────────────────────────────────────────────────────
+
   document.getElementById("confirm-ok").addEventListener("click", () => {
     document.getElementById("confirm-overlay").classList.remove("open");
     if (_confirmResolve) { _confirmResolve(true); _confirmResolve = null; }
@@ -947,7 +951,7 @@
     if (e.key === "Escape" && diffModalOverlay.classList.contains("open")) closeDiffModal();
   });
 
-  // ── Syntax highlighting ─────────────────────────────────────────────────
+
   function escHtml(s) {
     return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   }
@@ -955,23 +959,23 @@
     let out = "", i = 0, n = src.length;
     while (i < n) {
       const ch = src[i];
-      // Comment: % to EOL
+
       if (ch === "%" && (i === 0 || src[i-1] !== "\\")) {
         let j = i; while (j < n && src[j] !== "\n") j++;
         out += `<span class="hl-comment">${escHtml(src.slice(i, j))}</span>`;
         i = j; continue;
       }
-      // LaTeX command: \word
+
       if (ch === "\\") {
         let j = i + 1;
         if (j < n) {
           while (j < n && /[a-zA-Z@*]/.test(src[j])) j++;
-          if (j === i + 1) j++; // single non-alpha escape char
+          if (j === i + 1) j++;
           out += `<span class="hl-cmd">${escHtml(src.slice(i, j))}</span>`;
           i = j; continue;
         }
       }
-      // Math: $$ first, then $
+
       if (ch === "$") {
         if (i+1 < n && src[i+1] === "$") {
           const e = src.indexOf("$$", i+2);
@@ -981,10 +985,10 @@
           if (e !== -1 && e-i < 300) { out += `<span class="hl-math">${escHtml(src.slice(i, e+1))}</span>`; i = e+1; continue; }
         }
       }
-      // Braces & brackets
+
       if (ch === "{" || ch === "}") { out += `<span class="hl-brace">${escHtml(ch)}</span>`; i++; continue; }
       if (ch === "[" || ch === "]") { out += `<span class="hl-bracket">${escHtml(ch)}</span>`; i++; continue; }
-      // Plain text — batch consecutive plain chars
+
       let j = i;
       while (j < n) {
         const c = src[j];
@@ -1006,18 +1010,18 @@
     editorHl.scrollLeft = editor.scrollLeft;
   });
 
-  // ── Log ─────────────────────────────────────────────────────────────────
+
   logToggleBtn.addEventListener("click", () => {
     const open = logEl.classList.toggle("open");
     logToggleBtn.classList.toggle("open", open);
   });
   function openLog() { logEl.classList.add("open"); logToggleBtn.classList.add("open"); }
 
-  // ── Status & hint ────────────────────────────────────────────────────────
+
   function setStatus(v) { statusEl.textContent = v; statusEl.className = `status-chip ${v}`; }
   function setSaveHint(t, type="") { saveHintEl.textContent = t; saveHintEl.className = `e-save-hint${type ? " "+type : ""}`; }
 
-  // ── API ──────────────────────────────────────────────────────────────────
+
   async function api(url, opts={}) {
     const h = {"X-CSRFToken": csrfToken};
     if (!(opts.body instanceof FormData)) h["Content-Type"] = "application/json";
@@ -1033,7 +1037,7 @@
     return d.toLocaleString("uk-UA",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
   }
 
-  // ── Tabs ─────────────────────────────────────────────────────────────────
+
   document.querySelectorAll(".e-tab").forEach(tab => {
     tab.addEventListener("click", () => {
       document.querySelectorAll(".e-tab").forEach(t => t.classList.remove("active"));
@@ -1043,7 +1047,7 @@
     });
   });
 
-  // ── File list ────────────────────────────────────────────────────────────
+
   function renderFileList() {
     const all = [{name:"main.tex", is_text:true, size:editor.value.length, type:"main"}, ...projectFiles];
     fileListEl.innerHTML = "";
@@ -1057,7 +1061,7 @@
     });
   }
 
-  // ── Outline ──────────────────────────────────────────────────────────────
+
   const OL_CLASS = {0:"e-ol-0", 1:"e-ol-2", 2:"e-ol-2", 3:"e-ol-3", 4:"e-ol-4", 5:"e-ol-5", 6:"e-ol-6"};
   function renderOutline() {
     outlineEl.innerHTML = "";
@@ -1081,7 +1085,7 @@
     editor.scrollTop = Math.max(0, (n-5) * 23);
   }
 
-  // ── Diff rendering ───────────────────────────────────────────────────────
+
   function parseHunkStart(line) {
     const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (!m) return null;
@@ -1234,7 +1238,7 @@
     ), truncated };
   }
 
-  // ── Version history ──────────────────────────────────────────────────────
+
   function renderVersions() {
     versionsListEl.innerHTML = "";
     if (!versions.length) {
@@ -1320,7 +1324,7 @@
     } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
   }
 
-  // ── Load ─────────────────────────────────────────────────────────────────
+
   async function loadMainFile() {
     const data = await api(`/api/projects/${projectId}/file/`, {method:"GET"});
     editor.value = data.content || "";
@@ -1362,7 +1366,7 @@
     }
   }
 
-  // ── Save ─────────────────────────────────────────────────────────────────
+
   async function saveMainFile() {
     if (saving || selectedFile.name !== "main.tex") return;
     saving = true; setSaveHint("Збереження…", "saving");
@@ -1375,7 +1379,7 @@
     finally { saving = false; }
   }
 
-  // ── Compile ──────────────────────────────────────────────────────────────
+
   async function compileProject() {
     logEl.textContent = "Компіляція…"; openLog();
     try {
@@ -1391,7 +1395,7 @@
     } catch (err) { setStatus("error"); logEl.textContent = `Помилка: ${err.message}`; }
   }
 
-  // ── Select file ──────────────────────────────────────────────────────────
+
   async function selectFile(file) {
     selectedFile = {name:file.name, type:file.type||"asset", ...file};
     currentFileLbl.textContent = file.name;
@@ -1413,7 +1417,7 @@
     setSaveHint(`Завантажено: ${file.name}`, "saved");
   }
 
-  // ── Drag & drop ──────────────────────────────────────────────────────────
+
   let dragCounter = 0;
   dropZone.addEventListener("dragenter", e => { e.preventDefault(); dragCounter++; dropZone.classList.add("drag-active"); });
   dropZone.addEventListener("dragleave", () => { if (--dragCounter <= 0) { dragCounter=0; dropZone.classList.remove("drag-active"); } });
@@ -1426,7 +1430,7 @@
     }
   });
 
-  // ── Poll ─────────────────────────────────────────────────────────────────
+
   async function pollCompileStatus() {
     try {
       const d = await api(`/api/projects/${projectId}/compile/`, {method:"GET"});
@@ -1441,7 +1445,7 @@
     } catch(_) {}
   }
 
-  // ── Events ───────────────────────────────────────────────────────────────
+
   document.getElementById("compile-btn").addEventListener("click", compileProject);
   document.getElementById("refresh-pdf").addEventListener("click", () => {
     if (pdfCurrentUrl) {
@@ -1461,7 +1465,7 @@
     finally { uploadInput.value = ""; }
   });
 
-  // Autosave + highlight
+
   editor.addEventListener("input", () => {
     syncHighlight();
     if (selectedFile.name !== "main.tex") return;
@@ -1471,7 +1475,7 @@
     saveTimer = setTimeout(() => saveMainFile().then(loadSections).catch(()=>{}), 1200);
   });
 
-  // ── Init ─────────────────────────────────────────────────────────────────
+
   async function init() {
     await loadMainFile();
     await Promise.all([loadFiles(), loadSections(), loadVersions(true)]);
