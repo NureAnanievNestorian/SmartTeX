@@ -53,6 +53,32 @@
     color: var(--text-2);
     background: var(--surface-raised);
   }
+  .actions button:disabled {
+    background: #1a2a44;
+    border-color: #30486d;
+    color: #89a2c5;
+    cursor: not-allowed;
+  }
+  .status-box {
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid #2e4f7f;
+    background: #12223a;
+    color: #c8dbf9;
+    font-size: 13px;
+  }
+  .status-box.success {
+    border-color: #2d6f4a;
+    background: #122c22;
+    color: #b8efce;
+  }
+  .timer {
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: #d9e9ff;
+  }
 </style>
 {% endblock %}
 {% block content %}
@@ -67,12 +93,56 @@
     Відкрийте лист і перейдіть за посиланням підтвердження.
   </p>
   <div class="email-chip">{{ email }}</div>
+  {% if resent %}
+    <div class="status-box success">Лист підтвердження успішно надіслано повторно.</div>
+  {% endif %}
+  <div class="status-box" id="resend-status" {% if cooldown_remaining|default:0 <= 0 %}style="display:none;"{% endif %}>
+    Повторна відправка буде доступна через <span class="timer" id="resend-timer">00:00</span>.
+  </div>
   <div class="actions">
     <form method="post" action="{% url 'resend-verification' %}">
       {% csrf_token %}
-      <button type="submit">Надіслати лист ще раз</button>
+      <button id="resend-btn" type="submit" {% if cooldown_remaining|default:0 > 0 %}disabled{% endif %}>Надіслати лист ще раз</button>
     </form>
     <a href="{% url 'logout' %}">Вийти</a>
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  (function () {
+    let remaining = Number("{{ cooldown_remaining|default:0|escapejs }}") || 0;
+    const timerEl = document.getElementById("resend-timer");
+    const statusEl = document.getElementById("resend-status");
+    const resendBtn = document.getElementById("resend-btn");
+
+    function formatMinSec(totalSeconds) {
+      const mins = Math.floor(totalSeconds / 60);
+      const secs = totalSeconds % 60;
+      return String(mins).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
+    }
+
+    function render() {
+      if (remaining > 0) {
+        if (timerEl) timerEl.textContent = formatMinSec(remaining);
+        if (resendBtn) resendBtn.disabled = true;
+        if (statusEl) statusEl.style.display = "";
+      } else {
+        if (resendBtn) resendBtn.disabled = false;
+        if (statusEl) statusEl.style.display = "none";
+      }
+    }
+
+    render();
+    if (remaining > 0) {
+      const timerId = setInterval(function () {
+        remaining -= 1;
+        render();
+        if (remaining <= 0) {
+          clearInterval(timerId);
+        }
+      }, 1000);
+    }
+  })();
+</script>
 {% endblock %}

@@ -151,14 +151,13 @@ OAUTH_ISSUER_URL = os.getenv('OAUTH_ISSUER_URL', '').strip()
 OAUTH_ACCESS_TOKEN_TTL_SECONDS = int(os.getenv('OAUTH_ACCESS_TOKEN_TTL_SECONDS', '3600'))
 OAUTH_INTROSPECTION_SECRET = os.getenv('OAUTH_INTROSPECTION_SECRET', '').strip()
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.getenv("MAILJET_SMTP_HOST", "in-v3.mailjet.com").strip()
-EMAIL_PORT = int(os.getenv("MAILJET_SMTP_PORT", "587"))
-EMAIL_HOST_USER = os.getenv("MAILJET_API_KEY", "").strip()
-EMAIL_HOST_PASSWORD = os.getenv("MAILJET_SECRET_KEY", "").strip()
-EMAIL_USE_TLS = os.getenv("MAILJET_SMTP_TLS", "True").lower() in {"1", "true", "yes"}
-EMAIL_USE_SSL = False
-DEFAULT_FROM_EMAIL = os.getenv("MAIL_FROM_EMAIL", "noreply@smarttex.local").strip()
+MAILJET_API_KEY = os.getenv("MAILJET_API_KEY", "").strip()
+MAILJET_SECRET_KEY = os.getenv("MAILJET_SECRET_KEY", "").strip()
+MAILJET_FROM_EMAIL = os.getenv("MAILJET_FROM_EMAIL", os.getenv("MAIL_FROM_EMAIL", "noreply@smarttex.local")).strip()
+MAILJET_FROM_NAME = os.getenv("MAILJET_FROM_NAME", "SmartTeX").strip()
+EMAIL_BACKEND = "accounts.mailjet_backend.MailjetAPIBackend"
+DEFAULT_FROM_EMAIL = MAILJET_FROM_EMAIL
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "15"))
 EMAIL_VERIFICATION_TTL_HOURS = int(os.getenv("EMAIL_VERIFICATION_TTL_HOURS", "24"))
 EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = int(os.getenv("EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS", "60"))
 

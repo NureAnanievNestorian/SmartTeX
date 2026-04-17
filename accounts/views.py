@@ -327,12 +327,11 @@ def resend_verification_view(request: HttpRequest):
             user = request.user
             remaining = _verification_email_cooldown_remaining(user)
             if remaining > 0:
-                messages.error(request, f"Лист вже надіслано. Спробуйте через {remaining} с.")
-                return redirect("email-verification-required")
+                return redirect(f"{reverse('email-verification-required')}?retry={remaining}")
             token_obj = _issue_email_verification_token(user)
             try:
                 _send_verification_email(request, user, token_obj.token)
-                messages.success(request, "Лист підтвердження надіслано повторно.")
+                return redirect(f"{reverse('email-verification-required')}?resent=1")
             except Exception:
                 messages.error(request, "Не вдалося надіслати лист. Спробуйте ще раз пізніше.")
             return redirect("email-verification-required")
@@ -389,11 +388,20 @@ def verify_email_view(request: HttpRequest, token: str):
 def email_verification_required_view(request: HttpRequest):
     if is_user_email_verified(request.user):
         return redirect("projects:dashboard")
+    cooldown_remaining = _verification_email_cooldown_remaining(request.user)
+    retry_raw = (request.GET.get("retry") or "").strip()
+    if retry_raw:
+        try:
+            cooldown_remaining = max(cooldown_remaining, max(0, int(retry_raw)))
+        except ValueError:
+            pass
     return render(
         request,
         "accounts/email_verification_required.html",
         {
             "email": request.user.email,
+            "cooldown_remaining": cooldown_remaining,
+            "resent": request.GET.get("resent") == "1",
         },
     )
 
