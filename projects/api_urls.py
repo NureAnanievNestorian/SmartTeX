@@ -2,6 +2,8 @@ from django.urls import path
 
 from .views import (
     api_project_asset,
+    api_project_asset_content,
+    api_project_asset_rename,
     api_project_assets,
     api_project_compile,
     api_project_detail,
@@ -31,6 +33,8 @@ urlpatterns = [
     path("projects/<int:project_id>/write-window/", api_project_write_window),
     path("projects/<int:project_id>/files/", api_project_assets),
     path("projects/<int:project_id>/files/<str:filename>/", api_project_asset),
+    path("projects/<int:project_id>/files/<str:filename>/content/", api_project_asset_content),
+    path("projects/<int:project_id>/files/<str:filename>/rename/", api_project_asset_rename),
     path("projects/<int:project_id>/sections/", api_project_sections),
     path("projects/<int:project_id>/sections/<int:section_index>/", api_project_section),
     path("projects/<int:project_id>/insert/", api_project_insert),

@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 import uvicorn
@@ -178,6 +178,31 @@ def _enrich_compile_payload(
         enriched["log_truncated"] = was_truncated
         enriched["log_original_length"] = len(raw_log)
     return enriched
+
+
+def _with_optional_compile(
+    project_id: int,
+    update_result: Any,
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    if not compileAlso:
+        if isinstance(update_result, dict):
+            return update_result
+        return {"result": update_result}
+
+    compile_payload = _call("POST", f"/api/projects/{project_id}/compile/")
+    compile_result = _enrich_compile_payload(
+        project_id,
+        compile_payload,
+        compact_log=bool(compileLogCompact),
+        max_log_chars=max(500, min(int(compileMaxLogChars), 20000)),
+    )
+
+    if isinstance(update_result, dict):
+        return {**update_result, "compile": compile_result}
+    return {"result": update_result, "compile": compile_result}
 
 
 def _compact_sections_payload(payload: dict[str, Any], compact: bool = True) -> dict[str, Any]:
@@ -370,12 +395,26 @@ def get_project_file(project_id: int) -> dict[str, Any]:
 
 
 @mcp.tool
-def update_project_file(project_id: int, content: str, change_summary: str) -> dict[str, Any]:
+def update_project_file(
+    project_id: int,
+    content: str,
+    change_summary: str,
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
     summary = _require_summary(change_summary)
-    return _call(
+    payload = _call(
         "PUT",
         f"/api/projects/{project_id}/file/",
         {"content": content, "change_summary": summary, "change_source": "mcp"},
+    )
+    return _with_optional_compile(
+        project_id,
+        payload,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
     )
 
 
@@ -385,9 +424,17 @@ def list_project_files(project_id: int) -> dict[str, Any]:
 
 
 @mcp.tool
-def upload_project_file(project_id: int, filename: str, content_base64: str, change_summary: str) -> dict[str, Any]:
+def upload_project_file(
+    project_id: int,
+    filename: str,
+    content_base64: str,
+    change_summary: str,
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
     summary = _require_summary(change_summary)
-    return _call(
+    payload = _call(
         "POST",
         f"/api/projects/{project_id}/files/",
         {
@@ -396,6 +443,46 @@ def upload_project_file(project_id: int, filename: str, content_base64: str, cha
             "change_summary": summary,
             "change_source": "mcp",
         },
+    )
+    return _with_optional_compile(
+        project_id,
+        payload,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
+
+
+@mcp.tool
+def get_project_asset_content(project_id: int, filename: str, include_text: bool = False) -> dict[str, Any]:
+    params = urlencode({"include_text": str(bool(include_text)).lower()})
+    safe_name = quote(filename, safe="")
+    return _call("GET", f"/api/projects/{project_id}/files/{safe_name}/content/?{params}")
+
+
+@mcp.tool
+def rename_project_file(
+    project_id: int,
+    filename: str,
+    new_filename: str,
+    change_summary: str,
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    summary = _require_summary(change_summary)
+    safe_name = quote(filename, safe="")
+    payload = _call(
+        "POST",
+        f"/api/projects/{project_id}/files/{safe_name}/rename/",
+        {"new_filename": new_filename, "change_summary": summary, "change_source": "mcp"},
+    )
+    return _with_optional_compile(
+        project_id,
+        payload,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
     )
 
 
@@ -474,6 +561,9 @@ def update_project_section(
     compact: bool = True,
     include_content: bool = False,
     content_preview_chars: int = 800,
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     summary = _require_summary(change_summary)
     payload = _call(
@@ -482,23 +572,46 @@ def update_project_section(
         {"content": content, "change_summary": summary, "change_source": "mcp"},
     )
     if not isinstance(payload, dict):
-        return {}
-    if not compact:
-        return payload
-    return _compact_single_section_payload(
-        payload,
-        include_content=bool(include_content),
-        content_preview_chars=int(content_preview_chars),
+        shaped: dict[str, Any] = {}
+    elif not compact:
+        shaped = payload
+    else:
+        shaped = _compact_single_section_payload(
+            payload,
+            include_content=bool(include_content),
+            content_preview_chars=int(content_preview_chars),
+        )
+    return _with_optional_compile(
+        project_id,
+        shaped,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
     )
 
 
 @mcp.tool
-def insert_text_at_position(project_id: int, position: int, text: str, change_summary: str) -> dict[str, Any]:
+def insert_text_at_position(
+    project_id: int,
+    position: int,
+    text: str,
+    change_summary: str,
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
     summary = _require_summary(change_summary)
-    return _call(
+    payload = _call(
         "POST",
         f"/api/projects/{project_id}/insert/",
         {"position": position, "text": text, "change_summary": summary, "change_source": "mcp"},
+    )
+    return _with_optional_compile(
+        project_id,
+        payload,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
     )
 
 
@@ -569,6 +682,9 @@ def rewrite_project_window(
     start_char: int | None = None,
     end_char: int | None = None,
     change_summary: str = "",
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     summary = _require_summary(change_summary)
     payload = {
@@ -585,7 +701,14 @@ def rewrite_project_window(
         payload["start_char"] = int(start_char)
     if end_char is not None:
         payload["end_char"] = int(end_char)
-    return _call("POST", f"/api/projects/{project_id}/write-window/", payload)
+    result = _call("POST", f"/api/projects/{project_id}/write-window/", payload)
+    return _with_optional_compile(
+        project_id,
+        result,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
 
 
 @mcp.tool
@@ -633,12 +756,26 @@ def get_project_version_diff(project_id: int, version_id: int) -> dict[str, Any]
 
 
 @mcp.tool
-def rollback_project_version(project_id: int, version_id: int, summary: str) -> dict[str, Any]:
+def rollback_project_version(
+    project_id: int,
+    version_id: int,
+    summary: str,
+    compileAlso: bool = False,
+    compileLogCompact: bool = True,
+    compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
     rollback_summary = _require_summary(summary)
-    return _call(
+    payload = _call(
         "POST",
         f"/api/projects/{project_id}/versions/{version_id}/rollback/",
         {"summary": rollback_summary, "change_source": "mcp"},
+    )
+    return _with_optional_compile(
+        project_id,
+        payload,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
     )
 
 

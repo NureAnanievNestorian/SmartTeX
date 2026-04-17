@@ -30,8 +30,10 @@ from .services import (
     pdf_version,
     project_asset_path,
     read_compile_log,
+    read_project_asset_content,
     read_tex_content,
     read_project_window,
+    rename_project_asset,
     render_pdf_page_image,
     synctex_line_to_pdf,
     synctex_pdf_to_line,
@@ -460,6 +462,66 @@ def api_project_asset(request: HttpRequest, project_id: int, filename: str):
 
     content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return FileResponse(open(path, "rb"), content_type=content_type)
+
+
+@csrf_exempt
+@require_GET
+def api_project_asset_content(request: HttpRequest, project_id: int, filename: str) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+
+    project = _project_with_owner(project_id, user)
+    include_text = _as_bool(request.GET.get("include_text"), default=False)
+    try:
+        payload = read_project_asset_content(project, filename, include_text=include_text)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if message == "file not found" else 400
+        return JsonResponse({"detail": message}, status=status)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_asset_rename(request: HttpRequest, project_id: int, filename: str) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+
+    project = _project_with_owner(project_id, user)
+    body = _json_body(request)
+    try:
+        meta = _change_meta(request, body)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    new_filename = str(body.get("new_filename", "")).strip()
+    if not new_filename:
+        return JsonResponse({"detail": "new_filename is required"}, status=400)
+
+    try:
+        payload = rename_project_asset(project, filename, new_filename)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if message == "file not found" else 400
+        return JsonResponse({"detail": message}, status=status)
+
+    if meta["source"] == "mcp":
+        old_name = str(payload.get("old_name") or filename)
+        new_name = str(payload.get("name") or new_filename)
+        if old_name != new_name:
+            create_project_version(
+                project=project,
+                actor=user,
+                source=meta["source"],
+                operation="rename_project_file",
+                target=f"{old_name}->{new_name}",
+                summary=meta["summary"],
+                before_content=f"[binary file] {old_name}",
+                after_content=f"[binary file] {new_name}",
+            )
+    return JsonResponse(payload)
 
 
 @csrf_exempt

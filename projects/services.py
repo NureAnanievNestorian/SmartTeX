@@ -185,6 +185,58 @@ def save_project_asset(project: Project, filename: str, data: bytes) -> dict[str
     }
 
 
+def read_project_asset_content(
+    project: Project,
+    filename: str,
+    *,
+    include_text: bool = False,
+) -> dict[str, Any]:
+    path = project_asset_path(project, filename)
+    if not path.exists() or not path.is_file():
+        raise ValueError("file not found")
+    data = path.read_bytes()
+    ext = path.suffix.lower()
+    payload: dict[str, Any] = {
+        "name": path.name,
+        "size": len(data),
+        "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+        "is_image": ext in IMAGE_EXTENSIONS,
+        "is_text": ext in TEXT_EXTENSIONS,
+        "extension": ext,
+        "url": f"/api/projects/{project.id}/files/{quote(path.name)}",
+        "content_base64": base64.b64encode(data).decode("ascii"),
+    }
+    if include_text and ext in TEXT_EXTENSIONS:
+        payload["text_content"] = data.decode("utf-8", errors="ignore")
+    return payload
+
+
+def rename_project_asset(project: Project, filename: str, new_filename: str) -> dict[str, Any]:
+    old_path = project_asset_path(project, filename)
+    if not old_path.exists() or not old_path.is_file():
+        raise ValueError("file not found")
+
+    new_path = project_asset_path(project, new_filename)
+    if old_path.name == new_path.name:
+        raise ValueError("new filename must be different")
+    if new_path.exists():
+        raise ValueError("target file already exists")
+
+    old_name = old_path.name
+    old_path.rename(new_path)
+    ext = new_path.suffix.lower()
+    return {
+        "old_name": old_name,
+        "name": new_path.name,
+        "size": new_path.stat().st_size,
+        "updated_at": datetime.fromtimestamp(new_path.stat().st_mtime, tz=UTC).isoformat(),
+        "is_image": ext in IMAGE_EXTENSIONS,
+        "is_text": ext in TEXT_EXTENSIONS,
+        "extension": ext,
+        "url": f"/api/projects/{project.id}/files/{quote(new_path.name)}",
+    }
+
+
 def _line_number_from_pos(content: str, pos: int) -> int:
     return content.count("\n", 0, pos) + 1
 
