@@ -31,7 +31,8 @@
     padding: 0 16px; gap: 12px;
     background: #060e1b; border-bottom: 1px solid var(--e-border);
   }
-  .e-title-group { display: flex; align-items: center; gap: 10px; }
+  .e-title-side { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .e-title-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .e-proj-name { font-weight: 700; font-size: 16px; }
   .status-chip {
     display: inline-flex; align-items: center; gap: 5px;
@@ -53,6 +54,50 @@
   .e-btn:hover { border-color: #3a5a80; background: var(--e-soft); color: var(--e-text); }
   .e-btn.primary { background: linear-gradient(120deg,#22c55e,#16a34a); border-color: transparent; color: #062010; }
   .e-btn.primary:hover { background: linear-gradient(120deg,#16a34a,#0e8a36); }
+  .e-btn.ghost {
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--e-muted);
+    background: transparent;
+  }
+  .e-btn.ghost:hover { color: var(--e-text2); }
+  .e-menu-wrap { position: relative; }
+  .e-menu-btn {
+    min-width: 74px;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .e-menu-btn .caret { font-size: 10px; opacity: .85; }
+  .e-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 180px;
+    background: #0a1425;
+    border: 1px solid #2a3f62;
+    border-radius: 10px;
+    box-shadow: 0 16px 40px rgba(0,0,0,.45);
+    z-index: 80;
+    overflow: hidden;
+  }
+  .e-menu.open { display: block; }
+  .e-menu-item {
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-bottom: 1px solid rgba(42,63,98,.5);
+    background: transparent;
+    color: var(--e-text2);
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .e-menu-item:last-child { border-bottom: 0; }
+  .e-menu-item:hover { background: #12223a; color: var(--e-text); }
+  .e-menu-item.danger { color: #fca5a5; }
+  .e-menu-item.danger:hover { background: rgba(239,68,68,.12); color: #fecaca; }
 
   /* ── 5-column grid with resize handles ─────────────── */
   .e-body {
@@ -593,13 +638,22 @@
 <div class="editor-shell">
   <!-- Topbar -->
   <div class="e-topbar">
-    <div class="e-title-group">
-      <span class="e-proj-name" id="project-title">{{ project.title }}</span>
-      <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
+    <div class="e-title-side">
+      <div class="e-title-group">
+        <span class="e-proj-name" id="project-title">{{ project.title }}</span>
+        <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
+      </div>
+      <div class="e-menu-wrap">
+        <button id="project-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-expanded="false" aria-haspopup="true">
+          Проєкт <span class="caret">▾</span>
+        </button>
+        <div id="project-menu" class="e-menu" role="menu">
+          <button id="rename-project-btn" class="e-menu-item" type="button" role="menuitem">Перейменувати проєкт</button>
+          <button id="delete-project-btn" class="e-menu-item danger" type="button" role="menuitem">Видалити проєкт</button>
+        </div>
+      </div>
     </div>
     <div class="e-actions">
-      <button id="rename-project-btn" class="e-btn" type="button">Rename Project</button>
-      <button id="delete-project-btn" class="e-btn danger" type="button">Delete Project</button>
       <button id="compile-btn" class="e-btn primary" type="button">Recompile</button>
       <a id="download-pdf" class="e-btn" href="/api/projects/{{ project.id }}/pdf/" target="_blank">PDF</a>
     </div>
@@ -737,6 +791,8 @@
   const diffModalContent = document.getElementById("diff-modal-content");
   const diffModalRollbackBtn = document.getElementById("diff-modal-rollback");
   const diffModalCloseBtn = document.getElementById("diff-modal-close");
+  const projectMenuBtn = document.getElementById("project-menu-btn");
+  const projectMenuEl = document.getElementById("project-menu");
 
   let saveTimer      = null;
   let saving         = false;
@@ -758,6 +814,31 @@
   let projectWs = null;
   let projectWsReconnectTimer = null;
   let lastSeenMcpVersionId = 0;
+
+  function closeProjectMenu() {
+    projectMenuEl.classList.remove("open");
+    projectMenuBtn.setAttribute("aria-expanded", "false");
+  }
+
+  projectMenuBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    const open = !projectMenuEl.classList.contains("open");
+    if (open) {
+      projectMenuEl.classList.add("open");
+      projectMenuBtn.setAttribute("aria-expanded", "true");
+      return;
+    }
+    closeProjectMenu();
+  });
+
+  document.addEventListener("click", e => {
+    if (!projectMenuEl.contains(e.target) && !projectMenuBtn.contains(e.target)) {
+      closeProjectMenu();
+    }
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeProjectMenu();
+  });
   let externalReloadScheduled = false;
 
   // PDF.js state
@@ -1744,8 +1825,14 @@
 
 
   document.getElementById("compile-btn").addEventListener("click", compileProject);
-  document.getElementById("rename-project-btn").addEventListener("click", renameCurrentProject);
-  document.getElementById("delete-project-btn").addEventListener("click", deleteCurrentProject);
+  document.getElementById("rename-project-btn").addEventListener("click", () => {
+    closeProjectMenu();
+    renameCurrentProject();
+  });
+  document.getElementById("delete-project-btn").addEventListener("click", () => {
+    closeProjectMenu();
+    deleteCurrentProject();
+  });
   document.getElementById("refresh-pdf").addEventListener("click", () => {
     if (pdfCurrentUrl) {
       const base = pdfCurrentUrl.split("?")[0];
