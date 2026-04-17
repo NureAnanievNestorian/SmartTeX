@@ -321,7 +321,7 @@ if MCP_OAUTH_ENABLED:
 mcp = FastMCP(
     name="SmartTeX MCP",
     instructions=(
-        "Use SmartTeX API tools to list projects/templates, manage TeX and project files, "
+        "Use SmartTeX API tools to list projects/templates, manage TeX content and image asset files, "
         "work with section-level content, run compilation, and fetch compile logs."
     ),
     auth=auth_provider,
@@ -419,14 +419,14 @@ def update_project_file(
 
 
 @mcp.tool
-def list_project_files(project_id: int) -> dict[str, Any]:
+def list_project_image_assets(project_id: int) -> dict[str, Any]:
     return _call("GET", f"/api/projects/{project_id}/files/")
 
 
 @mcp.tool
-def upload_project_file(
+def upload_project_image_asset(
     project_id: int,
-    filename: str,
+    asset_filename: str,
     content_base64: str,
     change_summary: str,
     compileAlso: bool = False,
@@ -434,14 +434,14 @@ def upload_project_file(
     compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     summary = _require_summary(change_summary)
-    ext = Path(filename).suffix.lower()
+    ext = Path(asset_filename).suffix.lower()
     if ext not in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}:
-        raise ValueError("MCP upload_project_file supports images only")
+        raise ValueError("MCP upload_project_image_asset supports images only")
     payload = _call(
         "POST",
         f"/api/projects/{project_id}/files/",
         {
-            "filename": filename,
+            "filename": asset_filename,
             "content_base64": content_base64,
             "change_summary": summary,
             "change_source": "mcp",
@@ -457,28 +457,28 @@ def upload_project_file(
 
 
 @mcp.tool
-def get_project_asset_content(project_id: int, filename: str, include_text: bool = False) -> dict[str, Any]:
+def get_project_image_asset_content(project_id: int, asset_filename: str, include_text: bool = False) -> dict[str, Any]:
     params = urlencode({"include_text": str(bool(include_text)).lower()})
-    safe_name = quote(filename, safe="")
+    safe_name = quote(asset_filename, safe="")
     return _call("GET", f"/api/projects/{project_id}/files/{safe_name}/content/?{params}")
 
 
 @mcp.tool
-def rename_project_file(
+def rename_project_image_asset(
     project_id: int,
-    filename: str,
-    new_filename: str,
+    asset_filename: str,
+    new_asset_filename: str,
     change_summary: str,
     compileAlso: bool = False,
     compileLogCompact: bool = True,
     compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     summary = _require_summary(change_summary)
-    safe_name = quote(filename, safe="")
+    safe_name = quote(asset_filename, safe="")
     payload = _call(
         "POST",
         f"/api/projects/{project_id}/files/{safe_name}/rename/",
-        {"new_filename": new_filename, "change_summary": summary, "change_source": "mcp"},
+        {"new_filename": new_asset_filename, "change_summary": summary, "change_source": "mcp"},
     )
     return _with_optional_compile(
         project_id,
