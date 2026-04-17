@@ -4,6 +4,7 @@ import binascii
 import mimetypes
 
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponseForbidden, HttpResponseNotFound, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
@@ -17,6 +18,7 @@ from .services import (
     build_version_diff,
     compile_project,
     create_project_version,
+    delete_project_asset,
     delete_project_files,
     get_project_version,
     list_project_versions,
@@ -45,6 +47,7 @@ from .services import (
     insert_text_at_position,
     update_tex_section,
     write_tex_content,
+    IMAGE_EXTENSIONS,
 )
 
 DEFAULT_LATEX = r"""\\documentclass{article}
@@ -192,8 +195,19 @@ def api_projects(request: HttpRequest) -> JsonResponse:
     if is_tex_too_large(content):
         return JsonResponse({"detail": "Template content exceeds 1MB"}, status=400)
 
-    project = Project.objects.create(owner=user, title=title, template=template_obj)
-    initialize_main_tex(project, content)
+    with transaction.atomic():
+        project = Project.objects.create(owner=user, title=title, template=template_obj)
+        initialize_main_tex(project, content)
+        create_project_version(
+            project=project,
+            actor=user,
+            source="api",
+            operation="create_project",
+            target="main.tex",
+            summary="Initial project document",
+            before_content="",
+            after_content=content,
+        )
     return JsonResponse(_project_payload(project), status=201)
 
 
@@ -394,8 +408,15 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
+    def _ext_from_name(name: str) -> str:
+        clean = str(name or "").strip().lower()
+        return f".{clean.rsplit('.', 1)[-1]}" if "." in clean else ""
+
     if request.FILES.get("file"):
         upload = request.FILES["file"]
+        upload_ext = _ext_from_name(getattr(upload, "name", ""))
+        if upload_ext not in IMAGE_EXTENSIONS:
+            return JsonResponse({"detail": "Only image uploads are allowed"}, status=400)
         try:
             asset = save_project_asset(project, upload.name, upload.read())
         except ValueError as exc:
@@ -421,6 +442,8 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
         return JsonResponse({"detail": "filename is required"}, status=400)
     if content_base64 is None and text_content is None:
         return JsonResponse({"detail": "content_base64 or text_content is required"}, status=400)
+    if _ext_from_name(filename) not in IMAGE_EXTENSIONS:
+        return JsonResponse({"detail": "Only image uploads are allowed"}, status=400)
 
     try:
         if content_base64 is not None:
@@ -445,23 +468,51 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
 
 
 @csrf_exempt
-@require_GET
+@require_http_methods(["GET", "DELETE"])
 def api_project_asset(request: HttpRequest, project_id: int, filename: str):
     user = get_api_user(request)
     if not user:
         return _unauthorized()
 
     project = _project_with_owner(project_id, user)
+    if request.method == "GET":
+        try:
+            path = project_asset_path(project, filename)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+
+        if not path.exists():
+            return HttpResponseNotFound("File not found")
+
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return FileResponse(open(path, "rb"), content_type=content_type)
+
+    body = _json_body(request)
     try:
-        path = project_asset_path(project, filename)
+        meta = _change_meta(request, body)
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    if not path.exists():
-        return HttpResponseNotFound("File not found")
+    try:
+        payload = delete_project_asset(project, filename)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if message == "file not found" else 400
+        return JsonResponse({"detail": message}, status=status)
 
-    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return FileResponse(open(path, "rb"), content_type=content_type)
+    if meta["source"] == "mcp":
+        deleted_name = str(payload.get("name") or filename)
+        create_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="delete_project_file",
+            target=deleted_name,
+            summary=meta["summary"],
+            before_content=f"[binary file] {deleted_name}",
+            after_content="",
+        )
+    return JsonResponse(payload)
 
 
 @csrf_exempt
@@ -838,6 +889,17 @@ def create_project_from_dashboard(request: HttpRequest):
     if is_tex_too_large(content):
         return HttpResponseForbidden("Template file exceeds 1MB")
 
-    project = Project.objects.create(owner=request.user, title=title, template=template_obj)
-    initialize_main_tex(project, content)
+    with transaction.atomic():
+        project = Project.objects.create(owner=request.user, title=title, template=template_obj)
+        initialize_main_tex(project, content)
+        create_project_version(
+            project=project,
+            actor=request.user,
+            source="web",
+            operation="create_project",
+            target="main.tex",
+            summary="Initial project document",
+            before_content="",
+            after_content=content,
+        )
     return redirect("projects:editor", project_id=project.id)

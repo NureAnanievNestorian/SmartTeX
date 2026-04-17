@@ -434,6 +434,9 @@ def upload_project_file(
     compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     summary = _require_summary(change_summary)
+    ext = Path(filename).suffix.lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}:
+        raise ValueError("MCP upload_project_file supports images only")
     payload = _call(
         "POST",
         f"/api/projects/{project_id}/files/",

@@ -20,7 +20,7 @@ COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=3)
 TEXT_EXTENSIONS = {".tex", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
 ALLOWED_UPLOAD_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
-MAX_UPLOAD_FILE_SIZE = 8 * 1024 * 1024
+MAX_PROJECT_FILES_TOTAL_SIZE = 20 * 1024 * 1024
 LATEX_ARTIFACT_EXTENSIONS = {
     ".aux",
     ".log",
@@ -168,10 +168,23 @@ def list_project_assets(project: Project) -> list[dict[str, Any]]:
 
 
 def save_project_asset(project: Project, filename: str, data: bytes) -> dict[str, Any]:
-    if len(data) > MAX_UPLOAD_FILE_SIZE:
-        raise ValueError(f"file exceeds {MAX_UPLOAD_FILE_SIZE // (1024 * 1024)}MB")
     path = project_asset_path(project, filename)
     ensure_project_dir(project)
+    existing_size = path.stat().st_size if path.exists() and path.is_file() else 0
+
+    total_size = 0
+    tex_path = tex_file_path(project)
+    if tex_path.exists() and tex_path.is_file():
+        total_size += tex_path.stat().st_size
+    for asset in list_project_assets(project):
+        total_size += int(asset.get("size") or 0)
+
+    projected_total = total_size - existing_size + len(data)
+    if projected_total > MAX_PROJECT_FILES_TOTAL_SIZE:
+        raise ValueError(
+            f"project files total size exceeds {MAX_PROJECT_FILES_TOTAL_SIZE // (1024 * 1024)}MB"
+        )
+
     path.write_bytes(data)
     ext = path.suffix.lower()
     return {
@@ -234,6 +247,25 @@ def rename_project_asset(project: Project, filename: str, new_filename: str) -> 
         "is_text": ext in TEXT_EXTENSIONS,
         "extension": ext,
         "url": f"/api/projects/{project.id}/files/{quote(new_path.name)}",
+    }
+
+
+def delete_project_asset(project: Project, filename: str) -> dict[str, Any]:
+    path = project_asset_path(project, filename)
+    if not path.exists() or not path.is_file():
+        raise ValueError("file not found")
+
+    size = path.stat().st_size
+    ext = path.suffix.lower()
+    name = path.name
+    path.unlink()
+    return {
+        "name": name,
+        "size": size,
+        "is_image": ext in IMAGE_EXTENSIONS,
+        "is_text": ext in TEXT_EXTENSIONS,
+        "extension": ext,
+        "deleted": True,
     }
 
 
