@@ -791,12 +791,13 @@
 
 
         canvas.addEventListener("click", async (e) => {
+          const curScale = parseFloat(wrap.dataset.scale);
+          const curBaseH = parseFloat(wrap.dataset.baseH);
           const rect = canvas.getBoundingClientRect();
           const clickX = e.clientX - rect.left;
           const clickY = e.clientY - rect.top;
-
-          const pdfX = clickX / scale;
-          const pdfY = base.height - (clickY / scale);
+          const pdfX = clickX / curScale;
+          const pdfY = curBaseH - (clickY / curScale);
           try {
             const r = await api(`/api/projects/${projectId}/synctex/pdf/?page=${i}&x=${pdfX.toFixed(4)}&y=${pdfY.toFixed(4)}`);
             if (r.line) {
@@ -812,6 +813,8 @@
         });
       }
 
+      wrap.dataset.scale = scale;
+      wrap.dataset.baseH = base.height;
 
       canvas.width  = Math.round(vpHD.width);
       canvas.height = Math.round(vpHD.height);

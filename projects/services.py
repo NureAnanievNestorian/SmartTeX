@@ -1017,4 +1017,5 @@ def synctex_pdf_to_line(
         tail = "\n".join(out.splitlines()[-10:]).strip()
         raise ValueError(tail or "SyncTeX edit command failed")
 
+    result["_debug"] = {"query": query, "raw": out}
     return result
