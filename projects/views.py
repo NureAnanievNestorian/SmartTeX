@@ -34,6 +34,7 @@ from .services import (
     read_project_window,
     render_pdf_page_image,
     synctex_line_to_pdf,
+    synctex_pdf_to_line,
     write_project_window,
     rollback_to_version,
     save_project_asset,
@@ -737,6 +738,24 @@ def api_project_synctex_line(request: HttpRequest, project_id: int) -> JsonRespo
             column=column,
             file_name=file_name,
         )
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+@require_GET
+def api_project_synctex_pdf(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    try:
+        page = int(request.GET.get("page", "0"))
+        x = float(request.GET.get("x", "0"))
+        y = float(request.GET.get("y", "0"))
+        payload = synctex_pdf_to_line(project, page=page, x=x, y=y)
     except (ValueError, TypeError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
     return JsonResponse(payload)

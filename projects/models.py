@@ -31,6 +31,7 @@ class ProjectVersion(models.Model):
         API = "api", "API"
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="versions")
+    number = models.PositiveIntegerField(default=1)
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.API)
     operation = models.CharField(max_length=64)
@@ -42,6 +43,7 @@ class ProjectVersion(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+        unique_together = [("project", "number")]
 
     def __str__(self) -> str:
-        return f"v{self.id} {self.project_id} {self.operation}"
+        return f"v{self.number} {self.project_id} {self.operation}"

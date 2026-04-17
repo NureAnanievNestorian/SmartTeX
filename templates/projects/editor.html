@@ -54,13 +54,19 @@
   .e-btn.primary { background: linear-gradient(120deg,#22c55e,#16a34a); border-color: transparent; color: #062010; }
   .e-btn.primary:hover { background: linear-gradient(120deg,#16a34a,#0e8a36); }
 
-  /* ── 3-column grid ─────────────────────────────────── */
+  /* ── 5-column grid with resize handles ─────────────── */
   .e-body {
     flex: 1; min-height: 0;
-    display: grid; grid-template-columns: 256px 1fr 420px;
+    display: grid;
+    grid-template-columns: var(--left-w, 256px) 4px 1fr 4px var(--right-w, 420px);
     overflow: hidden;
   }
-  @media (max-width: 1200px) { .e-body { grid-template-columns: 230px 1fr 360px; } }
+  .e-resize-handle {
+    background: var(--e-border); cursor: col-resize; flex-shrink: 0;
+    transition: background .12s;
+    position: relative; z-index: 10;
+  }
+  .e-resize-handle:hover, .e-resize-handle.dragging { background: var(--e-accent); }
 
   /* ── Left panel ────────────────────────────────────── */
   .e-left {
@@ -96,13 +102,13 @@
 
   /* File list */
   .e-file-list {
-    list-style: none; margin: 0; padding: 5px; display: grid; gap: 2px;
-    flex: 1; overflow-y: auto;
+    list-style: none; margin: 0; padding: 4px; display: grid; gap: 1px;
+    overflow-y: auto; align-content: start;
   }
   .e-file-btn {
     width: 100%; display: flex; justify-content: space-between; align-items: center;
-    gap: 6px; padding: 6px 8px; background: transparent;
-    border: 1px solid transparent; border-radius: 6px; color: var(--e-text2);
+    gap: 6px; padding: 4px 8px; background: transparent;
+    border: 1px solid transparent; border-radius: 5px; color: var(--e-text2);
     font-size: 12px; cursor: pointer; text-align: left;
     transition: background .1s, border-color .1s;
   }
@@ -433,9 +439,31 @@
     border-bottom: 1px solid var(--e-border); background: #06101d;
   }
   .e-pdf-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--e-muted); }
-  .e-pdf-actions { display: flex; gap: 5px; }
+  .e-pdf-actions { display: flex; gap: 5px; align-items: center; }
   .e-pdf-wrap { flex: 1; min-height: 0; overflow: hidden; position: relative; }
-  #pdf-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+  #pdf-canvas-container {
+    width: 100%; height: 100%; overflow-y: auto; overflow-x: auto;
+    background: #555; display: flex; flex-direction: column; align-items: center;
+    gap: 6px; padding: 8px 0;
+    box-sizing: border-box;
+  }
+  .pdf-page-wrap {
+    position: relative; flex-shrink: 0; box-shadow: 0 2px 12px rgba(0,0,0,.5);
+    cursor: crosshair;
+  }
+  .pdf-page-wrap canvas { display: block; }
+  .pdf-synctex-marker {
+    position: absolute; pointer-events: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: rgba(34,197,94,.7); border: 2px solid #22c55e;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 8px rgba(34,197,94,.8);
+    animation: synctex-pulse 1.5s ease-out forwards;
+  }
+  @keyframes synctex-pulse {
+    0%   { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%,-50%) scale(2.5); }
+  }
   .e-pdf-empty {
     position: absolute; inset: 0; display: none;
     flex-direction: column; align-items: center; justify-content: center; gap: 10px;
@@ -443,6 +471,13 @@
     color: var(--e-muted); font-size: 13px; font-weight: 600;
   }
   .e-pdf-empty svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .5; }
+  .e-pdf-loading {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(7,16,30,.7);
+    color: var(--e-muted); font-size: 12px;
+  }
+  .e-pdf-loading.visible { display: flex; }
 
   /* ── Custom confirm modal ──────────────────────────── */
   .confirm-overlay {
@@ -508,7 +543,7 @@
   </div>
 
   <!-- Body -->
-  <div class="e-body">
+  <div class="e-body" id="e-body">
 
     <!-- ── Left panel ──────────────────────────── -->
     <aside class="e-left">
@@ -549,6 +584,9 @@
       </div>
     </aside>
 
+    <!-- ── Resize handle ─────────────────────── -->
+    <div class="e-resize-handle" id="resize-left" aria-hidden="true"></div>
+
     <!-- ── Editor ──────────────────────────────── -->
     <section class="e-center" id="drop-zone">
       <div class="e-editor-bar">
@@ -572,11 +610,15 @@
       </div>
     </section>
 
+    <!-- ── Resize handle ─────────────────────── -->
+    <div class="e-resize-handle" id="resize-right" aria-hidden="true"></div>
+
     <!-- ── PDF ─────────────────────────────────── -->
     <section class="e-pdf">
       <div class="e-pdf-bar">
         <span class="e-pdf-label">PDF Preview</span>
         <div class="e-pdf-actions">
+          <span id="pdf-page-info" style="font-size:11px;color:var(--e-muted);white-space:nowrap;"></span>
           <button id="refresh-pdf" class="e-btn" type="button"
             style="padding:4px 10px;font-size:12px;">↻</button>
           <a id="open-pdf" class="e-btn" target="_blank"
@@ -585,11 +627,12 @@
         </div>
       </div>
       <div class="e-pdf-wrap">
-        <iframe id="pdf-frame" src="/api/projects/{{ project.id }}/pdf/"></iframe>
+        <div id="pdf-canvas-container"></div>
         <div id="pdf-empty" class="e-pdf-empty">
           <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           PDF ще не згенеровано
         </div>
+        <div id="pdf-loading" class="e-pdf-loading">Завантаження PDF…</div>
       </div>
     </section>
 
@@ -598,7 +641,10 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script type="module">
+  import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+
   const projectId  = {{ project.id }};
   const csrfToken  = "{{ csrf_token }}";
 
@@ -614,9 +660,11 @@
   const assetView     = document.getElementById("asset-view");
   const assetBox      = document.getElementById("asset-box");
   const uploadInput   = document.getElementById("file-upload");
-  const pdfFrame      = document.getElementById("pdf-frame");
+  const pdfCanvasContainer = document.getElementById("pdf-canvas-container");
   const pdfEmpty      = document.getElementById("pdf-empty");
+  const pdfLoadingEl  = document.getElementById("pdf-loading");
   const openPdfLink   = document.getElementById("open-pdf");
+  const pdfPageInfo   = document.getElementById("pdf-page-info");
   const versionsListEl= document.getElementById("versions-list");
   const dropZone      = document.getElementById("drop-zone");
   const diffModalOverlay = document.getElementById("diff-modal-overlay");
@@ -645,6 +693,168 @@
   let projectWsReconnectTimer = null;
   let lastSeenMcpVersionId = 0;
   let externalReloadScheduled = false;
+
+  // PDF.js state
+  let pdfDoc = null;
+  let pdfRendering = false;
+  let pdfCurrentUrl = null;
+  let pdfViewports = []; // scale-applied viewports per page
+
+  // ── Panel resize ────────────────────────────────────────────────────────
+  (function() {
+    const body = document.getElementById("e-body");
+    const MIN_W = 160, MAX_FRAC = 0.45;
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    function applyWidths(lw, rw) {
+      body.style.setProperty("--left-w", lw + "px");
+      body.style.setProperty("--right-w", rw + "px");
+    }
+
+    function loadSaved() {
+      const lw = parseInt(localStorage.getItem("st_left_w") || "256");
+      const rw = parseInt(localStorage.getItem("st_right_w") || "420");
+      applyWidths(lw, rw);
+    }
+    loadSaved();
+
+    function makeDragger(handleId, side) {
+      const handle = document.getElementById(handleId);
+      handle.addEventListener("mousedown", e => {
+        e.preventDefault();
+        handle.classList.add("dragging");
+        const startX = e.clientX;
+        const bodyW = body.clientWidth;
+        const startLW = parseInt(getComputedStyle(body).getPropertyValue("--left-w")) || 256;
+        const startRW = parseInt(getComputedStyle(body).getPropertyValue("--right-w")) || 420;
+
+        function onMove(me) {
+          const dx = me.clientX - startX;
+          const maxW = Math.floor(bodyW * MAX_FRAC);
+          if (side === "left") {
+            const nw = clamp(startLW + dx, MIN_W, maxW);
+            applyWidths(nw, startRW);
+            localStorage.setItem("st_left_w", nw);
+          } else {
+            const nw = clamp(startRW - dx, MIN_W, maxW);
+            applyWidths(startLW, nw);
+            localStorage.setItem("st_right_w", nw);
+          }
+          // re-render PDF pages if right panel resized
+          if (side === "right" && pdfDoc) renderPdfPages(true);
+        }
+        function onUp() {
+          handle.classList.remove("dragging");
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+        }
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+    }
+    makeDragger("resize-left", "left");
+    makeDragger("resize-right", "right");
+  })();
+
+  // ── PDF.js viewer ───────────────────────────────────────────────────────
+  async function renderPdfPages(sizeOnly = false) {
+    if (!pdfDoc || pdfRendering) return;
+    pdfRendering = true;
+    const containerW = pdfCanvasContainer.clientWidth - 16;
+    const savedScroll = pdfCanvasContainer.scrollTop;
+    if (!sizeOnly) pdfCanvasContainer.innerHTML = "";
+    pdfViewports = [];
+
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.max(0.5, containerW / base.width);
+      const vp = page.getViewport({ scale });
+      pdfViewports.push(vp);
+
+      let wrap, canvas;
+      if (sizeOnly) {
+        wrap = pdfCanvasContainer.children[i - 1];
+        if (!wrap) break;
+        canvas = wrap.querySelector("canvas");
+        if (!canvas) break;
+      } else {
+        wrap = document.createElement("div");
+        wrap.className = "pdf-page-wrap";
+        wrap.dataset.page = i;
+        canvas = document.createElement("canvas");
+        wrap.appendChild(canvas);
+        pdfCanvasContainer.appendChild(wrap);
+
+        // SyncTeX: click on canvas to jump to LaTeX source
+        canvas.addEventListener("click", async (e) => {
+          const rect = canvas.getBoundingClientRect();
+          const clickX = e.clientX - rect.left;
+          const clickY = e.clientY - rect.top;
+          // PDF coordinate system: origin bottom-left, y-axis flipped
+          const pdfX = (clickX / scale) * 65536;
+          const pdfY = (base.height - clickY / scale) * 65536;
+          try {
+            const r = await api(`/api/projects/${projectId}/synctex/pdf/?page=${i}&x=${pdfX.toFixed(0)}&y=${pdfY.toFixed(0)}`);
+            if (r.line) {
+              jumpToLine(r.line);
+              // show pulse marker at click location
+              const marker = document.createElement("div");
+              marker.className = "pdf-synctex-marker";
+              marker.style.left = clickX + "px";
+              marker.style.top = clickY + "px";
+              wrap.appendChild(marker);
+              setTimeout(() => marker.remove(), 1500);
+            }
+          } catch (_) {}
+        });
+      }
+
+      canvas.width = Math.round(vp.width);
+      canvas.height = Math.round(vp.height);
+      wrap.style.width = canvas.width + "px";
+      wrap.style.height = canvas.height + "px";
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    }
+
+    if (!sizeOnly) pdfCanvasContainer.scrollTop = savedScroll;
+    pdfRendering = false;
+  }
+
+  async function loadPdfViewer(url) {
+    const savedScroll = pdfCanvasContainer.scrollTop;
+    pdfLoadingEl.classList.add("visible");
+    try {
+      const loadingTask = pdfjsLib.getDocument(url);
+      pdfDoc = await loadingTask.promise;
+      pdfCurrentUrl = url;
+      pdfEmpty.style.display = "none";
+      pdfPageInfo.textContent = `${pdfDoc.numPages} стор.`;
+      pdfCanvasContainer.innerHTML = "";
+      pdfRendering = false;
+      await renderPdfPages(false);
+      pdfCanvasContainer.scrollTop = savedScroll;
+    } catch(err) {
+      console.error("PDF load error", err);
+    } finally {
+      pdfLoadingEl.classList.remove("visible");
+    }
+  }
+
+  // Update page info on scroll
+  pdfCanvasContainer.addEventListener("scroll", () => {
+    if (!pdfDoc) return;
+    const pages = pdfCanvasContainer.querySelectorAll(".pdf-page-wrap");
+    for (const wrap of pages) {
+      const rect = wrap.getBoundingClientRect();
+      const containerRect = pdfCanvasContainer.getBoundingClientRect();
+      if (rect.top <= containerRect.top + containerRect.height / 2 && rect.bottom > containerRect.top) {
+        pdfPageInfo.textContent = `${wrap.dataset.page} / ${pdfDoc.numPages}`;
+        break;
+      }
+    }
+  });
 
   // ── Custom confirm ──────────────────────────────────────────────────────
   document.getElementById("confirm-ok").addEventListener("click", () => {
@@ -1042,7 +1252,7 @@
       head.innerHTML = `
         <div class="e-ver-left">
           <div class="e-ver-row1">
-            <span class="e-ver-num">#${v.id}</span>
+            <span class="e-ver-num">#${v.number ?? v.id}</span>
             <span class="e-ver-op">${v.operation}</span>
           </div>
           <span class="e-ver-summary">${v.summary || "(без опису)"}</span>
@@ -1068,7 +1278,7 @@
     const v = versions.find(x => x.id === vid);
     if (!v) return;
 
-    diffModalTitle.textContent = `Diff версії #${v.id}`;
+    diffModalTitle.textContent = `Diff версії #${v.number ?? v.id}`;
     diffModalMeta.textContent = `${v.operation || "change"} · ${fmtDate(v.created_at)} · ${v.summary || "(без опису)"}`;
     diffModalContent.innerHTML = `<span class="diff-empty">Завантаження…</span>`;
     diffModalRollbackBtn.onclick = () => rollbackVersion(v.id);
@@ -1095,15 +1305,17 @@
   }
 
   async function rollbackVersion(vid) {
-    const ok = await showConfirm(`Відкотити проєкт до стану версії #${vid}? Поточні зміни будуть замінені.`);
+    const v = versions.find(x => x.id === vid);
+    const vnum = v?.number ?? vid;
+    const ok = await showConfirm(`Відкотити проєкт до стану версії #${vnum}? Поточні зміни будуть замінені.`);
     if (!ok) return;
     try {
       await api(`/api/projects/${projectId}/versions/${vid}/rollback/`,
-        {method:"POST", body:JSON.stringify({summary:`Rollback to version ${vid}`})});
+        {method:"POST", body:JSON.stringify({summary:`Rollback to version ${vnum}`})});
       closeDiffModal();
       await loadMainFile();
       await Promise.all([loadSections(), loadVersions(true)]);
-      setSaveHint(`Відкотили до версії #${vid}`, "saved");
+      setSaveHint(`Відкотили до версії #${vnum}`, "saved");
       setStatus("pending");
     } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
   }
@@ -1172,8 +1384,9 @@
       setStatus(data.status); logEl.textContent = data.log || "";
       if (data.pdf_url) {
         lastPdfVersion = data.pdf_version ?? Date.now();
-        pdfFrame.src = `${data.pdf_url}?t=${lastPdfVersion}`;
-        openPdfLink.href = data.pdf_url; pdfEmpty.style.display = "none";
+        const url = `${data.pdf_url}?t=${lastPdfVersion}`;
+        openPdfLink.href = data.pdf_url;
+        await loadPdfViewer(url);
       } else { pdfEmpty.style.display = "flex"; }
     } catch (err) { setStatus("error"); logEl.textContent = `Помилка: ${err.message}`; }
   }
@@ -1219,8 +1432,10 @@
       const d = await api(`/api/projects/${projectId}/compile/`, {method:"GET"});
       setStatus(d.status);
       if (d.pdf_url && d.pdf_version && d.pdf_version !== lastPdfVersion) {
-        lastPdfVersion = d.pdf_version; pdfFrame.src = `${d.pdf_url}?t=${lastPdfVersion}`;
-        openPdfLink.href = d.pdf_url; pdfEmpty.style.display = "none";
+        lastPdfVersion = d.pdf_version;
+        const url = `${d.pdf_url}?t=${lastPdfVersion}`;
+        openPdfLink.href = d.pdf_url;
+        await loadPdfViewer(url);
       }
       if (!d.pdf_url) pdfEmpty.style.display = "flex";
     } catch(_) {}
@@ -1228,7 +1443,12 @@
 
   // ── Events ───────────────────────────────────────────────────────────────
   document.getElementById("compile-btn").addEventListener("click", compileProject);
-  document.getElementById("refresh-pdf").addEventListener("click", () => { pdfFrame.src = `/api/projects/${projectId}/pdf/?t=${Date.now()}`; });
+  document.getElementById("refresh-pdf").addEventListener("click", () => {
+    if (pdfCurrentUrl) {
+      const base = pdfCurrentUrl.split("?")[0];
+      loadPdfViewer(`${base}?t=${Date.now()}`);
+    }
+  });
   document.getElementById("refresh-outline").addEventListener("click", loadSections);
   document.getElementById("refresh-versions").addEventListener("click", () => loadVersions(true).catch(()=>{}));
   versionsListEl.addEventListener("scroll", () => {
@@ -1260,8 +1480,9 @@
     if (cd.log) { logEl.textContent = cd.log; openLog(); }
     if (cd.pdf_url) {
       lastPdfVersion = cd.pdf_version ?? Date.now();
-      pdfFrame.src = `${cd.pdf_url}?t=${lastPdfVersion}`;
-      openPdfLink.href = cd.pdf_url; pdfEmpty.style.display = "none";
+      const url = `${cd.pdf_url}?t=${lastPdfVersion}`;
+      openPdfLink.href = cd.pdf_url;
+      await loadPdfViewer(url);
     } else { pdfEmpty.style.display = "flex"; }
     renderFileList();
     connectProjectUpdatesWebSocket();

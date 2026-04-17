@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Вхід — SmartTeX{% endblock %}
 {% block head %}
 <style>
@@ -14,10 +15,8 @@
   .auth-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 30px; }
   .auth-logo-mark {
     width: 36px; height: 36px;
-    background: linear-gradient(145deg, #22c55e, #14a34a);
-    border-radius: 10px; display: flex; align-items: center; justify-content: center;
-    font-size: 18px; font-weight: 900; color: #052010;
-    box-shadow: 0 0 22px rgba(34,197,94,0.28);
+    display: block;
+    filter: drop-shadow(0 0 16px rgba(34,197,94,0.24));
   }
   .auth-logo-text { font-size: 20px; font-weight: 700; }
   .auth-logo-text em { font-style: normal; color: var(--accent); }
@@ -33,7 +32,7 @@
 {% block content %}
 <div class="auth-box">
   <div class="auth-logo">
-    <span class="auth-logo-mark">T</span>
+    <img class="auth-logo-mark" src="{% static 'projects/branding/logo.svg' %}" alt="SmartTeX logo">
     <span class="auth-logo-text">Smart<em>TeX</em></span>
   </div>
   <h1 class="auth-heading">Вхід в акаунт</h1>

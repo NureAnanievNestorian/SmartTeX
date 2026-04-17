@@ -1,9 +1,12 @@
 <!doctype html>
 <html lang="uk">
 <head>
+  {% load static %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}SmartTeX{% endblock %}</title>
+  <link rel="icon" href="{% static 'projects/branding/favicon.svg' %}" type="image/svg+xml">
+  <link rel="shortcut icon" href="{% static 'projects/branding/favicon.svg' %}" type="image/svg+xml">
   <style>
     :root {
       --bg:             #0b1220;
@@ -59,11 +62,9 @@
       letter-spacing: -0.2px;
     }
     .brand-mark {
-      width: 30px; height: 30px;
-      background: linear-gradient(145deg, #22c55e 0%, #14a34a 100%);
-      border-radius: 8px; display: flex; align-items: center; justify-content: center;
-      font-size: 14px; font-weight: 900; color: #052010; flex-shrink: 0;
-      box-shadow: 0 0 16px rgba(34, 197, 94, 0.28);
+      width: 30px; height: 30px; flex-shrink: 0;
+      display: block;
+      filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.22));
     }
     .brand em { font-style: normal; color: var(--accent); }
 
@@ -179,7 +180,7 @@
   <header class="top">
     <div class="wrap">
       <a class="brand" href="/">
-        <span class="brand-mark">T</span>
+        <img class="brand-mark" src="{% static 'projects/branding/logo.svg' %}" alt="SmartTeX logo">
         Smart<em>TeX</em>
       </a>
       <nav class="nav">

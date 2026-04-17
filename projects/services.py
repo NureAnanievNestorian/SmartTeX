@@ -148,9 +148,10 @@ def list_project_assets(project: Project) -> list[dict[str, Any]]:
         if path.name in {"main.tex", "main.pdf", "main.log"}:
             continue
         ext = path.suffix.lower()
+        full_ext = "".join(path.suffixes).lower()
         if path.name.startswith("."):
             continue
-        if ext in LATEX_ARTIFACT_EXTENSIONS:
+        if ext in LATEX_ARTIFACT_EXTENSIONS or full_ext in LATEX_ARTIFACT_EXTENSIONS:
             continue
         assets.append(
             {
@@ -587,16 +588,26 @@ def create_project_version(
     before_content: str,
     after_content: str,
 ) -> ProjectVersion:
-    return ProjectVersion.objects.create(
-        project=project,
-        actor=actor,
-        source=source,
-        operation=operation,
-        target=target,
-        summary=summary.strip(),
-        before_content=before_content,
-        after_content=after_content,
-    )
+    from django.db import transaction
+    with transaction.atomic():
+        last = (
+            ProjectVersion.objects.filter(project=project)
+            .order_by("-number")
+            .values_list("number", flat=True)
+            .first()
+        )
+        next_number = (last or 0) + 1
+        return ProjectVersion.objects.create(
+            project=project,
+            number=next_number,
+            actor=actor,
+            source=source,
+            operation=operation,
+            target=target,
+            summary=summary.strip(),
+            before_content=before_content,
+            after_content=after_content,
+        )
 
 
 def list_project_versions(
@@ -618,6 +629,7 @@ def list_project_versions(
     versions = [
         {
             "id": v.id,
+            "number": v.number,
             "source": v.source,
             "operation": v.operation,
             "target": v.target,
@@ -931,3 +943,78 @@ def synctex_line_to_pdf(
         "pages": pages,
         "matches": matches,
     }
+
+
+def synctex_pdf_to_line(
+    project: Project,
+    *,
+    page: int,
+    x: float,
+    y: float,
+) -> dict[str, Any]:
+    """Reverse SyncTeX: given a position in the PDF, return the LaTeX source location."""
+    if page < 1:
+        raise ValueError("page must be >= 1")
+
+    pdf_path = pdf_file_path(project)
+    if not pdf_path.exists():
+        raise ValueError("PDF not found; compile project first")
+
+    mount_source = _docker_mount_source(project)
+    image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
+    query = f"{page}:{x:.6f}:{y:.6f}:main.pdf"
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--memory=300m",
+        "--cpus=0.5",
+        "-v",
+        f"{mount_source}:/workspace:rw",
+        "-w",
+        "/workspace",
+        image,
+        "synctex",
+        "edit",
+        "-o",
+        query,
+    ]
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=40,
+        check=False,
+    )
+    out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+
+    result: dict[str, Any] = {"page": int(page), "x": x, "y": y, "file": None, "line": None, "column": None}
+    for raw in out.splitlines():
+        line_text = raw.strip()
+        if ":" not in line_text:
+            continue
+        key, value = line_text.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "input":
+            # Strip /workspace/ prefix Docker adds
+            name = value.replace("/workspace/", "").strip()
+            result["file"] = name
+        elif key == "line":
+            try:
+                result["line"] = int(value)
+            except ValueError:
+                pass
+        elif key == "column":
+            try:
+                result["column"] = int(value)
+            except ValueError:
+                pass
+
+    if result["line"] is None and proc.returncode != 0:
+        tail = "\n".join(out.splitlines()[-10:]).strip()
+        raise ValueError(tail or "SyncTeX edit command failed")
+
+    return result
