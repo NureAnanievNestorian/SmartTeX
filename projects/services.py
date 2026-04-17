@@ -84,6 +84,17 @@ def pdf_file_path(project: Project) -> Path:
     return project_dir(project) / "main.pdf"
 
 
+def project_pdf_download_name(project: Project) -> str:
+    raw = (project.title or "").strip()
+    if not raw:
+        raw = "document"
+    # Keep Unicode filename but strip filesystem/HTTP-problematic characters.
+    cleaned = re.sub(r'[\\/:*?"<>|]+', "_", raw).strip(" .")
+    if not cleaned:
+        cleaned = "document"
+    return f"{cleaned}.pdf"
+
+
 def log_file_path(project: Project) -> Path:
     return project_dir(project) / "main.log"
 
@@ -139,6 +150,19 @@ def project_asset_path(project: Project, filename: str) -> Path:
     return project_dir(project) / clean
 
 
+def _is_system_artifact_file(path: Path) -> bool:
+    name = path.name.lower()
+    ext = path.suffix.lower()
+    full_ext = "".join(path.suffixes).lower()
+    if ext in LATEX_ARTIFACT_EXTENSIONS or full_ext in LATEX_ARTIFACT_EXTENSIONS:
+        return True
+    if name.startswith("main.synctex"):
+        return True
+    if ".synctex(" in name or name.endswith(".synctex"):
+        return True
+    return False
+
+
 def list_project_assets(project: Project) -> list[dict[str, Any]]:
     root = ensure_project_dir(project)
     assets = []
@@ -148,10 +172,9 @@ def list_project_assets(project: Project) -> list[dict[str, Any]]:
         if path.name in {"main.tex", "main.pdf", "main.log"}:
             continue
         ext = path.suffix.lower()
-        full_ext = "".join(path.suffixes).lower()
         if path.name.startswith("."):
             continue
-        if ext in LATEX_ARTIFACT_EXTENSIONS or full_ext in LATEX_ARTIFACT_EXTENSIONS:
+        if _is_system_artifact_file(path):
             continue
         assets.append(
             {
@@ -232,6 +255,8 @@ def rename_project_asset(project: Project, filename: str, new_filename: str) -> 
     new_path = project_asset_path(project, new_filename)
     if old_path.name == new_path.name:
         raise ValueError("new filename must be different")
+    if old_path.suffix.lower() != new_path.suffix.lower():
+        raise ValueError("file extension cannot be changed")
     if new_path.exists():
         raise ValueError("target file already exists")
 

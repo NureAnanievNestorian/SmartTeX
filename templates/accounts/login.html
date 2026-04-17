@@ -23,6 +23,39 @@
   .auth-heading { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
   .auth-sub { color: var(--muted); font-size: 14px; margin: 0 0 26px; }
   .auth-box form button { width: 100%; padding: 12px; font-size: 15px; margin-top: 4px; }
+  .forgot-wrap { margin-top: 8px; text-align: right; }
+  .forgot-wrap a { color: var(--muted); font-size: 12px; text-decoration: none; }
+  .forgot-wrap a:hover { color: var(--accent); text-decoration: underline; }
+  .oauth-divider {
+    margin: 16px 0 10px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .google-btn {
+    display: inline-flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface-raised);
+    color: var(--text-2);
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .google-btn:hover { border-color: #3a5a80; color: var(--text); background: var(--surface-soft); }
+  .google-btn .g-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #ea4335;
+    box-shadow: 10px 0 0 #fbbc05, 20px 0 0 #34a853, 30px 0 0 #4285f4;
+    margin-right: 24px;
+  }
   .auth-footer { margin-top: 20px; text-align: center; color: var(--muted); font-size: 13px; }
   .auth-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
   .auth-footer a:hover { text-decoration: underline; }
@@ -36,15 +69,54 @@
     <span class="auth-logo-text">Smart<em>TeX</em></span>
   </div>
   <h1 class="auth-heading">Вхід в акаунт</h1>
-  <p class="auth-sub">Введіть логін і пароль для входу</p>
+  <p class="auth-sub">Введіть пошту і пароль для входу</p>
   <form method="post">
     {% csrf_token %}
-    {{ form.as_p }}
+    {% if form.non_field_errors %}
+      <ul class="errorlist">
+        {% for err in form.non_field_errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <p>
+      <label for="{{ form.username.id_for_label }}">{{ form.username.label }}</label>
+      {{ form.username }}
+      {% if form.username.errors %}
+        <ul class="errorlist">
+          {% for err in form.username.errors %}
+            <li>{{ err }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </p>
+    <p>
+      <label for="{{ form.password.id_for_label }}">{{ form.password.label }}</label>
+      {{ form.password }}
+      {% if form.password.errors %}
+        <ul class="errorlist">
+          {% for err in form.password.errors %}
+            <li>{{ err }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </p>
+    <div class="forgot-wrap">
+      <a href="{% url 'password_reset' %}">Забули пароль?</a>
+    </div>
     <button type="submit">Увійти</button>
   </form>
+  {% if google_oauth_enabled %}
+    <div class="oauth-divider">або</div>
+    <a class="google-btn" href="{% url 'google-auth-login' %}"><span class="g-dot"></span>Увійти через Google</a>
+  {% endif %}
+  <div style="margin-top: 10px; font-size: 12px; color: var(--muted);">
+    Не отримали лист підтвердження? <a href="{% url 'resend-verification' %}">Надіслати ще раз</a>
+  </div>
   <hr class="divider">
   <div class="auth-footer">
-    Немає акаунту? <a href="/register/">Зареєструватися</a>
+    Немає акаунту? <a href="{% url 'register' %}">Зареєструватися</a>
   </div>
 </div>
 {% endblock %}

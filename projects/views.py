@@ -28,6 +28,7 @@ from .services import (
     list_project_assets,
     list_tex_sections,
     pdf_file_path,
+    project_pdf_download_name,
     pdf_relative_url,
     pdf_version,
     project_asset_path,
@@ -807,7 +808,11 @@ def api_project_pdf(request: HttpRequest, project_id: int):
     if not path.exists():
         return HttpResponseNotFound("PDF not found")
 
-    return FileResponse(open(path, "rb"), content_type="application/pdf")
+    return FileResponse(
+        open(path, "rb"),
+        content_type="application/pdf",
+        filename=project_pdf_download_name(project),
+    )
 
 
 @csrf_exempt

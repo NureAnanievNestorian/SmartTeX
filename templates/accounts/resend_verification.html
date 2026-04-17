@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}Реєстрація — SmartTeX{% endblock %}
+{% block title %}Повторне підтвердження — SmartTeX{% endblock %}
 {% block head %}
 <style>
   main.wrap { display: flex; align-items: center; justify-content: center; min-height: calc(100vh - 56px); padding: 40px 20px; }
@@ -23,36 +23,6 @@
   .auth-heading { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
   .auth-sub { color: var(--muted); font-size: 14px; margin: 0 0 26px; }
   .auth-box form button { width: 100%; padding: 12px; font-size: 15px; margin-top: 4px; }
-  .oauth-divider {
-    margin: 16px 0 10px;
-    text-align: center;
-    color: var(--muted);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: .5px;
-  }
-  .google-btn {
-    display: inline-flex;
-    width: 100%;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px 12px;
-    border-radius: 9px;
-    border: 1px solid var(--border);
-    background: var(--surface-raised);
-    color: var(--text-2);
-    text-decoration: none;
-    font-weight: 700;
-    font-size: 14px;
-  }
-  .google-btn:hover { border-color: #3a5a80; color: var(--text); background: var(--surface-soft); }
-  .google-btn .g-dot {
-    width: 9px; height: 9px; border-radius: 50%;
-    background: #ea4335;
-    box-shadow: 10px 0 0 #fbbc05, 20px 0 0 #34a853, 30px 0 0 #4285f4;
-    margin-right: 24px;
-  }
   .auth-footer { margin-top: 20px; text-align: center; color: var(--muted); font-size: 13px; }
   .auth-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
   .auth-footer a:hover { text-decoration: underline; }
@@ -65,8 +35,8 @@
     <img class="auth-logo-mark" src="{% static 'projects/branding/logo.svg' %}" alt="SmartTeX logo">
     <span class="auth-logo-text">Smart<em>TeX</em></span>
   </div>
-  <h1 class="auth-heading">Створити акаунт</h1>
-  <p class="auth-sub">Заповніть форму для реєстрації</p>
+  <h1 class="auth-heading">Підтвердження пошти</h1>
+  <p class="auth-sub">Введіть пошту, і ми повторно надішлемо лист підтвердження.</p>
   <form method="post">
     {% csrf_token %}
     {% if form.non_field_errors %}
@@ -76,7 +46,6 @@
         {% endfor %}
       </ul>
     {% endif %}
-
     <p>
       <label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
       {{ form.email }}
@@ -88,38 +57,11 @@
         </ul>
       {% endif %}
     </p>
-    <p>
-      <label for="{{ form.password1.id_for_label }}">{{ form.password1.label }}</label>
-      {{ form.password1 }}
-      {% if form.password1.errors %}
-        <ul class="errorlist">
-          {% for err in form.password1.errors %}
-            <li>{{ err }}</li>
-          {% endfor %}
-        </ul>
-        <small class="helptext">Мінімальна довжина пароля: 6 символів.</small>
-      {% endif %}
-    </p>
-    <p>
-      <label for="{{ form.password2.id_for_label }}">{{ form.password2.label }}</label>
-      {{ form.password2 }}
-      {% if form.password2.errors %}
-        <ul class="errorlist">
-          {% for err in form.password2.errors %}
-            <li>{{ err }}</li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-    </p>
-    <button type="submit">Зареєструватися</button>
+    <button type="submit">Надіслати лист</button>
   </form>
-  {% if google_oauth_enabled %}
-    <div class="oauth-divider">або</div>
-    <a class="google-btn" href="{% url 'google-auth-login' %}"><span class="g-dot"></span>Продовжити з Google</a>
-  {% endif %}
   <hr class="divider">
   <div class="auth-footer">
-    Вже є акаунт? <a href="{% url 'login' %}">Увійти</a>
+    Згадали пароль? <a href="/login/">Повернутися до входу</a>
   </div>
 </div>
 {% endblock %}

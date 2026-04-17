@@ -24,28 +24,6 @@
     border-radius: 13px; padding: 18px; position: relative; overflow: hidden;
     transition: border-color .15s, background .15s, transform .12s, box-shadow .15s;
   }
-  .project-delete-btn {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 2;
-    border: 1px solid var(--border);
-    background: rgba(10, 18, 33, 0.9);
-    color: var(--muted);
-    border-radius: 7px;
-    padding: 3px 8px;
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity .12s, border-color .12s, color .12s, background .12s;
-  }
-  .project-card:hover .project-delete-btn { opacity: 1; }
-  .project-delete-btn:hover {
-    color: #fca5a5;
-    border-color: rgba(248,113,113,.5);
-    background: rgba(80, 21, 21, 0.9);
-  }
   .project-card::before {
     content: ''; position: absolute; left: 0; top: 0; bottom: 0;
     width: 3px; border-radius: 13px 0 0 13px;
@@ -95,34 +73,9 @@
   }
   .mcp-help { margin-top: 8px; color: var(--muted); font-size: 12px; }
 
-  .confirm-overlay {
-    display: none; position: fixed; inset: 0; z-index: 9999;
-    background: rgba(0,0,0,.65); backdrop-filter: blur(5px);
-    align-items: center; justify-content: center; padding: 20px;
-  }
-  .confirm-overlay.open { display: flex; }
-  .confirm-box {
-    background: var(--surface); border: 1px solid var(--border-soft);
-    border-radius: 14px; padding: 24px; max-width: 360px; width: 100%;
-    box-shadow: 0 24px 60px rgba(0,0,0,.6);
-  }
-  .confirm-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
-  .confirm-msg { font-size: 14px; color: var(--text-2); line-height: 1.55; margin-bottom: 22px; }
-  .confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
 </style>
 {% endblock %}
 {% block content %}
-<div id="confirm-overlay" class="confirm-overlay">
-  <div class="confirm-box">
-    <div class="confirm-title">Підтвердження</div>
-    <div class="confirm-msg" id="confirm-msg"></div>
-    <div class="confirm-btns">
-      <button type="button" id="confirm-cancel" class="secondary">Скасувати</button>
-      <button type="button" id="confirm-ok" class="danger">Підтвердити</button>
-    </div>
-  </div>
-</div>
-
 <div class="create-card">
   <h2>Новий проєкт</h2>
   <form method="post" action="{% url 'projects:create' %}">
@@ -172,8 +125,7 @@
        data-next-before-id="{% if projects_next_before_id %}{{ projects_next_before_id }}{% endif %}"
        data-has-more="{% if projects_has_more %}1{% else %}0{% endif %}">
     {% for p in projects %}
-      <a href="{% url 'projects:editor' p.id %}" class="project-card st-{{ p.last_status }}" data-project-id="{{ p.id }}">
-        <button type="button" class="project-delete-btn" data-delete-project-id="{{ p.id }}">Видалити</button>
+      <a href="{% url 'projects:editor' p.id %}" class="project-card st-{{ p.last_status }}">
         <div class="project-top">
           <div class="project-title">{{ p.title }}</div>
           {% if p.last_status %}
@@ -232,16 +184,10 @@
   if (!grid) return;
   const sentinel = document.getElementById("projects-sentinel");
   const empty = document.getElementById("projects-empty");
-  const confirmOverlay = document.getElementById("confirm-overlay");
-  const confirmMsg = document.getElementById("confirm-msg");
-  const confirmOk = document.getElementById("confirm-ok");
-  const confirmCancel = document.getElementById("confirm-cancel");
-  let confirmResolve = null;
   let hasMore = grid.dataset.hasMore === "1";
   let nextBeforeId = grid.dataset.nextBeforeId || "";
   let loading = false;
   const seen = new Set([...grid.querySelectorAll(".project-card")].map(a => a.getAttribute("href")));
-  const countBadge = document.getElementById("projects-count");
 
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -257,54 +203,14 @@
     seen.add(href);
     const a = document.createElement("a");
     a.href = href;
-    a.dataset.projectId = String(p.id);
     a.className = `project-card st-${esc(p.last_status || "pending")}`;
     a.innerHTML =
-      `<button type="button" class="project-delete-btn" data-delete-project-id="${esc(p.id)}">Видалити</button>` +
       `<div class="project-top">` +
       `<div class="project-title">${esc(p.title || "Без назви")}</div>` +
       `${p.last_status ? `<span class="status-pill ${esc(p.last_status)}">${esc(p.last_status)}</span>` : ""}` +
       `</div>` +
       `<div class="project-time">${esc(fmtDate(p.updated_at))}</div>`;
     grid.appendChild(a);
-  }
-  function updateProjectsCount(delta) {
-    if (!countBadge) return;
-    const curr = parseInt(countBadge.textContent || "0", 10);
-    if (Number.isNaN(curr)) return;
-    countBadge.textContent = String(Math.max(0, curr + delta));
-  }
-  function showConfirm(message) {
-    return new Promise(resolve => {
-      confirmResolve = resolve;
-      confirmMsg.textContent = message;
-      confirmOverlay.classList.add("open");
-    });
-  }
-  function closeConfirm(result) {
-    confirmOverlay.classList.remove("open");
-    if (confirmResolve) {
-      const fn = confirmResolve;
-      confirmResolve = null;
-      fn(Boolean(result));
-    }
-  }
-  confirmOk?.addEventListener("click", () => closeConfirm(true));
-  confirmCancel?.addEventListener("click", () => closeConfirm(false));
-  confirmOverlay?.addEventListener("click", e => {
-    if (e.target === confirmOverlay) closeConfirm(false);
-  });
-  async function deleteProject(projectId) {
-    const ok = await showConfirm("Видалити цей проєкт? Дію не можна скасувати.");
-    if (!ok) return;
-    const r = await fetch(`/api/projects/${projectId}/`, {method: "DELETE", credentials: "same-origin"});
-    if (!r.ok) throw new Error("Не вдалося видалити проєкт");
-    const card = grid.querySelector(`.project-card[data-project-id="${projectId}"]`);
-    if (card) {
-      seen.delete(card.getAttribute("href"));
-      card.remove();
-      updateProjectsCount(-1);
-    }
   }
   async function loadMore() {
     if (!hasMore || loading) return;
@@ -328,20 +234,6 @@
     entries.forEach(e => { if (e.isIntersecting) loadMore(); });
   }, {root: null, rootMargin: "1000px 0px"});
   io.observe(sentinel);
-
-  grid.addEventListener("click", async e => {
-    const btn = e.target.closest("[data-delete-project-id]");
-    if (!btn) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const projectId = btn.getAttribute("data-delete-project-id");
-    if (!projectId) return;
-    try {
-      await deleteProject(projectId);
-    } catch (err) {
-      window.alert(err?.message || "Помилка видалення");
-    }
-  });
 })();
 </script>
 {% endblock %}

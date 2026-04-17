@@ -19,6 +19,32 @@ class MCPToken(models.Model):
         return secrets.token_hex(32)
 
 
+class EmailVerificationToken(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="email_verification_tokens")
+    token = models.CharField(max_length=128, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"Email verification token for {self.user_id}"
+
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
+
+    def is_active(self) -> bool:
+        return self.used_at is None and not self.is_expired()
+
+    @classmethod
+    def issue_token(cls) -> str:
+        return secrets.token_urlsafe(48)
+
+    @classmethod
+    def expiry_dt(cls) -> timezone.datetime:
+        hours = int(getattr(settings, "EMAIL_VERIFICATION_TTL_HOURS", 24))
+        return timezone.now() + timedelta(hours=max(1, hours))
+
+
 class OAuthClient(models.Model):
     client_id = models.CharField(max_length=128, unique=True, db_index=True)
     client_name = models.CharField(max_length=255, blank=True)

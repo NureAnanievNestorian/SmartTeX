@@ -185,7 +185,7 @@
       </a>
       <nav class="nav">
         {% if request.user.is_authenticated %}
-          <span class="nav-user">{{ request.user.username }}</span>
+          <span class="nav-user">{{ request.user.email }}</span>
           <a href="/">Проєкти</a>
           <a href="/templates/">Шаблони</a>
           <a href="/logout/" class="nav-exit">Вийти</a>

@@ -106,7 +106,7 @@
     overflow-y: auto; align-content: start;
   }
   .e-file-row {
-    display: flex; align-items: center; gap: 6px;
+    display: flex; align-items: center; gap: 6px; min-width: 0;
   }
   .e-file-btn {
     flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: center;
@@ -117,16 +117,27 @@
   }
   .e-file-btn:hover { background: var(--e-raised); border-color: var(--e-border); }
   .e-file-btn.active { background: #0d2218; border-color: #1a5436; color: #ceffd8; }
+  .e-file-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .e-file-sz { font-size: 11px; color: var(--e-muted); flex-shrink: 0; }
   .e-file-actions { display: flex; gap: 4px; flex-shrink: 0; }
   .e-file-act {
-    padding: 3px 6px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     border-radius: 5px;
     border: 1px solid var(--e-border);
     background: var(--e-raised);
     color: var(--e-muted);
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
   }
   .e-file-act:hover { color: var(--e-text); border-color: #3a5a80; }
@@ -510,6 +521,15 @@
   .confirm-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
   .confirm-msg { font-size: 14px; color: var(--e-text2); line-height: 1.55; margin-bottom: 22px; }
   .confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
+  .rename-input {
+    width: 100%;
+    margin-bottom: 8px;
+  }
+  .rename-ext {
+    color: var(--e-muted);
+    font-size: 12px;
+    margin-bottom: 14px;
+  }
 </style>
 {% endblock %}
 
@@ -523,6 +543,31 @@
       <button class="e-btn" id="confirm-cancel" type="button">Скасувати</button>
       <button class="e-btn" id="confirm-ok" type="button"
         style="background:var(--e-danger);border-color:transparent;color:#fff;">Підтвердити</button>
+    </div>
+  </div>
+</div>
+
+<div id="rename-overlay" class="confirm-overlay">
+  <div class="confirm-box">
+    <div class="confirm-title">Перейменувати файл</div>
+    <div class="confirm-msg" id="rename-msg" style="margin-bottom: 12px;"></div>
+    <input id="rename-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
+    <div id="rename-ext" class="rename-ext"></div>
+    <div class="confirm-btns">
+      <button class="e-btn" id="rename-cancel" type="button">Скасувати</button>
+      <button class="e-btn" id="rename-ok" type="button">Зберегти</button>
+    </div>
+  </div>
+</div>
+
+<div id="rename-project-overlay" class="confirm-overlay">
+  <div class="confirm-box">
+    <div class="confirm-title">Перейменувати проєкт</div>
+    <div class="confirm-msg" id="rename-project-msg" style="margin-bottom: 12px;"></div>
+    <input id="rename-project-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
+    <div class="confirm-btns">
+      <button class="e-btn" id="rename-project-cancel" type="button">Скасувати</button>
+      <button class="e-btn" id="rename-project-ok" type="button">Зберегти</button>
     </div>
   </div>
 </div>
@@ -549,10 +594,12 @@
   <!-- Topbar -->
   <div class="e-topbar">
     <div class="e-title-group">
-      <span class="e-proj-name">{{ project.title }}</span>
+      <span class="e-proj-name" id="project-title">{{ project.title }}</span>
       <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
     </div>
     <div class="e-actions">
+      <button id="rename-project-btn" class="e-btn" type="button">Rename Project</button>
+      <button id="delete-project-btn" class="e-btn danger" type="button">Delete Project</button>
       <button id="compile-btn" class="e-btn primary" type="button">Recompile</button>
       <a id="download-pdf" class="e-btn" href="/api/projects/{{ project.id }}/pdf/" target="_blank">PDF</a>
     </div>
@@ -665,6 +712,7 @@
   const csrfToken  = "{{ csrf_token }}";
 
   const statusEl      = document.getElementById("status");
+  const projectTitleEl= document.getElementById("project-title");
   const saveHintEl    = document.getElementById("save-hint");
   const editor        = document.getElementById("editor");
   const editorHl      = document.getElementById("editor-hl");
@@ -704,6 +752,8 @@
   let lastPdfVersion = null;
   let statusPollTimer= null;
   let _confirmResolve= null;
+  let _renameResolve = null;
+  let _renameProjectResolve = null;
   let hasUnsavedChanges = false;
   let projectWs = null;
   let projectWsReconnectTimer = null;
@@ -895,6 +945,83 @@
       _confirmResolve = resolve;
     });
   }
+  document.getElementById("rename-ok").addEventListener("click", () => {
+    const input = document.getElementById("rename-input");
+    const val = String(input?.value || "").trim();
+    document.getElementById("rename-overlay").classList.remove("open");
+    if (_renameResolve) { _renameResolve(val || null); _renameResolve = null; }
+  });
+  document.getElementById("rename-cancel").addEventListener("click", () => {
+    document.getElementById("rename-overlay").classList.remove("open");
+    if (_renameResolve) { _renameResolve(null); _renameResolve = null; }
+  });
+  document.getElementById("rename-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("rename-ok").click();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      document.getElementById("rename-cancel").click();
+    }
+  });
+  document.getElementById("rename-project-ok").addEventListener("click", () => {
+    const input = document.getElementById("rename-project-input");
+    const val = String(input?.value || "").trim();
+    document.getElementById("rename-project-overlay").classList.remove("open");
+    if (_renameProjectResolve) { _renameProjectResolve(val || null); _renameProjectResolve = null; }
+  });
+  document.getElementById("rename-project-cancel").addEventListener("click", () => {
+    document.getElementById("rename-project-overlay").classList.remove("open");
+    if (_renameProjectResolve) { _renameProjectResolve(null); _renameProjectResolve = null; }
+  });
+  document.getElementById("rename-project-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("rename-project-ok").click();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      document.getElementById("rename-project-cancel").click();
+    }
+  });
+  function showRenameDialog(fileName) {
+    const name = String(fileName || "").trim();
+    const dot = name.lastIndexOf(".");
+    const ext = dot > 0 ? name.slice(dot) : "";
+    const base = dot > 0 ? name.slice(0, dot) : name;
+    return new Promise(resolve => {
+      const input = document.getElementById("rename-input");
+      const msg = document.getElementById("rename-msg");
+      const extEl = document.getElementById("rename-ext");
+      msg.textContent = "Введіть нову назву файлу (без розширення).";
+      extEl.textContent = ext ? `Розширення зафіксоване: ${ext}` : "Розширення відсутнє.";
+      input.value = base;
+      document.getElementById("rename-overlay").classList.add("open");
+      _renameResolve = value => {
+        if (value === null) { resolve(null); return; }
+        resolve(ext ? `${value}${ext}` : value);
+      };
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 0);
+    });
+  }
+  function showProjectRenameDialog(currentTitle) {
+    return new Promise(resolve => {
+      const input = document.getElementById("rename-project-input");
+      const msg = document.getElementById("rename-project-msg");
+      msg.textContent = "Введіть нову назву проєкту.";
+      input.value = String(currentTitle || "").trim();
+      document.getElementById("rename-project-overlay").classList.add("open");
+      _renameProjectResolve = value => resolve(value);
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 0);
+    });
+  }
 
   function closeDiffModal() {
     activeDiffVersionId = null;
@@ -1082,7 +1209,7 @@
       row.className = "e-file-row";
       const btn = document.createElement("button");
       btn.className = `e-file-btn${selectedFile.name===f.name ? " active" : ""}`;
-      btn.innerHTML = `<span>${f.name}</span><span class="e-file-sz">${f.size ? fmtBytes(f.size) : ""}</span>`;
+      btn.innerHTML = `<span class="e-file-name">${f.name}</span><span class="e-file-sz">${f.size ? fmtBytes(f.size) : ""}</span>`;
       btn.addEventListener("click", () => selectFile(f));
       row.appendChild(btn);
 
@@ -1092,7 +1219,9 @@
         const renameBtn = document.createElement("button");
         renameBtn.type = "button";
         renameBtn.className = "e-file-act";
-        renameBtn.textContent = "Rename";
+        renameBtn.textContent = "✎";
+        renameBtn.title = "Rename";
+        renameBtn.setAttribute("aria-label", "Rename file");
         renameBtn.addEventListener("click", async e => {
           e.preventDefault(); e.stopPropagation();
           await renameFile(f);
@@ -1100,7 +1229,9 @@
         const deleteBtn = document.createElement("button");
         deleteBtn.type = "button";
         deleteBtn.className = "e-file-act danger";
-        deleteBtn.textContent = "Delete";
+        deleteBtn.textContent = "✕";
+        deleteBtn.title = "Delete";
+        deleteBtn.setAttribute("aria-label", "Delete file");
         deleteBtn.addEventListener("click", async e => {
           e.preventDefault(); e.stopPropagation();
           await deleteFile(f);
@@ -1457,6 +1588,38 @@
     } catch (err) { setStatus("error"); logEl.textContent = `Помилка: ${err.message}`; }
   }
 
+  async function deleteCurrentProject() {
+    const ok = await showConfirm("Видалити цей проєкт? Дію не можна скасувати.");
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/projects/${projectId}/`, {method: "DELETE", credentials: "same-origin"});
+      if (!r.ok) throw new Error("Не вдалося видалити проєкт");
+      window.location.href = "/";
+    } catch (err) {
+      setSaveHint(`Помилка: ${err.message}`, "error");
+    }
+  }
+
+  async function renameCurrentProject() {
+    const currentTitle = String(projectTitleEl?.textContent || "").trim();
+    const newTitle = await showProjectRenameDialog(currentTitle);
+    if (!newTitle) return;
+    const trimmed = String(newTitle).trim();
+    if (!trimmed || trimmed === currentTitle) return;
+    try {
+      const payload = await api(`/api/projects/${projectId}/`, {
+        method: "PATCH",
+        body: JSON.stringify({title: trimmed}),
+      });
+      const title = String(payload?.title || trimmed);
+      projectTitleEl.textContent = title;
+      document.title = `${title} — SmartTeX`;
+      setSaveHint("Назву проєкту оновлено", "saved");
+    } catch (err) {
+      setSaveHint(`Помилка: ${err.message}`, "error");
+    }
+  }
+
 
   async function selectFile(file) {
     selectedFile = {name:file.name, type:file.type||"asset", ...file};
@@ -1485,9 +1648,9 @@
   async function renameFile(file) {
     const currentName = String(file?.name || "");
     if (!currentName || currentName === "main.tex") return;
-    const newName = prompt("Нова назва файлу", currentName);
+    const newName = await showRenameDialog(currentName);
     if (!newName) return;
-    const trimmed = newName.trim();
+    const trimmed = String(newName).trim();
     if (!trimmed || trimmed === currentName) return;
     await api(`/api/projects/${projectId}/files/${encodeURIComponent(currentName)}/rename/`, {
       method: "POST",
@@ -1581,6 +1744,8 @@
 
 
   document.getElementById("compile-btn").addEventListener("click", compileProject);
+  document.getElementById("rename-project-btn").addEventListener("click", renameCurrentProject);
+  document.getElementById("delete-project-btn").addEventListener("click", deleteCurrentProject);
   document.getElementById("refresh-pdf").addEventListener("click", () => {
     if (pdfCurrentUrl) {
       const base = pdfCurrentUrl.split("?")[0];

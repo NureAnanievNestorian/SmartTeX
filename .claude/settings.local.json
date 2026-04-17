@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py migrate projects 0003_projectversion_number --check)",
+      "Bash(python manage.py showmigrations projects)",
+      "Bash(python:*)"
+    ]
+  }
+}
