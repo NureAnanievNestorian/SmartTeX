@@ -50,11 +50,12 @@
     font-size: 14px;
   }
   .google-btn:hover { border-color: #3a5a80; color: var(--text); background: var(--surface-soft); }
-  .google-btn .g-dot {
-    width: 9px; height: 9px; border-radius: 50%;
-    background: #ea4335;
-    box-shadow: 10px 0 0 #fbbc05, 20px 0 0 #34a853, 30px 0 0 #4285f4;
-    margin-right: 24px;
+  .google-btn-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    display: block;
+    object-fit: contain;
   }
   .auth-footer { margin-top: 20px; text-align: center; color: var(--muted); font-size: 13px; }
   .auth-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
@@ -109,11 +110,11 @@
   </form>
   {% if google_oauth_enabled %}
     <div class="oauth-divider">або</div>
-    <a class="google-btn" href="{% url 'google-auth-login' %}"><span class="g-dot"></span>Увійти через Google</a>
+    <a class="google-btn" href="{% url 'google-auth-login' %}">
+      <img class="google-btn-icon" src="{% static 'projects/branding/google-logo.svg' %}" alt="Google">
+      Увійти через Google
+    </a>
   {% endif %}
-  <div style="margin-top: 10px; font-size: 12px; color: var(--muted);">
-    Не отримали лист підтвердження? <a href="{% url 'resend-verification' %}">Надіслати ще раз</a>
-  </div>
   <hr class="divider">
   <div class="auth-footer">
     Немає акаунту? <a href="{% url 'register' %}">Зареєструватися</a>

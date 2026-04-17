@@ -17,6 +17,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods
 
+from .email_verification import ensure_unverified_state, is_user_email_verified, mark_user_email_verified
 from .forms import LoginForm, RegisterForm, ResendVerificationForm
 from .models import EmailVerificationToken, MCPToken
 
@@ -65,7 +66,9 @@ def _ensure_unique_username(email: str) -> str:
 @require_http_methods(["GET", "POST"])
 def login_view(request: HttpRequest):
     if request.user.is_authenticated:
-        return redirect("projects:dashboard")
+        if is_user_email_verified(request.user):
+            return redirect("projects:dashboard")
+        return redirect("email-verification-required")
 
     post_data = request.POST.copy() if request.method == "POST" else None
     if post_data and post_data.get("username"):
@@ -73,13 +76,11 @@ def login_view(request: HttpRequest):
 
     form = LoginForm(request, data=post_data)
     if request.method == "POST":
-        lookup_username = post_data.get("username", "") if post_data else ""
-        user = User.objects.filter(username=lookup_username).only("id", "is_active").first()
-        if user and not user.is_active:
-            form.add_error(None, "Пошта не підтверджена. Перевірте лист або запросіть новий лист підтвердження.")
-        elif form.is_valid():
+        if form.is_valid():
             login(request, form.get_user())
-            return redirect("projects:dashboard")
+            if is_user_email_verified(form.get_user()):
+                return redirect("projects:dashboard")
+            return redirect("email-verification-required")
 
     return render(
         request,
@@ -94,26 +95,38 @@ def login_view(request: HttpRequest):
 @require_http_methods(["GET", "POST"])
 def register_view(request: HttpRequest):
     if request.user.is_authenticated:
-        return redirect("projects:dashboard")
+        if is_user_email_verified(request.user):
+            return redirect("projects:dashboard")
+        return redirect("email-verification-required")
 
     form = RegisterForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             user = form.save()
-            user.is_active = False
-            user.save(update_fields=["is_active"])
+            if not user.is_active:
+                user.is_active = True
+                user.save(update_fields=["is_active"])
+            ensure_unverified_state(user)
             remaining = _verification_email_cooldown_remaining(user)
             if remaining > 0:
                 messages.error(request, f"Лист вже надіслано. Спробуйте через {remaining} с.")
-                return render(request, "accounts/register.html", {"form": form})
+                return render(
+                    request,
+                    "accounts/register.html",
+                    {
+                        "form": form,
+                        "google_oauth_enabled": _google_oauth_enabled(),
+                    },
+                )
             token_obj = _issue_email_verification_token(user)
         try:
             _send_verification_email(request, user, token_obj.token)
         except Exception:
             messages.error(request, "Не вдалося надіслати лист підтвердження. Спробуйте ще раз пізніше.")
             return redirect("resend-verification")
+        login(request, user)
         messages.success(request, "Акаунт створено. Перевірте пошту для підтвердження.")
-        return redirect("login")
+        return redirect("email-verification-required")
 
     return render(
         request,
@@ -229,6 +242,7 @@ def google_auth_callback_view(request: HttpRequest):
         updated = True
     if updated:
         user.save(update_fields=["is_active", "email"])
+    mark_user_email_verified(user)
 
     login(request, user)
     messages.success(request, "Вхід через Google успішний.")
@@ -305,14 +319,30 @@ def _send_verification_email(request: HttpRequest, user: User, token: str) -> No
 
 @require_http_methods(["GET", "POST"])
 def resend_verification_view(request: HttpRequest):
-    if request.user.is_authenticated:
+    if request.user.is_authenticated and is_user_email_verified(request.user):
         return redirect("projects:dashboard")
+
+    if request.user.is_authenticated:
+        if request.method == "POST":
+            user = request.user
+            remaining = _verification_email_cooldown_remaining(user)
+            if remaining > 0:
+                messages.error(request, f"Лист вже надіслано. Спробуйте через {remaining} с.")
+                return redirect("email-verification-required")
+            token_obj = _issue_email_verification_token(user)
+            try:
+                _send_verification_email(request, user, token_obj.token)
+                messages.success(request, "Лист підтвердження надіслано повторно.")
+            except Exception:
+                messages.error(request, "Не вдалося надіслати лист. Спробуйте ще раз пізніше.")
+            return redirect("email-verification-required")
+        return redirect("email-verification-required")
 
     form = ResendVerificationForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         email = (form.cleaned_data.get("email") or "").strip().lower()
         user = User.objects.filter(email__iexact=email).only("id", "email", "is_active").first()
-        if user and not user.is_active:
+        if user and not is_user_email_verified(user):
             remaining = _verification_email_cooldown_remaining(user)
             if remaining > 0:
                 messages.error(request, f"Лист вже надіслано. Спробуйте через {remaining} с.")
@@ -345,12 +375,27 @@ def verify_email_view(request: HttpRequest, token: str):
     user = token_obj.user
     token_obj.used_at = timezone.now()
     token_obj.save(update_fields=["used_at"])
+    mark_user_email_verified(user)
     if not user.is_active:
         user.is_active = True
         user.save(update_fields=["is_active"])
     login(request, user)
     messages.success(request, "Пошту підтверджено. Ви увійшли в акаунт.")
     return redirect("projects:dashboard")
+
+
+@login_required
+@require_GET
+def email_verification_required_view(request: HttpRequest):
+    if is_user_email_verified(request.user):
+        return redirect("projects:dashboard")
+    return render(
+        request,
+        "accounts/email_verification_required.html",
+        {
+            "email": request.user.email,
+        },
+    )
 
 
 @require_http_methods(["POST"])
@@ -368,8 +413,10 @@ def api_register(request: HttpRequest) -> JsonResponse:
 
     with transaction.atomic():
         user = form.save()
-        user.is_active = False
-        user.save(update_fields=["is_active"])
+        if not user.is_active:
+            user.is_active = True
+            user.save(update_fields=["is_active"])
+        ensure_unverified_state(user)
         remaining = _verification_email_cooldown_remaining(user)
         if remaining > 0:
             return JsonResponse(
@@ -381,7 +428,11 @@ def api_register(request: HttpRequest) -> JsonResponse:
         _send_verification_email(request, user, token_obj.token)
     except Exception:
         return JsonResponse({"detail": "Failed to send verification email"}, status=502)
-    return JsonResponse({"id": user.id, "email": user.email, "verification_sent": True}, status=201)
+    login(request, user)
+    return JsonResponse(
+        {"id": user.id, "email": user.email, "verification_sent": True, "email_verified": False},
+        status=201,
+    )
 
 
 @require_http_methods(["POST"])
@@ -392,16 +443,12 @@ def api_login(request: HttpRequest) -> JsonResponse:
     password = data.get("password", "")
     if not raw_email or not password:
         return JsonResponse({"detail": "email and password are required"}, status=400)
-    existing_user = User.objects.filter(username=username).only("id", "is_active").first()
-    if existing_user and not existing_user.is_active:
-        return JsonResponse({"detail": "Email is not verified"}, status=403)
-
     user = authenticate(request, username=username, password=password)
     if user is None:
         return JsonResponse({"detail": "Invalid credentials"}, status=400)
 
     login(request, user)
-    return JsonResponse({"id": user.id, "email": user.email})
+    return JsonResponse({"id": user.id, "email": user.email, "email_verified": is_user_email_verified(user)})
 
 
 @require_http_methods(["POST"])

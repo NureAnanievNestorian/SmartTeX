@@ -45,6 +45,19 @@ class EmailVerificationToken(models.Model):
         return timezone.now() + timedelta(hours=max(1, hours))
 
 
+class EmailVerificationState(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="email_verification_state",
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def is_verified(self) -> bool:
+        return self.verified_at is not None
+
+
 class OAuthClient(models.Model):
     client_id = models.CharField(max_length=128, unique=True, db_index=True)
     client_name = models.CharField(max_length=255, blank=True)

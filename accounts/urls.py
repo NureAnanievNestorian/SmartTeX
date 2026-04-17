@@ -5,6 +5,7 @@ from django.urls import reverse_lazy
 from .views import (
     google_auth_callback_view,
     google_auth_login_view,
+    email_verification_required_view,
     login_view,
     logout_view,
     register_view,
@@ -23,6 +24,11 @@ urlpatterns = [
     path("login/", login_view, name="login"),
     path("register/", register_view, name="register"),
     path("logout/", logout_view, name="logout"),
+    path(
+        "email-verification-required/",
+        email_verification_required_view,
+        name="email-verification-required",
+    ),
     path(
         "password-reset/",
         auth_views.PasswordResetView.as_view(
