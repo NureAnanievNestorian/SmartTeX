@@ -5,6 +5,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}SmartTeX{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}SmartTeX — онлайн-редактор LaTeX з підтримкою MCP та AI-асистентів.{% endblock %}">
+  <meta property="og:type" content="{% block og_type %}website{% endblock %}">
+  <meta property="og:site_name" content="SmartTeX">
+  <meta property="og:title" content="{% block og_title %}SmartTeX{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}SmartTeX — онлайн-редактор LaTeX з підтримкою MCP та AI-асистентів.{% endblock %}">
+  <meta property="og:url" content="{{ request.build_absolute_uri }}">
+  {% block meta %}{% endblock %}
+  <link rel="canonical" href="{{ request.build_absolute_uri }}">
   <link rel="icon" href="{% static 'projects/branding/favicon.svg' %}" type="image/svg+xml">
   <link rel="shortcut icon" href="{% static 'projects/branding/favicon.svg' %}" type="image/svg+xml">
   <style>
