@@ -507,7 +507,7 @@ mcp = FastMCP(
     - Always read the current content of what you're about to change before writing.
     - Preserve existing formatting, indentation, and LaTeX structure.
     - Never introduce or remove blank lines outside the edit target.
-    - Never change `\\begin{document}`, preamble, or `\end{document}` unless user explicitly asks.
+    - Never change `\\begin{document}`, preamble, or `\\end{document}` unless user explicitly asks.
     - After a window rewrite, verify line counts are consistent — a rewrite must not silently shift unrelated content.
 
     ### change_summary — derive automatically

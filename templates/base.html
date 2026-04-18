@@ -187,9 +187,11 @@
         {% if request.user.is_authenticated %}
           <span class="nav-user">{{ request.user.email }}</span>
           <a href="{% url 'projects:dashboard' %}">Проєкти</a>
+          <a href="{% url 'projects:ai-connect' %}">Інтеграція з ШІ</a>
           <a href="{% url 'templates_lib:list' %}">Шаблони</a>
           <a href="{% url 'logout' %}" class="nav-exit">Вийти</a>
         {% else %}
+          <a href="{% url 'projects:ai-connect' %}">Інтеграція з ШІ</a>
           <a href="{% url 'login' %}">Вхід</a>
           <a href="{% url 'register' %}">Реєстрація</a>
         {% endif %}

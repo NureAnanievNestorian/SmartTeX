@@ -66,6 +66,7 @@ class OAuthCorsMiddleware:
 
 class EmailVerificationRequiredMiddleware:
     ALLOWED_VIEW_NAMES = {
+        "projects:ai-connect",
         "logout",
         "verify-email",
         "resend-verification",

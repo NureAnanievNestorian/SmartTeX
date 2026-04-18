@@ -2,7 +2,10 @@ import json
 import base64
 import binascii
 import mimetypes
+import posixpath
+from urllib.parse import urlsplit, urlunsplit
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponseForbidden, HttpResponseNotFound, JsonResponse
@@ -121,10 +124,43 @@ def _parse_int(v: str | None) -> int | None:
     return int(v)
 
 
+def _configured_mcp_url(request: HttpRequest) -> str:
+    configured_base = str(getattr(settings, "MCP_SERVER_PUBLIC_URL", "") or "").strip()
+    configured_path = str(getattr(settings, "MCP_PATH", "/mcp") or "/mcp").strip()
+
+    mcp_path = configured_path or "/"
+    if not mcp_path.startswith("/"):
+        mcp_path = f"/{mcp_path}"
+    if mcp_path != "/":
+        mcp_path = mcp_path.rstrip("/")
+
+    if configured_base:
+        parts = urlsplit(configured_base)
+        base_path = parts.path or "/"
+        if mcp_path == "/":
+            final_path = base_path
+        else:
+            final_path = posixpath.join(base_path.rstrip("/") or "/", mcp_path.lstrip("/"))
+            if not final_path.startswith("/"):
+                final_path = f"/{final_path}"
+        return urlunsplit((parts.scheme, parts.netloc, final_path, "", ""))
+
+    return request.build_absolute_uri(mcp_path)
+
+
 def home(request: HttpRequest):
     if request.user.is_authenticated:
         return redirect("projects:dashboard")
     return render(request, "projects/home.html")
+
+
+@require_GET
+def ai_connect_guide(request: HttpRequest):
+    return render(
+        request,
+        "projects/ai_connect_guide.html",
+        {"mcp_url": _configured_mcp_url(request)},
+    )
 
 
 @login_required

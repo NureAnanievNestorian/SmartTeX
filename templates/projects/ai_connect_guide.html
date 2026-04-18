@@ -1,0 +1,459 @@
+{% extends "base.html" %}
+{% block title %}Підключення SmartTeX до AI-асистентів{% endblock %}
+{% block head %}
+    <style>
+        .docs-hero {
+            border: 1px solid var(--border-soft);
+            border-radius: 16px;
+            padding: 26px 24px;
+            margin-bottom: 12px;
+            background: radial-gradient(700px 280px at 8% -18%, rgba(34, 197, 94, 0.16), transparent 56%),
+            radial-gradient(700px 280px at 98% -10%, rgba(59, 130, 246, 0.14), transparent 58%),
+            linear-gradient(180deg, rgba(20, 31, 51, 0.92), rgba(11, 18, 32, 0.97));
+        }
+
+        .docs-hero h1 {
+            margin: 0 0 8px;
+            font-size: clamp(26px, 4vw, 40px);
+            letter-spacing: -0.5px;
+            line-height: 1.08;
+        }
+
+        .docs-hero p {
+            margin: 0;
+            max-width: 900px;
+            color: var(--text-2);
+            font-size: 16px;
+            line-height: 1.7;
+        }
+
+        .docs-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .docs-card {
+            border: 1px solid var(--border-soft);
+            border-radius: 14px;
+            background: var(--surface);
+            padding: 20px;
+        }
+
+        .docs-card h2 {
+            margin: 0 0 10px;
+            font-size: 23px;
+            letter-spacing: -0.3px;
+        }
+
+        .docs-card h3 {
+            margin: 14px 0 8px;
+            font-size: 17px;
+        }
+
+        .docs-card p {
+            margin: 0;
+            color: var(--text-2);
+            line-height: 1.68;
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .release-links {
+            margin-top: 8px;
+            display: grid;
+            gap: 6px;
+        }
+
+        .toc {
+            margin: 0;
+            padding-left: 20px;
+            display: grid;
+            gap: 6px;
+        }
+
+        .toc a {
+            color: var(--text-2);
+            text-decoration: none;
+        }
+
+        .toc a:hover {
+            color: var(--text);
+            text-decoration: underline;
+        }
+
+        .divider {
+            margin: 16px 0 0;
+            border: 0;
+            border-top: 1px dashed var(--border);
+        }
+
+        .req {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            margin: 4px 0 10px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface-raised);
+            color: var(--text-2);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .callout {
+            margin-top: 10px;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            background: rgba(245, 158, 11, 0.1);
+            color: #fcd34d;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.55;
+        }
+
+        .callout.blue {
+            border-color: rgba(59, 130, 246, 0.35);
+            background: rgba(59, 130, 246, 0.1);
+            color: #bfdbfe;
+        }
+
+        ol.steps {
+            margin: 0;
+            padding-left: 20px;
+            display: grid;
+            gap: 8px;
+        }
+
+        ol.steps li {
+            color: var(--text-2);
+            line-height: 1.62;
+        }
+
+        ul.checks {
+            margin: 0;
+            padding-left: 19px;
+            display: grid;
+            gap: 6px;
+        }
+
+        ul.checks li {
+            color: var(--text-2);
+            line-height: 1.6;
+        }
+
+        .code-inline {
+            display: inline-block;
+            font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px;
+            padding: 3px 7px;
+            border-radius: 7px;
+            border: 1px solid var(--border);
+            background: var(--surface-raised);
+            color: var(--text);
+        }
+
+        .copy-row {
+            margin-top: 10px;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .copy-row input {
+            font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .url-helper {
+            margin-top: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .url-helper .code-inline {
+            max-width: 100%;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .quote {
+            margin-top: 10px;
+            padding: 12px 14px;
+            border-left: 3px solid rgba(34, 197, 94, 0.7);
+            border-radius: 0 10px 10px 0;
+            background: rgba(34, 197, 94, 0.08);
+            color: #d9ffe6;
+            font-style: italic;
+            line-height: 1.6;
+        }
+
+        @media (max-width: 760px) {
+            .docs-card {
+                padding: 16px;
+            }
+
+            .copy-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+{% endblock %}
+{% block content %}
+    <section class="docs-hero">
+        <h1>Підключення SmartTeX до AI-асистентів</h1>
+        <p>
+            SmartTeX підтримує інтеграцію через MCP (Model Context Protocol) — стандарт для підключення AI-асистентів до
+            зовнішніх інструментів.
+            Після підключення асистент зможе читати та редагувати ваші LaTeX-документи, запускати компіляцію і працювати
+            з файлами проєкту.
+        </p>
+    </section>
+
+    <div class="docs-grid">
+        <section class="docs-card">
+            <h2>Зміст</h2>
+            <ol class="toc">
+                <li><a href="#claude">Claude</a></li>
+                <li><a href="#chatgpt">ChatGPT</a></li>
+                <li><a href="#mcpsuperassistant">McpSuperAssistant</a></li>
+                <li><a href="#security">Безпека</a></li>
+                <li><a href="#verification">Перевірка підключення</a></li>
+            </ol>
+        </section>
+
+        <section class="docs-card" id="claude">
+            <h2>1. Claude</h2>
+            <ol class="steps">
+                <li>Відкрийте <strong>Settings → Connectors</strong> у Claude.</li>
+                <li>Натисніть <strong>Add custom connector</strong>, вкажіть довільну назву і вставте MCP URL SmartTeX.</li>
+                <li>Claude відкриє вікно авторизації SmartTeX — увійдіть у свій акаунт і підтвердіть доступ.</li>
+                <li>Після підключення інтеграція з'явиться у списку активних.</li>
+            </ol>
+            <div class="url-helper">
+                <span class="code-inline">{{ mcp_url }}</span>
+                <button type="button" class="secondary" data-copy-text="{{ mcp_url|escapejs }}">Копіювати URL</button>
+            </div>
+        </section>
+
+        <section class="docs-card" id="chatgpt">
+            <h2>2. ChatGPT</h2>
+            <div class="req">Вимоги: платний тариф</div>
+            <div class="callout">
+                Якщо у вашому тарифі немає можливості використання власних MCP-серверів,
+                скористайтесь <a href="#mcpsuperassistant">McpSuperAssistant</a>.
+            </div>
+            <ol class="steps" style="margin-top:10px;">
+                <li>Відкрийте <strong>Settings → Apps → Advanced Settings</strong> і увімкніть Developer Mode.</li>
+                <li>Натисніть <strong>Create App</strong></li>
+                <li>Вкажіть довільну назву, вставте MCP URL SmartTeX і пройдіть авторизацію у вікні підтвердження.</li>
+                <li>Після підключення перейдіть до <a href="#verification">перевірки</a>.</li>
+            </ol>
+            <div class="url-helper">
+                <span class="code-inline">{{ mcp_url }}</span>
+                <button type="button" class="secondary" data-copy-text="{{ mcp_url|escapejs }}">Копіювати URL</button>
+            </div>
+        </section>
+
+        <section class="docs-card" id="mcpsuperassistant">
+            <h2>3. McpSuperAssistant</h2>
+            <p>
+                McpSuperAssistant — розширення для браузера, яке додає підтримку MCP до ChatGPT, Perplexity та інших
+                веб-інтерфейсів.
+                SmartTeX використовує <strong>кастомний форк</strong> із виправленнями сумісності.
+            </p>
+
+            <h3>Крок 1 — Встановлення розширення</h3>
+            <p>
+                Завантажте кастомний форк зі сторінки релізів:
+                <a id="latest-source-link"
+                   href="https://github.com/NureAnanievNestorian/MCP-SuperAssistant/archive/refs/tags/v1.0.0.zip"
+                   target="_blank"
+                   rel="noopener noreferrer">
+                    Source code (latest release)
+                </a>
+            </p>
+            <div class="release-links muted">
+                <div>
+                    Сторінка релізів:
+                    <a id="releases-page-link"
+                       href="https://github.com/NureAnanievNestorian/MCP-SuperAssistant/releases" target="_blank"
+                       rel="noopener noreferrer">
+                        github.com/NureAnanievNestorian/MCP-SuperAssistant/releases
+                    </a>
+                </div>
+                <div id="latest-release-meta">Оновлюю дані останнього релізу…</div>
+            </div>
+            <p class="muted" style="margin-top:8px;">
+                Розпакуйте архів у зручну папку, потім:
+            </p>
+
+            <div class="callout blue" style="margin-top:8px;">
+                <strong>Chrome / Chromium / Edge / Brave</strong>
+                <ol class="steps" style="margin-top:8px;">
+                    <li>Відкрийте <span class="code-inline">chrome://extensions</span></li>
+                    <li>Увімкніть <strong>Developer mode</strong> у правому верхньому куті</li>
+                    <li>Натисніть <strong>Load unpacked</strong> і оберіть розпаковану папку</li>
+                </ol>
+            </div>
+
+            <div class="callout blue" style="margin-top:8px;">
+                <strong>Firefox</strong>
+                <ol class="steps" style="margin-top:8px;">
+                    <li>Відкрийте <span class="code-inline">about:debugging#/runtime/this-firefox</span></li>
+                    <li>Натисніть <strong>Load Temporary Add-on</strong> і оберіть файл <span class="code-inline">manifest.json</span>
+                        з папки розширення
+                    </li>
+                </ol>
+            </div>
+
+            <h3>Крок 2 — Підключення SmartTeX</h3>
+            <ol class="steps">
+                <li>Відкрийте ChatGPT або інший підтримуваний інтерфейс.</li>
+                <li>Знайдіть кнопку <strong>MCP</strong> біля поля вводу і увімкніть перемикач — відкриється бічна
+                    панель.
+                </li>
+                <li>Вставте MCP URL SmartTeX у налаштуваннях сервера і натисніть <strong>Connect</strong>.</li>
+                <li>Відкриється вікно авторизації SmartTeX — увійдіть і підтвердіть доступ.</li>
+                <li>У бічній панелі має відображатись статус <strong>Connected</strong>.</li>
+            </ol>
+            <div class="url-helper">
+                <span class="code-inline">{{ mcp_url }}</span>
+                <button type="button" class="secondary" data-copy-text="{{ mcp_url|escapejs }}">Копіювати URL</button>
+            </div>
+
+            <h3>Крок 3 — Перший запит</h3>
+            <p>
+                Перш ніж давати завдання, вставте MCP-інструкційний промпт у розмову.
+                Для цього натисніть кнопку <strong>MCP</strong> і оберіть <strong>Insert</strong> — це допоможе
+                асистенту правильно використовувати інструменти SmartTeX.
+            </p>
+            <p class="muted" style="margin-top:8px;">
+                Після цього перейдіть до <a href="#verification">перевірки підключення</a>.
+            </p>
+
+            <h3>Режими виконання інструментів</h3>
+            <div class="callout blue">
+                <strong>Auto</strong> — інструмент виконується автоматично, результат одразу передається асистенту.
+                Зручно для швидкої роботи.
+            </div>
+            <div class="callout blue" style="margin-top:8px;">
+                <strong>Manual</strong> — виклик інструменту з'являється в бічній панелі для перегляду.
+                Ви самі натискаєте <strong>Run</strong>, а потім <strong>Submit</strong>, щоб передати результат
+                асистенту.
+                Рекомендовано якщо плануєте редагування документів — так ви бачите що саме відбувається перед тим як
+                зміни застосуються.
+            </div>
+        </section>
+
+        <section class="docs-card" id="security">
+            <h2>Безпека</h2>
+            <ul class="checks">
+                <li>Підключайте лише ті клієнти, яким довіряєте.</li>
+                <li>Після першого входу повторно авторизуватись не потрібно — клієнт оновлює доступ автоматично.</li>
+                <li>Якщо підключили чужий або помилковий клієнт — відкличте доступ у <strong>Settings →
+                    Integrations</strong> у SmartTeX і підключіть повторно.
+                </li>
+                <li>Для публічних демо або тестування використовуйте окремий тестовий акаунт.</li>
+            </ul>
+        </section>
+
+        <section class="docs-card" id="verification">
+            <h2>Перевірка підключення</h2>
+            <div class="quote">Використовуючи SmartTeX, перевір чи маєш ти доступ до моїх проєктів і покажи їх
+                список
+            </div>
+            <p style="margin-top:10px;">
+                Якщо підключення успішне — асистент поверне список ваших проєктів із SmartTeX.
+            </p>
+            <p class="muted" style="margin-top:8px;">Якщо щось пішло не так — переконайтесь що:</p>
+            <ul class="checks">
+                <li>ви підтвердили доступ у вікні авторизації SmartTeX;</li>
+                <li>MCP URL введено правильно;</li>
+                <li>у вашому тарифі є підтримка MCP (актуально для ChatGPT).</li>
+            </ul>
+        </section>
+    </div>
+{% endblock %}
+{% block scripts %}
+    <script>
+        (() => {
+            const repoOwner = "NureAnanievNestorian";
+            const repoName = "MCP-SuperAssistant";
+            const releasesPageUrl = `https://github.com/${repoOwner}/${repoName}/releases`;
+            const latestReleaseApi = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`;
+
+            async function copyText(text, btn) {
+                if (!text) return;
+                try {
+                    await navigator.clipboard.writeText(text);
+                    const old = btn.textContent;
+                    btn.textContent = "Скопійовано";
+                    setTimeout(() => {
+                        btn.textContent = old;
+                    }, 1200);
+                } catch {
+                    const old = btn.textContent;
+                    btn.textContent = "Помилка";
+                    setTimeout(() => {
+                        btn.textContent = old;
+                    }, 1200);
+                }
+            }
+
+            document.querySelectorAll("[data-copy-text]").forEach((btn) => {
+                btn.addEventListener("click", () => copyText(btn.dataset.copyText, btn));
+            });
+
+            const sourceLink = document.getElementById("latest-source-link");
+            const releasesPageLink = document.getElementById("releases-page-link");
+            const releaseMeta = document.getElementById("latest-release-meta");
+            if (releasesPageLink) releasesPageLink.href = releasesPageUrl;
+
+            async function loadLatestRelease() {
+                if (!sourceLink || !releaseMeta) return;
+                try {
+                    const r = await fetch(latestReleaseApi, {headers: {"Accept": "application/vnd.github+json"}});
+                    if (!r.ok) throw new Error(`GitHub API HTTP ${r.status}`);
+                    const data = await r.json();
+
+                    const zipUrl = String(data.zipball_url || "").trim();
+                    const htmlUrl = String(data.html_url || releasesPageUrl).trim();
+                    const tag = String(data.tag_name || "").trim();
+                    const published = String(data.published_at || "").trim();
+
+                    sourceLink.href = zipUrl || htmlUrl;
+                    sourceLink.textContent = tag ? `Source code (${tag})` : "Source code (latest release)";
+
+                    let dateText = "";
+                    if (published) {
+                        const dt = new Date(published);
+                        if (!Number.isNaN(dt.getTime())) {
+                            dateText = dt.toLocaleDateString("uk-UA", {
+                                year: "numeric",
+                                month: "2-digit",
+                                day: "2-digit"
+                            });
+                        }
+                    }
+                    releaseMeta.textContent = tag
+                        ? `Останній реліз: ${tag}${dateText ? ` · ${dateText}` : ""}`
+                        : "Останній реліз знайдено";
+                } catch {
+                    sourceLink.href = releasesPageUrl;
+                    sourceLink.textContent = "Source code (відкрити releases)";
+                    releaseMeta.textContent = "Не вдалося отримати latest release автоматично. Використовуйте сторінку релізів.";
+                }
+            }
+
+            loadLatestRelease();
+        })();
+    </script>
+{% endblock %}
