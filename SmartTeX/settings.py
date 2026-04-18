@@ -138,7 +138,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 HOST_PROJECT_ROOT = os.getenv('HOST_PROJECT_ROOT', '').strip()
 
 LOGIN_URL = '/login/'
-LOGIN_REDIRECT_URL = '/'
+LOGIN_REDIRECT_URL = '/dashboard/'
 LOGOUT_REDIRECT_URL = '/login/'
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 

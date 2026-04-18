@@ -1,0 +1,530 @@
+{% extends "base.html" %}
+{% block title %}SmartTeX — LaTeX у браузері з AI{% endblock %}
+{% block head %}
+<style>
+  .landing {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--border-soft);
+    border-radius: 18px;
+    background:
+      radial-gradient(1100px 520px at 8% -18%, rgba(34, 197, 94, 0.2), transparent 56%),
+      radial-gradient(900px 440px at 98% -12%, rgba(59, 130, 246, 0.2), transparent 58%),
+      linear-gradient(180deg, rgba(20, 31, 51, 0.95), rgba(11, 18, 32, 0.99));
+    padding: 48px 36px 34px;
+    margin-bottom: 18px;
+    isolation: isolate;
+  }
+  .hero-orb {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: -1;
+    filter: blur(2px);
+    transition: transform 0.08s linear;
+  }
+  .hero-orb.one {
+    width: 320px;
+    height: 320px;
+    left: -80px;
+    top: -120px;
+    background: radial-gradient(circle, rgba(34, 197, 94, 0.28), transparent 65%);
+  }
+  .hero-orb.two {
+    width: 360px;
+    height: 360px;
+    right: -110px;
+    top: -140px;
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.26), transparent 66%);
+  }
+
+  .hero h1 {
+    margin: 0 0 10px;
+    font-size: clamp(30px, 4.6vw, 50px);
+    line-height: 1.04;
+    letter-spacing: -0.7px;
+    max-width: 780px;
+  }
+  .hero p {
+    margin: 0;
+    max-width: 770px;
+    color: var(--text-2);
+    font-size: 17px;
+  }
+  .hero-row {
+    margin-top: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .btn-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    transform: translateZ(0);
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #062012;
+  }
+  .btn-primary:hover { background: var(--accent-h); }
+  .btn-secondary {
+    background: var(--surface-raised);
+    border-color: var(--border);
+    color: var(--text-2);
+  }
+  .btn-secondary:hover {
+    background: var(--surface-soft);
+    border-color: #3b5080;
+    color: var(--text);
+  }
+  .hero-note {
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    padding: 22px;
+    margin-bottom: 14px;
+  }
+  .panel h2 {
+    margin: 0 0 12px;
+    font-size: clamp(22px, 2.5vw, 30px);
+    letter-spacing: -0.4px;
+    line-height: 1.15;
+  }
+  .panel p {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 15px;
+    line-height: 1.68;
+  }
+
+  .workflow .steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .step {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    background: var(--surface-raised);
+  }
+  .step .num {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    margin-bottom: 8px;
+  }
+  .step strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 15px;
+  }
+  .step p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .feature {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    background: linear-gradient(180deg, rgba(20, 31, 51, 0.8), rgba(20, 31, 51, 0.34));
+  }
+  .feature strong {
+    display: block;
+    font-size: 15px;
+    margin-bottom: 6px;
+  }
+  .feature p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.56;
+  }
+
+  .audience {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .aud-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-raised);
+    padding: 14px;
+  }
+  .aud-card h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    letter-spacing: -0.2px;
+  }
+  .aud-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.58;
+  }
+
+  .compare-wrap {
+    overflow-x: auto;
+    margin-top: 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+  }
+  table.compare {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 620px;
+    background: var(--surface-raised);
+  }
+  .compare th,
+  .compare td {
+    text-align: center;
+    padding: 11px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 14px;
+  }
+  .compare th:first-child,
+  .compare td:first-child {
+    text-align: left;
+    min-width: 220px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .compare tr:last-child td { border-bottom: 0; }
+  .compare th {
+    background: #111b2e;
+    color: var(--text);
+    font-weight: 700;
+  }
+  .smart { color: #7bffac; font-weight: 700; }
+
+  .faq-list {
+    margin-top: 12px;
+    display: grid;
+    gap: 8px;
+  }
+  details.faq {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-raised);
+    padding: 12px 14px;
+  }
+  .faq summary {
+    cursor: pointer;
+    font-weight: 700;
+    color: var(--text);
+    list-style: none;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq p {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .footer-cta {
+    text-align: center;
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    background: linear-gradient(125deg, rgba(34, 197, 94, 0.14), rgba(59, 130, 246, 0.1));
+    padding: 26px 18px;
+    margin-bottom: 6px;
+  }
+  .footer-cta h2 {
+    margin: 0 0 8px;
+    font-size: clamp(24px, 3.4vw, 34px);
+    letter-spacing: -0.45px;
+  }
+  .footer-cta p {
+    margin: 0 0 14px;
+    color: var(--text-2);
+  }
+  .footer-note {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.68s ease, transform 0.68s ease;
+    will-change: opacity, transform;
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @media (max-width: 980px) {
+    .workflow .steps { grid-template-columns: 1fr; }
+    .feature-grid { grid-template-columns: 1fr; }
+    .audience { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .hero {
+      padding: 34px 20px 24px;
+    }
+    .hero p {
+      font-size: 16px;
+    }
+    .panel {
+      padding: 18px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal,
+    .hero-orb {
+      transition: none !important;
+      transform: none !important;
+      opacity: 1 !important;
+    }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="landing">
+  <section class="hero reveal">
+    <div class="hero-orb one" data-parallax="0.08"></div>
+    <div class="hero-orb two" data-parallax="-0.06"></div>
+    <h1>LaTeX у браузері. З підтримкою AI.</h1>
+    <p>Пишіть статті, дисертації та презентації онлайн. Підключіть Claude або інший AI-асистент — і працюйте над документом разом.</p>
+    <div class="hero-row">
+      <a class="btn-link btn-primary" href="{% url 'register' %}">Спробувати безкоштовно</a>
+      <a class="btn-link btn-secondary" href="#how-it-works">Як це працює</a>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <h2>LaTeX і AI поки що погано дружать</h2>
+    <p>
+      Хочете щоб Claude або GPT допоміг з текстом? Доводиться вручну копіювати шматки туди-назад.
+      Редактор не знає що змінилось. AI не бачить документ цілком.
+    </p>
+    <p style="margin-top:10px;">
+      Ми зробили редактор, де AI може працювати прямо в документі — читати, редагувати, компілювати.
+    </p>
+  </section>
+
+  <section id="how-it-works" class="panel workflow reveal">
+    <h2>Просто і без зайвих рухів</h2>
+    <div class="steps">
+      <article class="step">
+        <span class="num">1</span>
+        <strong>Відкрийте проєкт</strong>
+        <p>Оберіть шаблон або почніть з нуля. Редактор і компілятор — прямо в браузері.</p>
+      </article>
+      <article class="step">
+        <span class="num">2</span>
+        <strong>Підключіть AI</strong>
+        <p>Додайте SmartTeX до свого AI-клієнта. Займає хвилину.</p>
+      </article>
+      <article class="step">
+        <span class="num">3</span>
+        <strong>Працюйте</strong>
+        <p>AI бачить ваш документ, може вносити правки і компілювати PDF. Ви бачите кожну зміну і можете її скасувати.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <h2>Що є в SmartTeX</h2>
+    <div class="feature-grid">
+      <article class="feature">
+        <strong>Редактор без встановлення</strong>
+        <p>Відкрили сторінку — і пишете. Ніяких дистрибутивів, пакетів і налаштувань.</p>
+      </article>
+      <article class="feature">
+        <strong>Компіляція в PDF</strong>
+        <p>Натискаєте кнопку — отримуєте PDF. Якщо є помилки, редактор покаже де саме.</p>
+      </article>
+      <article class="feature">
+        <strong>AI редагує розділи</strong>
+        <p>Асистент може змінити конкретний розділ, не чіпаючи решту документа.</p>
+      </article>
+      <article class="feature">
+        <strong>Історія змін</strong>
+        <p>Кожна правка зберігається. Можна порівняти версії або повернутися до попередньої.</p>
+      </article>
+      <article class="feature">
+        <strong>Шаблони</strong>
+        <p>Стаття, дипломна, презентація, резюме — є з чого почати.</p>
+      </article>
+      <article class="feature">
+        <strong>Навігація між кодом і PDF</strong>
+        <p>Клікнули на рядок у PDF — редактор відкрився на потрібному місці. І навпаки.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <h2>Для кого</h2>
+    <div class="audience">
+      <article class="aud-card">
+        <h3>Дослідники</h3>
+        <p>Зосередьтесь на тексті, а не на налаштуваннях. AI допоможе з формулюваннями, структурою і посиланнями — і не зітре те, що вже написано.</p>
+      </article>
+      <article class="aud-card">
+        <h3>Студенти</h3>
+        <p>Жодного встановлення. Відкрили шаблон — і пишете дипломну. Якщо щось не компілюється, одразу видно чому.</p>
+      </article>
+      <article class="aud-card">
+        <h3>Розробники</h3>
+        <p>Будуєте агента, який генерує документи? SmartTeX має повноцінний API для читання і запису. Підключіть до свого pipeline.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <h2>Чим відрізняємось від Overleaf</h2>
+    <p>
+      Overleaf — хороший редактор, але без API. AI може хіба що прочитати ваш проєкт через Git, і тільки якщо у вас платний план.
+      Записати нічого не може.
+    </p>
+    <p style="margin-top:10px;">
+      У SmartTeX AI може повноцінно працювати з документом. І кожна його зміна зафіксована в історії.
+    </p>
+    <div class="compare-wrap">
+      <table class="compare">
+        <thead>
+          <tr>
+            <th></th>
+            <th class="smart">SmartTeX</th>
+            <th>Overleaf</th>
+            <th>Десктоп</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Працює в браузері</td>
+            <td class="smart">✅</td>
+            <td>✅</td>
+            <td>❌</td>
+          </tr>
+          <tr>
+            <td>AI читає документ</td>
+            <td class="smart">✅</td>
+            <td>⚠️</td>
+            <td>❌</td>
+          </tr>
+          <tr>
+            <td>AI редагує документ</td>
+            <td class="smart">✅</td>
+            <td>❌</td>
+            <td>❌</td>
+          </tr>
+          <tr>
+            <td>Історія AI-змін</td>
+            <td class="smart">✅</td>
+            <td>❌</td>
+            <td>❌</td>
+          </tr>
+          <tr>
+            <td>Компіляція онлайн</td>
+            <td class="smart">✅</td>
+            <td>✅</td>
+            <td>❌</td>
+          </tr>
+          <tr>
+            <td>Безкоштовно</td>
+            <td class="smart">✅</td>
+            <td>✅</td>
+            <td>✅</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+
+  <section class="footer-cta reveal">
+    <h2>Спробуйте — це безкоштовно</h2>
+    <p>Запустіть свій перший проєкт у браузері за кілька хвилин.</p>
+    <a class="btn-link btn-primary" href="{% url 'register' %}">Створити акаунт</a>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const revealNodes = [...document.querySelectorAll(".reveal")];
+  if (!reduced && "IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.16, rootMargin: "0px 0px -5% 0px" });
+    revealNodes.forEach((node) => io.observe(node));
+  } else {
+    revealNodes.forEach((node) => node.classList.add("is-visible"));
+  }
+
+  const layers = [...document.querySelectorAll("[data-parallax]")];
+  if (reduced || !layers.length) return;
+
+  let ticking = false;
+  const update = () => {
+    const y = window.scrollY || window.pageYOffset || 0;
+    layers.forEach((layer) => {
+      const speed = Number(layer.dataset.parallax || 0);
+      const translateY = y * speed;
+      layer.style.transform = `translate3d(0, ${translateY.toFixed(2)}px, 0)`;
+    });
+    ticking = false;
+  };
+
+  window.addEventListener("scroll", () => {
+    if (!ticking) {
+      window.requestAnimationFrame(update);
+      ticking = true;
+    }
+  }, { passive: true });
+  update();
+})();
+</script>
+{% endblock %}

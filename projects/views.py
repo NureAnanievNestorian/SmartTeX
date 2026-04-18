@@ -120,6 +120,12 @@ def _parse_int(v: str | None) -> int | None:
     return int(v)
 
 
+def home(request: HttpRequest):
+    if request.user.is_authenticated:
+        return redirect("projects:dashboard")
+    return render(request, "projects/home.html")
+
+
 @login_required
 @require_GET
 def dashboard(request: HttpRequest):

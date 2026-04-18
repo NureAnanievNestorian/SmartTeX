@@ -179,19 +179,19 @@
 <body>
   <header class="top">
     <div class="wrap">
-      <a class="brand" href="/">
+      <a class="brand" href="{% if request.user.is_authenticated %}{% url 'projects:dashboard' %}{% else %}{% url 'projects:home' %}{% endif %}">
         <img class="brand-mark" src="{% static 'projects/branding/logo.svg' %}" alt="SmartTeX logo">
         Smart<em>TeX</em>
       </a>
       <nav class="nav">
         {% if request.user.is_authenticated %}
           <span class="nav-user">{{ request.user.email }}</span>
-          <a href="/">Проєкти</a>
-          <a href="/templates/">Шаблони</a>
-          <a href="/logout/" class="nav-exit">Вийти</a>
+          <a href="{% url 'projects:dashboard' %}">Проєкти</a>
+          <a href="{% url 'templates_lib:list' %}">Шаблони</a>
+          <a href="{% url 'logout' %}" class="nav-exit">Вийти</a>
         {% else %}
-          <a href="/login/">Вхід</a>
-          <a href="/register/">Реєстрація</a>
+          <a href="{% url 'login' %}">Вхід</a>
+          <a href="{% url 'register' %}">Реєстрація</a>
         {% endif %}
       </nav>
     </div>
