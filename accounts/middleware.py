@@ -20,6 +20,11 @@ class OAuthCorsMiddleware:
             for origin in getattr(settings, "OAUTH_CORS_ALLOWED_ORIGINS", [])
             if str(origin).strip()
         ]
+        self.cors_path_prefixes = tuple(
+            str(prefix).strip()
+            for prefix in getattr(settings, "OAUTH_CORS_PATH_PREFIXES", [])
+            if str(prefix).strip()
+        )
         self.allowed_methods = str(
             getattr(settings, "OAUTH_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS")
         ).strip()
@@ -29,14 +34,20 @@ class OAuthCorsMiddleware:
 
     def __call__(self, request):
         path = request.path or ""
-        if path in self.cors_paths and request.method == "OPTIONS":
+        is_cors_path = self._is_cors_path(path)
+        if is_cors_path and request.method == "OPTIONS":
             response = HttpResponse(status=204)
             return self._apply_cors_headers(response, request)
 
         response = self.get_response(request)
-        if path in self.cors_paths:
+        if is_cors_path:
             self._apply_cors_headers(response, request)
         return response
+
+    def _is_cors_path(self, path: str) -> bool:
+        if path in self.cors_paths:
+            return True
+        return bool(self.cors_path_prefixes) and path.startswith(self.cors_path_prefixes)
 
     def _apply_cors_headers(self, response, request):
         origin = request.headers.get("Origin", "").strip()

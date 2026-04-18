@@ -159,13 +159,21 @@ OAUTH_CORS_ALLOWED_ORIGINS = [
 OAUTH_CORS_ALLOWED_METHODS = os.getenv('OAUTH_CORS_ALLOWED_METHODS', 'GET,POST,OPTIONS').strip()
 OAUTH_CORS_ALLOWED_HEADERS = os.getenv(
     'OAUTH_CORS_ALLOWED_HEADERS',
-    'Authorization,Content-Type',
+    'Authorization,Content-Type,mcp-protocol-version',
 ).strip()
 OAUTH_CORS_PATHS = [
     x.strip()
     for x in os.getenv(
         'OAUTH_CORS_PATHS',
-        '/.well-known/oauth-authorization-server,/.well-known/oauth-authorization-server/,/oauth/register,/oauth/register/,/register,/register/',
+        '/.well-known/oauth-authorization-server,/.well-known/oauth-authorization-server/,/oauth/register,/oauth/register/,/oauth/token,/oauth/token/,/register,/register/',
+    ).split(',')
+    if x.strip()
+]
+OAUTH_CORS_PATH_PREFIXES = [
+    x.strip()
+    for x in os.getenv(
+        'OAUTH_CORS_PATH_PREFIXES',
+        '/.well-known/',
     ).split(',')
     if x.strip()
 ]
