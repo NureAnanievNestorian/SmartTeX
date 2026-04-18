@@ -1,8 +1,56 @@
-from django.http import JsonResponse
+from django.conf import settings
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect
 from django.urls import resolve, Resolver404
+from django.utils.cache import patch_vary_headers
 
 from .email_verification import is_user_email_verified
+
+
+class OAuthCorsMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self.cors_paths = {
+            str(path).strip()
+            for path in getattr(settings, "OAUTH_CORS_PATHS", [])
+            if str(path).strip()
+        }
+        self.allowed_origins = [
+            str(origin).strip()
+            for origin in getattr(settings, "OAUTH_CORS_ALLOWED_ORIGINS", [])
+            if str(origin).strip()
+        ]
+        self.allowed_methods = str(
+            getattr(settings, "OAUTH_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS")
+        ).strip()
+        self.allowed_headers = str(
+            getattr(settings, "OAUTH_CORS_ALLOWED_HEADERS", "Authorization,Content-Type")
+        ).strip()
+
+    def __call__(self, request):
+        path = request.path or ""
+        if path in self.cors_paths and request.method == "OPTIONS":
+            response = HttpResponse(status=204)
+            return self._apply_cors_headers(response, request)
+
+        response = self.get_response(request)
+        if path in self.cors_paths:
+            self._apply_cors_headers(response, request)
+        return response
+
+    def _apply_cors_headers(self, response, request):
+        origin = request.headers.get("Origin", "").strip()
+        if self.allowed_origins:
+            if origin and origin in self.allowed_origins:
+                response["Access-Control-Allow-Origin"] = origin
+            else:
+                response["Access-Control-Allow-Origin"] = self.allowed_origins[0]
+        if self.allowed_methods:
+            response["Access-Control-Allow-Methods"] = self.allowed_methods
+        if self.allowed_headers:
+            response["Access-Control-Allow-Headers"] = self.allowed_headers
+        patch_vary_headers(response, ["Origin"])
+        return response
 
 
 class EmailVerificationRequiredMiddleware:

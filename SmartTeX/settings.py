@@ -48,6 +48,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'accounts.middleware.OAuthCorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -150,6 +151,24 @@ LATEX_STRICT_ERRORS = os.getenv('LATEX_STRICT_ERRORS', 'False').lower() in {'1',
 OAUTH_ISSUER_URL = os.getenv('OAUTH_ISSUER_URL', '').strip()
 OAUTH_ACCESS_TOKEN_TTL_SECONDS = int(os.getenv('OAUTH_ACCESS_TOKEN_TTL_SECONDS', '3600'))
 OAUTH_INTROSPECTION_SECRET = os.getenv('OAUTH_INTROSPECTION_SECRET', '').strip()
+OAUTH_CORS_ALLOWED_ORIGINS = [
+    x.strip()
+    for x in os.getenv('OAUTH_CORS_ALLOWED_ORIGINS', '').split(',')
+    if x.strip()
+]
+OAUTH_CORS_ALLOWED_METHODS = os.getenv('OAUTH_CORS_ALLOWED_METHODS', 'GET,POST,OPTIONS').strip()
+OAUTH_CORS_ALLOWED_HEADERS = os.getenv(
+    'OAUTH_CORS_ALLOWED_HEADERS',
+    'Authorization,Content-Type',
+).strip()
+OAUTH_CORS_PATHS = [
+    x.strip()
+    for x in os.getenv(
+        'OAUTH_CORS_PATHS',
+        '/.well-known/oauth-authorization-server,/.well-known/oauth-authorization-server/,/oauth/register,/oauth/register/,/register,/register/',
+    ).split(',')
+    if x.strip()
+]
 
 MAILJET_API_KEY = os.getenv("MAILJET_API_KEY", "").strip()
 MAILJET_SECRET_KEY = os.getenv("MAILJET_SECRET_KEY", "").strip()
