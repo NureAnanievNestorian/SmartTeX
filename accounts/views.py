@@ -465,12 +465,3 @@ def api_logout(request: HttpRequest) -> JsonResponse:
         logout(request)
     return JsonResponse({"detail": "ok"})
 
-
-@login_required
-@require_GET
-def api_mcp_token(request: HttpRequest) -> JsonResponse:
-    mcp_token, _ = MCPToken.objects.get_or_create(
-        user=request.user,
-        defaults={"token": MCPToken.issue_token()},
-    )
-    return JsonResponse({"token": mcp_token.token, "created_at": mcp_token.created_at.isoformat()})
