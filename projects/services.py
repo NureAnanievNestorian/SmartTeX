@@ -39,10 +39,14 @@ LATEX_ARTIFACT_EXTENSIONS = {
     ".vrb",
 }
 SECTION_RE = re.compile(
-    r"^\s*\\(?P<command>part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{(?P<title>[^}]*)\}",
+    r"^\s*\\(?P<command>newappendix|appendix|appendices|part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?"
+    r"(?:(?:\{(?P<appendix_label>[^}]*)\}\{(?P<appendix_title>[^}]*)\})|(?:\{(?P<title>[^}]*)\}))?",
     flags=re.MULTILINE,
 )
 SECTION_LEVELS = {
+    "newappendix": 1,
+    "appendix": 1,
+    "appendices": 1,
     "part": 1,
     "chapter": 1,
     "section": 2,
@@ -346,7 +350,24 @@ def split_tex_sections(content: str) -> list[SectionChunk]:
         end_char = max(start_char, next_start_char)
         section_content = "".join(lines[start_line - 1 : end_line])
         command = match.group("command")
-        title = match.group("title").strip() or command.capitalize()
+        raw_title = (match.group("title") or "").strip()
+        appendix_label = (match.group("appendix_label") or "").strip()
+        appendix_title = (match.group("appendix_title") or "").strip()
+        if command == "newappendix":
+            if appendix_label and appendix_title:
+                title = f"Додаток {appendix_label}: {appendix_title}"
+            elif appendix_title:
+                title = f"Додаток: {appendix_title}"
+            elif appendix_label:
+                title = f"Додаток {appendix_label}"
+            else:
+                title = "Додаток"
+        elif raw_title:
+            title = raw_title
+        elif command in {"appendix", "appendices"}:
+            title = "Додатки"
+        else:
+            title = command.capitalize()
         chunks.append(
             SectionChunk(
                 index=idx,
@@ -963,6 +984,27 @@ def render_pdf_page_image(
         "width": int(image.width),
         "height": int(image.height),
         "image_base64": base64.b64encode(image_bytes).decode("ascii"),
+    }
+
+
+def get_project_pdf_page_count(project: Project) -> dict[str, Any]:
+    pdf_path = pdf_file_path(project)
+    if not pdf_path.exists():
+        raise ValueError("PDF not found; compile project first")
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    page_count = len(doc)
+    try:
+        file_size = pdf_path.stat().st_size
+        updated_at = datetime.fromtimestamp(pdf_path.stat().st_mtime, tz=UTC).isoformat()
+    except OSError:
+        file_size = None
+        updated_at = None
+    return {
+        "file_name": pdf_path.name,
+        "page_count": int(page_count),
+        "file_size": file_size,
+        "updated_at": updated_at,
     }
 
 

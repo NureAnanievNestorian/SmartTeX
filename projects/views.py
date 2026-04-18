@@ -21,6 +21,7 @@ from .services import (
     delete_project_asset,
     delete_project_files,
     get_project_version,
+    get_project_pdf_page_count,
     list_project_versions,
     has_pdf,
     initialize_main_tex,
@@ -840,6 +841,21 @@ def api_project_pdf_page_image(request: HttpRequest, project_id: int) -> JsonRes
             image_format=image_format,
         )
     except (ValueError, TypeError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+@require_GET
+def api_project_pdf_page_count(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    try:
+        payload = get_project_pdf_page_count(project)
+    except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
     return JsonResponse(payload)
 
