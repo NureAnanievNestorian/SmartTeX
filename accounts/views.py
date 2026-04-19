@@ -14,6 +14,7 @@ from django.db import transaction
 from django.http import HttpRequest, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.crypto import get_random_string
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods
 
@@ -231,7 +232,7 @@ def google_auth_callback_view(request: HttpRequest):
         user = User.objects.create_user(
             username=username,
             email=email,
-            password=User.objects.make_random_password(),
+            password=get_random_string(32),
         )
     updated = False
     if not user.is_active:
@@ -464,4 +465,3 @@ def api_logout(request: HttpRequest) -> JsonResponse:
     if request.user.is_authenticated:
         logout(request)
     return JsonResponse({"detail": "ok"})
-
