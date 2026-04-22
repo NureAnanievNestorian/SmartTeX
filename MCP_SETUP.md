@@ -76,6 +76,7 @@ SmartTeX тепер має:
 - `401` на MCP:
   - перевірте `MCP_INTROSPECTION_SECRET == OAUTH_INTROSPECTION_SECRET`
   - перезапустіть `web` і `mcp` через `--force-recreate`
+  - якщо в логах є `POST /... ?token=... 401`, це legacy-підключення. Query-token auth вимкнено; потрібно перепідключити конектор через OAuth login/consent.
 
 - У списку tools `0 of 0`:
   - reconnect у клієнті

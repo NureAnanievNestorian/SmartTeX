@@ -95,6 +95,23 @@ def _headers() -> dict[str, str]:
     return headers
 
 
+def _authorization_from_legacy_request(request: Request) -> str | None:
+    """Normalize legacy header-based token formats to Bearer."""
+    authorization = (request.headers.get("authorization") or "").strip()
+    if authorization:
+        lowered = authorization.lower()
+        if lowered.startswith("token "):
+            value = authorization[6:].strip()
+            if value:
+                return f"Bearer {value}"
+        return None
+
+    token = (request.headers.get("x-api-token") or "").strip()
+    if token:
+        return f"Bearer {token}"
+    return None
+
+
 def _call(method: str, path: str, data: dict[str, Any] | None = None) -> Any:
     url = f"{BASE_URL}{path}"
     with httpx.Client(timeout=60, headers=_headers()) as client:
@@ -534,6 +551,13 @@ class MCPCompatibilityMiddleware(BaseHTTPMiddleware):
     """Return 200 for generic GET probes to reduce client/proxy false negatives."""
 
     async def dispatch(self, request: Request, call_next):
+        authorization = _authorization_from_legacy_request(request)
+        if authorization:
+            scope = request.scope
+            headers = list(scope.get("headers") or [])
+            headers.append((b"authorization", authorization.encode("latin-1")))
+            scope["headers"] = headers
+
         if request.method == "GET" and request.url.path == MCP_PATH:
             accept = request.headers.get("accept", "")
             if "text/event-stream" not in accept and "application/json" not in accept:
