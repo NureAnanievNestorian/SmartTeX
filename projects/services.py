@@ -19,7 +19,7 @@ from SmartTeX.markup import MarkupType, source_filename_for_markup
 from .models import Project, ProjectVersion
 
 COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=3)
-TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml"}
+TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
 ALLOWED_UPLOAD_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
 MAX_PROJECT_FILES_TOTAL_SIZE = 20 * 1024 * 1024
