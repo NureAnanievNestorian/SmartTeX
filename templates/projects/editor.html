@@ -1330,6 +1330,50 @@
     }, 250);
   }
 
+  async function pollUntilCompileDone(maxMs = 45000, stepMs = 600) {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      const d = await api(`/api/projects/${projectId}/compile/`, {method: "GET"});
+      setStatus(d.status);
+      if (d.log) logEl.textContent = d.log;
+      if (d.pdf_url && d.pdf_version && d.pdf_version !== lastPdfVersion) {
+        lastPdfVersion = d.pdf_version;
+        const url = `${d.pdf_url}?t=${lastPdfVersion}`;
+        openPdfLink.href = d.pdf_url;
+        await loadPdfViewer(url);
+      }
+      if (!d.pdf_url) pdfEmpty.style.display = "flex";
+      if (d.status !== "pending") {
+        if (d.status === "success") setSaveHint("MCP: PDF оновлено", "saved");
+        else setSaveHint("MCP: помилка компіляції", "error");
+        return;
+      }
+      await new Promise(res => setTimeout(res, stepMs));
+    }
+    setSaveHint("MCP: компіляція не завершена (таймаут)", "error");
+  }
+
+  async function handleMcpUpdate() {
+    setSaveHint("Проєкт оновлено через MCP. Оновлюємо…", "saving");
+    try {
+      await loadMainFile();
+      // If a non-main text file is open, refresh its content too
+      if (selectedFile?.is_text && !selectedFile?.is_dir && !isMainSourceFile(selectedFile.name)) {
+        try {
+          const params = new URLSearchParams({include_text: "1"});
+          const fd = await api(`/api/projects/${projectId}/files/${encodeURIComponent(selectedFile.name)}/content/?${params}`);
+          editor.value = fd.text_content || "";
+          hasUnsavedChanges = false;
+          syncHighlight();
+        } catch (_) {}
+      }
+      await Promise.all([loadFiles(), loadVersions(true)]);
+      await pollUntilCompileDone();
+    } catch (err) {
+      setSaveHint(`MCP: помилка оновлення: ${err.message}`, "error");
+    }
+  }
+
   function connectProjectUpdatesWebSocket() {
     const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
     const wsUrl = `${wsProto}://${window.location.host}/ws/projects/${projectId}/updates/`;
@@ -1374,7 +1418,7 @@
         setSaveHint("Проєкт змінено через MCP. Спершу збережіть локальні правки або перезавантажте сторінку.", "error");
         return;
       }
-      scheduleExternalReload("Проєкт оновлено через MCP. Оновлюємо…");
+      handleMcpUpdate().catch(() => {});
     });
     projectWs.addEventListener("close", scheduleReconnect);
     projectWs.addEventListener("error", () => {
