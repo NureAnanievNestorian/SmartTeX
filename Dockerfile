@@ -1,15 +1,28 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
 ARG TYPST_VERSION=0.13.1
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev docker-cli curl xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      libpq-dev \
+      docker-cli \
+      curl \
+      xz-utils \
+      fontconfig \
+      cabextract \
+      xfonts-utils \
+      ttf-mscorefonts-installer; \
+    fc-cache -f -v; \
+    rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
