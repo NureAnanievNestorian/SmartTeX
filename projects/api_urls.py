@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, re_path
 
 from .views import (
     api_project_asset,
@@ -33,9 +33,9 @@ urlpatterns = [
     path("projects/<int:project_id>/read-window/", api_project_read_window),
     path("projects/<int:project_id>/write-window/", api_project_write_window),
     path("projects/<int:project_id>/files/", api_project_assets),
-    path("projects/<int:project_id>/files/<str:filename>/", api_project_asset),
-    path("projects/<int:project_id>/files/<str:filename>/content/", api_project_asset_content),
-    path("projects/<int:project_id>/files/<str:filename>/rename/", api_project_asset_rename),
+    re_path(r"^projects/(?P<project_id>\d+)/files/(?P<filename>.+)/content/$", api_project_asset_content),
+    re_path(r"^projects/(?P<project_id>\d+)/files/(?P<filename>.+)/rename/$", api_project_asset_rename),
+    re_path(r"^projects/(?P<project_id>\d+)/files/(?P<filename>.+)/$", api_project_asset),
     path("projects/<int:project_id>/sections/", api_project_sections),
     path("projects/<int:project_id>/sections/<int:section_index>/", api_project_section),
     path("projects/<int:project_id>/insert/", api_project_insert),

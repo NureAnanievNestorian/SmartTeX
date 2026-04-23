@@ -16,6 +16,7 @@ def _template_payload(template: Template, with_content: bool = False) -> dict:
         "description": template.description,
         "category": template.category,
         "category_display": template.get_category_display(),
+        "markup_type": template.markup_type,
         "created_at": template.created_at.isoformat(),
         "updated_at": template.updated_at.isoformat(),
     }

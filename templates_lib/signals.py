@@ -10,9 +10,12 @@ from .services import compile_template_preview
 def _compile_in_background(template_id: int) -> None:
     try:
         template = Template.objects.get(pk=template_id)
-    except Template.DoesNotExist:
+    except Exception:
         return
-    compile_template_preview(template)
+    try:
+        compile_template_preview(template)
+    except Exception:
+        return
 
 
 @receiver(post_save, sender=Template)

@@ -32,6 +32,9 @@ class APIClient:
     def list_projects(self):
         return self._call("GET", "/api/projects/")
 
+    def get_project(self, project_id: int):
+        return self._call("GET", f"/api/projects/{project_id}/")
+
     def get_project_file(self, project_id: int):
         return self._call("GET", f"/api/projects/{project_id}/file/")
 
@@ -72,13 +75,14 @@ class APIClient:
     def read_project_window(
         self,
         project_id: int,
-        file_name: str = "main.tex",
+        file_name: str | None = None,
         start_line: int | None = None,
         end_line: int | None = None,
         start_char: int | None = None,
         end_char: int | None = None,
     ):
-        query: dict[str, Any] = {"file_name": file_name}
+        resolved_file_name = file_name or str(self.get_project(project_id).get("main_file_name") or "main.tex")
+        query: dict[str, Any] = {"file_name": resolved_file_name}
         if start_line is not None:
             query["start_line"] = int(start_line)
         if end_line is not None:
@@ -107,6 +111,7 @@ class Command(BaseCommand):
                     "protocol": "smarttex-mcp-bridge-v1",
                     "tools": [
                         "list_projects",
+                        "get_project",
                         "get_project_file",
                         "update_project_file",
                         "compile_project",
@@ -139,6 +144,8 @@ class Command(BaseCommand):
                     result = client.list_projects()
                 elif tool == "get_project_file":
                     result = client.get_project_file(int(args["project_id"]))
+                elif tool == "get_project":
+                    result = client.get_project(int(args["project_id"]))
                 elif tool == "update_project_file":
                     result = client.update_project_file(int(args["project_id"]), str(args.get("content", "")))
                 elif tool == "compile_project":
@@ -160,7 +167,7 @@ class Command(BaseCommand):
                 elif tool == "read_project_window":
                     result = client.read_project_window(
                         int(args["project_id"]),
-                        str(args.get("file_name", "main.tex")),
+                        str(args["file_name"]) if args.get("file_name") is not None else None,
                         int(args["start_line"]) if "start_line" in args and args["start_line"] is not None else None,
                         int(args["end_line"]) if "end_line" in args and args["end_line"] is not None else None,
                         int(args["start_char"]) if "start_char" in args and args["start_char"] is not None else None,

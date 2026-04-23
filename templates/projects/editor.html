@@ -17,6 +17,9 @@
     --e-blue:    #3b82f6;
     --e-danger:  #ef4444;
     --e-warn:    #f59e0b;
+    --editor-gutter-w: 56px;
+    --editor-pad-y: 14px;
+    --editor-pad-x: 18px;
   }
 
   .editor-shell {
@@ -144,6 +147,26 @@
     color: var(--e-muted); cursor: pointer; line-height: 1;
   }
   .e-sec-btn:hover { color: var(--e-text); border-color: #3a5a80; }
+  .e-file-toolbar { display: flex; gap: 3px; align-items: center; }
+  .e-icon-btn {
+    width: 26px; height: 26px; padding: 0; border-radius: 6px;
+    border: 1px solid var(--e-border); background: var(--e-raised);
+    color: var(--e-muted); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: color .12s, border-color .12s;
+    box-sizing: border-box;
+    line-height: 0;
+    font-size: 0;
+    vertical-align: middle;
+  }
+  .e-icon-btn:hover { color: var(--e-text); border-color: #3a5a80; }
+  .e-icon-btn svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+    flex-shrink: 0;
+  }
 
   /* File list */
   .e-file-list {
@@ -162,11 +185,29 @@
   }
   .e-file-btn:hover { background: var(--e-raised); border-color: var(--e-border); }
   .e-file-btn.active { background: #0d2218; border-color: #1a5436; color: #ceffd8; }
+  .e-file-btn.drag-target {
+    background: #0f2a1f;
+    border-color: #22c55e;
+    color: #d9ffe5;
+  }
   .e-file-name {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .e-folder-toggle {
+    width: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--e-muted);
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
   }
   .e-file-sz { font-size: 11px; color: var(--e-muted); flex-shrink: 0; }
   .e-file-actions { display: flex; gap: 4px; flex-shrink: 0; }
@@ -435,11 +476,31 @@
 
   /* Syntax highlight overlay */
   .e-editor-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  #editor-gutter {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 2;
+    width: var(--editor-gutter-w);
+    margin: 0;
+    padding: var(--editor-pad-y) 10px var(--editor-pad-y) 0;
+    overflow: hidden;
+    border-right: 1px solid rgba(27, 43, 64, .9);
+    background: #060d19;
+    color: #4f6685;
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.65;
+    text-align: right;
+    white-space: pre;
+    pointer-events: none;
+    user-select: none;
+  }
   #editor-hl {
     position: absolute; inset: 0; z-index: 0; margin: 0;
     pointer-events: none; user-select: none;
     font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
-    font-size: 14px; line-height: 1.65; padding: 14px 18px;
+    font-size: 14px; line-height: 1.65;
+    padding: var(--editor-pad-y) var(--editor-pad-x) var(--editor-pad-y) calc(var(--editor-gutter-w) + var(--editor-pad-x));
     background: #07101e; border: 0; overflow: hidden;
     white-space: pre; word-break: normal; overflow-wrap: normal;
     tab-size: 2; color: transparent;
@@ -447,7 +508,8 @@
   #editor {
     position: absolute; inset: 0; z-index: 1;
     font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
-    font-size: 14px; line-height: 1.65; padding: 14px 18px;
+    font-size: 14px; line-height: 1.65;
+    padding: var(--editor-pad-y) var(--editor-pad-x) var(--editor-pad-y) calc(var(--editor-gutter-w) + var(--editor-pad-x));
     background: transparent; color: transparent; caret-color: #e6eeff;
     border: 0; resize: none; outline: none;
     overflow-y: auto; overflow-x: auto;
@@ -575,6 +637,12 @@
     font-size: 12px;
     margin-bottom: 14px;
   }
+  .entry-help {
+    color: var(--e-muted);
+    font-size: 12px;
+    margin-bottom: 14px;
+    line-height: 1.45;
+  }
 </style>
 {% endblock %}
 
@@ -613,6 +681,19 @@
     <div class="confirm-btns">
       <button class="e-btn" id="rename-project-cancel" type="button">Скасувати</button>
       <button class="e-btn" id="rename-project-ok" type="button">Зберегти</button>
+    </div>
+  </div>
+</div>
+
+<div id="entry-create-overlay" class="confirm-overlay">
+  <div class="confirm-box">
+    <div id="entry-create-title" class="confirm-title">Створити файл</div>
+    <div id="entry-create-msg" class="confirm-msg" style="margin-bottom: 12px;"></div>
+    <input id="entry-create-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
+    <div id="entry-create-help" class="entry-help"></div>
+    <div class="confirm-btns">
+      <button class="e-btn" id="entry-create-cancel" type="button">Скасувати</button>
+      <button class="e-btn" id="entry-create-ok" type="button">Створити</button>
     </div>
   </div>
 </div>
@@ -673,11 +754,36 @@
       <div id="tab-files" class="e-tabpanel active">
         <div class="e-sec-head">
           <span>Файли</span>
-          <label style="cursor:pointer; padding:3px 8px; font-size:11px; font-weight:600;
-            border-radius:6px; border:1px solid var(--e-border); background:var(--e-raised); color:var(--e-muted);">
-            + Додати
-            <input id="file-upload" type="file" accept="image/*" style="display:none;">
-          </label>
+          <div class="e-file-toolbar">
+            <button id="new-folder-btn" class="e-icon-btn" type="button" title="Нова папка">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1.5 5a1 1 0 011-1h3.4l1.3 1.5H13.5a1 1 0 011 1v5a1 1 0 01-1 1h-11a1 1 0 01-1-1V5z"/>
+                <line x1="7.5" y1="8" x2="7.5" y2="11.5"/><line x1="5.75" y1="9.75" x2="9.25" y2="9.75"/>
+              </svg>
+            </button>
+            <button id="new-text-file-btn" class="e-icon-btn" type="button" title="Новий текстовий файл">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9.5 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6l-3.5-4z"/>
+                <polyline points="9.5 2 9.5 6 13.5 6"/>
+                <line x1="8" y1="9" x2="8" y2="12.5"/><line x1="6.25" y1="10.75" x2="9.75" y2="10.75"/>
+              </svg>
+            </button>
+            <label class="e-icon-btn" title="Завантажити файл(и)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4.5 6 8 2.5 11.5 6"/><line x1="8" y1="2.5" x2="8" y2="11"/>
+                <path d="M3 13h10"/>
+              </svg>
+              <input id="file-upload" type="file" multiple accept="image/*,.tex,.typ,.sty,.cls,.bib,.txt,.md,.csv,.json,.yaml,.yml" style="display:none">
+            </label>
+            <label class="e-icon-btn" title="Завантажити ZIP-архів">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="5" width="12" height="9" rx="1"/>
+                <path d="M2 8h12M5 5V3a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                <line x1="8" y1="10.5" x2="8" y2="10.5" stroke-width="2.5" stroke-linecap="round"/>
+              </svg>
+              <input id="zip-upload" type="file" accept=".zip" style="display:none">
+            </label>
+          </div>
         </div>
         <ul id="file-list" class="e-file-list"></ul>
       </div>
@@ -711,6 +817,7 @@
         <span id="save-hint" class="e-save-hint">Автозбереження</span>
       </div>
       <div class="e-editor-wrap" id="editor-wrap">
+        <pre id="editor-gutter" aria-hidden="true"></pre>
         <pre id="editor-hl" aria-hidden="true"></pre>
         <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off" wrap="off"></textarea>
         <div class="e-drop-overlay">Перетягніть файли сюди</div>
@@ -769,6 +876,7 @@
   const projectTitleEl= document.getElementById("project-title");
   const saveHintEl    = document.getElementById("save-hint");
   const editor        = document.getElementById("editor");
+  const editorGutter  = document.getElementById("editor-gutter");
   const editorHl      = document.getElementById("editor-hl");
   const logEl         = document.getElementById("log");
   const logToggleBtn  = document.getElementById("log-toggle");
@@ -793,10 +901,18 @@
   const diffModalCloseBtn = document.getElementById("diff-modal-close");
   const projectMenuBtn = document.getElementById("project-menu-btn");
   const projectMenuEl = document.getElementById("project-menu");
+  const newFolderBtn = document.getElementById("new-folder-btn");
+  const newTextFileBtn = document.getElementById("new-text-file-btn");
 
   let saveTimer      = null;
   let saving         = false;
-  let selectedFile   = {name:"main.tex", type:"main"};
+  let projectMeta    = null;
+  let mainFileName   = "main.tex";
+  let supportsSynctex = true;
+  let selectedFile   = {name:mainFileName, type:"main", is_text:true};
+  let compileInFlight = false;
+  let queuedCompileMode = null;
+  let typstCompileTimer = null;
   let projectFiles   = [];
   let sections       = [];
   let versions       = [];
@@ -810,10 +926,46 @@
   let _confirmResolve= null;
   let _renameResolve = null;
   let _renameProjectResolve = null;
+  let _createEntryResolve = null;
+  let draggedFilePath = null;
+  const collapsedFolders = new Set();
   let hasUnsavedChanges = false;
+  let mainFileContent = "";
   let projectWs = null;
   let projectWsReconnectTimer = null;
   let lastSeenMcpVersionId = 0;
+
+  function isMainSourceFile(name) {
+    return String(name || "") === mainFileName;
+  }
+
+  function isEditableTextSelection(file = selectedFile) {
+    if (!file) return false;
+    if (isMainSourceFile(file.name)) return true;
+    return Boolean(file.is_text);
+  }
+
+  function projectMarkupType() {
+    return String(projectMeta?.markup_type || "latex").toLowerCase();
+  }
+
+  function isTypstProject() {
+    return projectMarkupType() === "typst";
+  }
+
+  function queueCompile(mode = "manual") {
+    if (mode === "manual") {
+      queuedCompileMode = "manual";
+      return;
+    }
+    if (!queuedCompileMode) {
+      queuedCompileMode = mode;
+    }
+  }
+
+  function shouldOpenCompileLog(mode = "manual") {
+    return mode === "manual";
+  }
 
   function closeProjectMenu() {
     projectMenuEl.classList.remove("open");
@@ -911,9 +1063,36 @@
     const dpr = window.devicePixelRatio || 1;
     const containerW = pdfCanvasContainer.clientWidth - 16;
     const savedScroll = pdfCanvasContainer.scrollTop;
-    if (!sizeOnly) pdfCanvasContainer.innerHTML = "";
     pdfViewports = [];
 
+    if (sizeOnly) {
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        const page = await pdfDoc.getPage(i);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.max(0.5, containerW / base.width);
+        const vp   = page.getViewport({ scale });
+        const vpHD = page.getViewport({ scale: scale * dpr });
+        pdfViewports.push(vp);
+        const wrap = pdfCanvasContainer.children[i - 1];
+        if (!wrap) break;
+        const canvas = wrap.querySelector("canvas");
+        if (!canvas) break;
+        wrap.dataset.scale = scale;
+        wrap.dataset.baseH = base.height;
+        canvas.width  = Math.round(vpHD.width);
+        canvas.height = Math.round(vpHD.height);
+        canvas.style.width  = Math.round(vp.width)  + "px";
+        canvas.style.height = Math.round(vp.height) + "px";
+        wrap.style.width  = Math.round(vp.width)  + "px";
+        wrap.style.height = Math.round(vp.height) + "px";
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport: vpHD }).promise;
+      }
+      pdfRendering = false;
+      return;
+    }
+
+    // Render all pages off-DOM into a fragment — old pages stay visible until swap.
+    const fragment = document.createDocumentFragment();
     for (let i = 1; i <= pdfDoc.numPages; i++) {
       const page = await pdfDoc.getPage(i);
       const base = page.getViewport({ scale: 1 });
@@ -922,70 +1101,64 @@
       const vpHD = page.getViewport({ scale: scale * dpr });
       pdfViewports.push(vp);
 
-      let wrap, canvas;
-      if (sizeOnly) {
-        wrap = pdfCanvasContainer.children[i - 1];
-        if (!wrap) break;
-        canvas = wrap.querySelector("canvas");
-        if (!canvas) break;
-      } else {
-        wrap = document.createElement("div");
-        wrap.className = "pdf-page-wrap";
-        wrap.dataset.page = i;
-        canvas = document.createElement("canvas");
-        wrap.appendChild(canvas);
-        pdfCanvasContainer.appendChild(wrap);
-
-
-        canvas.addEventListener("click", async (e) => {
-          const curScale = parseFloat(wrap.dataset.scale);
-          const curBaseH = parseFloat(wrap.dataset.baseH);
-          const rect = canvas.getBoundingClientRect();
-          const clickX = e.clientX - rect.left;
-          const clickY = e.clientY - rect.top;
-          const pdfX = clickX / curScale;
-          const pdfY = curBaseH - (clickY / curScale);
-          try {
-            const r = await api(`/api/projects/${projectId}/synctex/pdf/?page=${i}&x=${pdfX.toFixed(4)}&y=${pdfY.toFixed(4)}`);
-            if (r.line) {
-              jumpToLine(r.line);
-              const marker = document.createElement("div");
-              marker.className = "pdf-synctex-marker";
-              marker.style.left = clickX + "px";
-              marker.style.top = clickY + "px";
-              wrap.appendChild(marker);
-              setTimeout(() => marker.remove(), 1500);
-            }
-          } catch (_) {}
-        });
-      }
-
+      const wrap = document.createElement("div");
+      wrap.className = "pdf-page-wrap";
+      wrap.dataset.page = i;
       wrap.dataset.scale = scale;
       wrap.dataset.baseH = base.height;
+      wrap.style.width  = Math.round(vp.width)  + "px";
+      wrap.style.height = Math.round(vp.height) + "px";
 
+      const canvas = document.createElement("canvas");
       canvas.width  = Math.round(vpHD.width);
       canvas.height = Math.round(vpHD.height);
       canvas.style.width  = Math.round(vp.width)  + "px";
       canvas.style.height = Math.round(vp.height) + "px";
-      wrap.style.width  = Math.round(vp.width)  + "px";
-      wrap.style.height = Math.round(vp.height) + "px";
+      wrap.appendChild(canvas);
+
+      canvas.addEventListener("click", async (e) => {
+        if (!supportsSynctex) return;
+        const curScale = parseFloat(wrap.dataset.scale);
+        const curBaseH = parseFloat(wrap.dataset.baseH);
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+        const pdfX = clickX / curScale;
+        const pdfY = curBaseH - (clickY / curScale);
+        try {
+          const r = await api(`/api/projects/${projectId}/synctex/pdf/?page=${i}&x=${pdfX.toFixed(4)}&y=${pdfY.toFixed(4)}`);
+          if (r.line) {
+            jumpToLine(r.line);
+            const marker = document.createElement("div");
+            marker.className = "pdf-synctex-marker";
+            marker.style.left = clickX + "px";
+            marker.style.top = clickY + "px";
+            wrap.appendChild(marker);
+            setTimeout(() => marker.remove(), 1500);
+          }
+        } catch (_) {}
+      });
+
       await page.render({ canvasContext: canvas.getContext("2d"), viewport: vpHD }).promise;
+      fragment.appendChild(wrap);
     }
 
-    if (!sizeOnly) pdfCanvasContainer.scrollTop = savedScroll;
+    // Single atomic DOM swap — no blank frame between old and new content.
+    pdfCanvasContainer.replaceChildren(fragment);
+    pdfCanvasContainer.scrollTop = savedScroll;
     pdfRendering = false;
   }
 
   async function loadPdfViewer(url) {
     const savedScroll = pdfCanvasContainer.scrollTop;
-    pdfLoadingEl.classList.add("visible");
+    const isFirstLoad = pdfDoc === null;
+    if (isFirstLoad) pdfLoadingEl.classList.add("visible");
     try {
       const loadingTask = pdfjsLib.getDocument(url);
       pdfDoc = await loadingTask.promise;
       pdfCurrentUrl = url;
       pdfEmpty.style.display = "none";
       pdfPageInfo.textContent = `${pdfDoc.numPages} стор.`;
-      pdfCanvasContainer.innerHTML = "";
       pdfRendering = false;
       await renderPdfPages(false);
       pdfCanvasContainer.scrollTop = savedScroll;
@@ -1104,6 +1277,45 @@
     });
   }
 
+  document.getElementById("entry-create-ok").addEventListener("click", () => {
+    const input = document.getElementById("entry-create-input");
+    const val = String(input?.value || "").trim();
+    document.getElementById("entry-create-overlay").classList.remove("open");
+    if (_createEntryResolve) { _createEntryResolve(val || null); _createEntryResolve = null; }
+  });
+  document.getElementById("entry-create-cancel").addEventListener("click", () => {
+    document.getElementById("entry-create-overlay").classList.remove("open");
+    if (_createEntryResolve) { _createEntryResolve(null); _createEntryResolve = null; }
+  });
+  document.getElementById("entry-create-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("entry-create-ok").click();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      document.getElementById("entry-create-cancel").click();
+    }
+  });
+  function showCreateEntryDialog(kind) {
+    return new Promise(resolve => {
+      const isFolder = kind === "directory";
+      const input = document.getElementById("entry-create-input");
+      document.getElementById("entry-create-title").textContent = isFolder ? "Створити папку" : "Створити текстовий файл";
+      document.getElementById("entry-create-msg").textContent = isFolder
+        ? "Вкажіть відносний шлях папки всередині проєкту."
+        : "Вкажіть відносний шлях нового порожнього текстового файлу.";
+      document.getElementById("entry-create-help").textContent = isFolder
+        ? "Приклади: chapters, sections/results, assets/plots"
+        : "Приклади: chapters/intro.typ, styles/custom.sty, refs/library.bib";
+      input.value = "";
+      input.placeholder = isFolder ? "chapters/intro" : "chapters/intro.typ";
+      document.getElementById("entry-create-overlay").classList.add("open");
+      _createEntryResolve = value => resolve(value);
+      setTimeout(() => input.focus(), 0);
+    });
+  }
+
   function closeDiffModal() {
     activeDiffVersionId = null;
     diffModalOverlay.classList.remove("open");
@@ -1182,6 +1394,12 @@
   function escHtml(s) {
     return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   }
+  function renderLineNumbers(src) {
+    const lineCount = Math.max(1, String(src || "").split("\n").length);
+    const lines = new Array(lineCount);
+    for (let i = 0; i < lineCount; i += 1) lines[i] = String(i + 1);
+    editorGutter.textContent = lines.join("\n");
+  }
   function hlLaTeX(src) {
     let out = "", i = 0, n = src.length;
     while (i < n) {
@@ -1201,6 +1419,9 @@
           out += `<span class="hl-cmd">${escHtml(src.slice(i, j))}</span>`;
           i = j; continue;
         }
+        out += escHtml("\\");
+        i++;
+        continue;
       }
 
       if (ch === "$") {
@@ -1208,9 +1429,14 @@
           const e = src.indexOf("$$", i+2);
           if (e !== -1) { out += `<span class="hl-math">${escHtml(src.slice(i, e+2))}</span>`; i = e+2; continue; }
         } else {
+          const lineEnd = src.indexOf("\n", i + 1);
+          const searchEnd = lineEnd === -1 ? n : lineEnd;
           const e = src.indexOf("$", i+1);
-          if (e !== -1 && e-i < 300) { out += `<span class="hl-math">${escHtml(src.slice(i, e+1))}</span>`; i = e+1; continue; }
+          if (e !== -1 && e < searchEnd) { out += `<span class="hl-math">${escHtml(src.slice(i, e+1))}</span>`; i = e+1; continue; }
         }
+        out += escHtml("$");
+        i++;
+        continue;
       }
 
       if (ch === "{" || ch === "}") { out += `<span class="hl-brace">${escHtml(ch)}</span>`; i++; continue; }
@@ -1222,6 +1448,11 @@
         if (c === "%" || c === "\\" || c === "$" || c === "{" || c === "}" || c === "[" || c === "]") break;
         j++;
       }
+      if (j === i) {
+        out += `<span class="hl-text">${escHtml(ch)}</span>`;
+        i++;
+        continue;
+      }
       out += `<span class="hl-text">${escHtml(src.slice(i, j))}</span>`;
       i = j;
     }
@@ -1229,10 +1460,13 @@
   }
   function syncHighlight() {
     editorHl.innerHTML = hlLaTeX(editor.value);
+    renderLineNumbers(editor.value);
+    editorGutter.scrollTop = editor.scrollTop;
     editorHl.scrollTop  = editor.scrollTop;
     editorHl.scrollLeft = editor.scrollLeft;
   }
   editor.addEventListener("scroll", () => {
+    editorGutter.scrollTop = editor.scrollTop;
     editorHl.scrollTop  = editor.scrollTop;
     editorHl.scrollLeft = editor.scrollLeft;
   });
@@ -1258,6 +1492,115 @@
     return ct.includes("application/json") ? r.json() : r.text();
   }
   function fmtBytes(n) { if (n<1024) return `${n} B`; if (n<1048576) return `${(n/1024).toFixed(1)} KB`; return `${(n/1048576).toFixed(1)} MB`; }
+  function utf8ByteSize(text) {
+    try {
+      return new TextEncoder().encode(String(text || "")).length;
+    } catch (_) {
+      return String(text || "").length;
+    }
+  }
+  function displaySizeForEntry(file) {
+    if (!file || file.is_dir) return null;
+    if (isMainSourceFile(file.name)) {
+      return utf8ByteSize(mainFileContent);
+    }
+    if (selectedFile?.name === file.name && selectedFile?.is_text && !selectedFile?.is_dir) {
+      return utf8ByteSize(editor.value);
+    }
+    const parsed = Number(file.size);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  function splitPath(path) {
+    return String(path || "").split("/").filter(Boolean);
+  }
+  function pathBaseName(path) {
+    const parts = splitPath(path);
+    return parts.length ? parts[parts.length - 1] : "";
+  }
+  function pathDirName(path) {
+    const parts = splitPath(path);
+    if (parts.length <= 1) return "";
+    return parts.slice(0, -1).join("/");
+  }
+  function compareTreeNodes(a, b) {
+    if (a.is_dir && !b.is_dir) return -1;
+    if (!a.is_dir && b.is_dir) return 1;
+    return a.name.localeCompare(b.name, "uk");
+  }
+  function buildProjectTree(entries) {
+    const root = { key: "", name: "", is_dir: true, children: [], file: null, parent_key: null, depth: 0 };
+    const nodes = new Map([["", root]]);
+
+    function ensureDir(dirPath) {
+      const normalized = String(dirPath || "").replace(/^\/+|\/+$/g, "");
+      if (!normalized) return root;
+      if (nodes.has(normalized)) {
+        return nodes.get(normalized);
+      }
+      const parentKey = pathDirName(normalized);
+      const parentNode = ensureDir(parentKey);
+      const node = {
+        key: normalized,
+        name: pathBaseName(normalized),
+        is_dir: true,
+        children: [],
+        file: null,
+        parent_key: parentKey,
+        depth: parentNode.depth + 1,
+      };
+      nodes.set(normalized, node);
+      parentNode.children.push(node);
+      return node;
+    }
+
+    for (const raw of entries || []) {
+      if (!raw || typeof raw !== "object") continue;
+      const fullPath = String(raw.name || "").replace(/^\/+|\/+$/g, "");
+      if (!fullPath) continue;
+      if (raw.is_dir) {
+        const dirNode = ensureDir(fullPath);
+        dirNode.file = {...raw, name: fullPath};
+        continue;
+      }
+      const parent = ensureDir(pathDirName(fullPath));
+      const fileNode = {
+        key: fullPath,
+        name: pathBaseName(fullPath),
+        is_dir: false,
+        children: [],
+        file: {...raw, name: fullPath},
+        parent_key: parent.key,
+        depth: parent.depth + 1,
+      };
+      nodes.set(fullPath, fileNode);
+      parent.children.push(fileNode);
+    }
+
+    return root;
+  }
+  async function moveFileToFolder(sourcePath, targetFolderPath) {
+    const src = String(sourcePath || "").trim();
+    if (!src || isMainSourceFile(src)) return;
+    const file = projectFiles.find(x => x.name === src);
+    if (!file || file.is_dir) return;
+
+    const folder = String(targetFolderPath || "").replace(/^\/+|\/+$/g, "");
+    const newPath = folder ? `${folder}/${pathBaseName(src)}` : pathBaseName(src);
+    if (newPath === src) return;
+
+    await api(`/api/projects/${projectId}/files/${encodeURIComponent(src)}/rename/`, {
+      method: "POST",
+      body: JSON.stringify({new_filename: newPath}),
+    });
+
+    if (selectedFile?.name === src) {
+      selectedFile = {...selectedFile, name: newPath};
+      currentFileLbl.textContent = newPath;
+    }
+
+    await Promise.all([loadFiles(), loadVersions(true)]);
+    setSaveHint(`Файл переміщено: ${src} → ${newPath}`, "saved");
+  }
   function fmtDate(iso) {
     if (!iso) return "—";
     const d = new Date(iso); if (isNaN(d)) return iso;
@@ -1268,6 +1611,17 @@
     const mime = String(file?.type || "").toLowerCase();
     const byExt = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"].some(ext => name.endsWith(ext));
     return byExt || mime.startsWith("image/");
+  }
+  function isTextFile(file) {
+    const name = String(file?.name || "").toLowerCase();
+    const mime = String(file?.type || "").toLowerCase();
+    const byExt = [".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml"].some(
+      ext => name.endsWith(ext)
+    );
+    return byExt || mime.startsWith("text/");
+  }
+  function isUploadableProjectFile(file) {
+    return isImageFile(file) || isTextFile(file);
   }
 
 
@@ -1282,40 +1636,102 @@
 
 
   function renderFileList() {
-    const all = [{name:"main.tex", is_text:true, size:editor.value.length, type:"main"}, ...projectFiles];
     fileListEl.innerHTML = "";
-    all.forEach(f => {
+    const mainEntry = {name: mainFileName, is_text: true, type: "main", is_dir: false};
+    const treeRoot = buildProjectTree(projectFiles);
+
+    function renderEntry(file, depth = 0, labelOverride = null) {
       const li  = document.createElement("li");
       const row = document.createElement("div");
       row.className = "e-file-row";
       const btn = document.createElement("button");
-      btn.className = `e-file-btn${selectedFile.name===f.name ? " active" : ""}`;
-      btn.innerHTML = `<span class="e-file-name">${f.name}</span><span class="e-file-sz">${f.size ? fmtBytes(f.size) : ""}</span>`;
-      btn.addEventListener("click", () => selectFile(f));
+      btn.className = `e-file-btn${selectedFile.name===file.name ? " active" : ""}`;
+      btn.style.paddingLeft = `${8 + depth * 14}px`;
+      btn.dataset.path = file.name;
+      btn.dataset.isDir = file.is_dir ? "1" : "0";
+      if (file.is_dir) btn.dataset.folderPath = file.name;
+
+      const icon = file.is_dir ? "📁 " : "";
+      const collapsed = file.is_dir && collapsedFolders.has(file.name);
+      const folderToggle = file.is_dir
+        ? `<span class="e-folder-toggle" data-folder-toggle="1">${collapsed ? "▸" : "▾"}</span>`
+        : "";
+      const size = displaySizeForEntry(file);
+      const label = labelOverride || pathBaseName(file.name) || file.name;
+      btn.innerHTML = `<span class="e-file-name">${folderToggle}${icon}${label}</span><span class="e-file-sz">${size == null ? "" : fmtBytes(size)}</span>`;
+      btn.addEventListener("click", () => selectFile(file));
+
+      if (!file.is_dir && !isMainSourceFile(file.name)) {
+        btn.draggable = true;
+        btn.addEventListener("dragstart", e => {
+          draggedFilePath = file.name;
+          try {
+            e.dataTransfer?.setData("text/plain", file.name);
+            if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+          } catch (_) {}
+        });
+        btn.addEventListener("dragend", () => {
+          draggedFilePath = null;
+          fileListEl.querySelectorAll(".e-file-btn.drag-target").forEach(node => node.classList.remove("drag-target"));
+        });
+      }
+
+      if (file.is_dir) {
+        const toggleEl = btn.querySelector("[data-folder-toggle='1']");
+        if (toggleEl) {
+          toggleEl.addEventListener("click", e => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (collapsedFolders.has(file.name)) collapsedFolders.delete(file.name);
+            else collapsedFolders.add(file.name);
+            renderFileList();
+          });
+        }
+      }
+
+      if (file.is_dir) {
+        btn.addEventListener("dragover", e => {
+          if (!draggedFilePath) return;
+          if (draggedFilePath.startsWith(`${file.name}/`)) return;
+          e.preventDefault();
+          btn.classList.add("drag-target");
+        });
+        btn.addEventListener("dragleave", () => btn.classList.remove("drag-target"));
+        btn.addEventListener("drop", e => {
+          e.preventDefault();
+          e.stopPropagation();
+          btn.classList.remove("drag-target");
+          const sourcePath = draggedFilePath || e.dataTransfer?.getData("text/plain") || "";
+          if (!sourcePath) return;
+          moveFileToFolder(sourcePath, file.name).catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
+        });
+      }
+
       row.appendChild(btn);
 
-      if (f.name !== "main.tex") {
+      if (!isMainSourceFile(file.name)) {
         const actions = document.createElement("div");
         actions.className = "e-file-actions";
+        const entryLabel = file.is_dir ? "folder" : "file";
         const renameBtn = document.createElement("button");
         renameBtn.type = "button";
         renameBtn.className = "e-file-act";
         renameBtn.textContent = "✎";
         renameBtn.title = "Rename";
-        renameBtn.setAttribute("aria-label", "Rename file");
+        renameBtn.setAttribute("aria-label", `Rename ${entryLabel}`);
         renameBtn.addEventListener("click", async e => {
           e.preventDefault(); e.stopPropagation();
-          await renameFile(f);
+          await renameFile(file);
         });
         const deleteBtn = document.createElement("button");
         deleteBtn.type = "button";
         deleteBtn.className = "e-file-act danger";
         deleteBtn.textContent = "✕";
         deleteBtn.title = "Delete";
-        deleteBtn.setAttribute("aria-label", "Delete file");
+        deleteBtn.setAttribute("aria-label", `Delete ${entryLabel}`);
         deleteBtn.addEventListener("click", async e => {
           e.preventDefault(); e.stopPropagation();
-          await deleteFile(f);
+          await deleteFile(file);
         });
         actions.appendChild(renameBtn);
         actions.appendChild(deleteBtn);
@@ -1324,7 +1740,21 @@
 
       li.appendChild(row);
       fileListEl.appendChild(li);
-    });
+    }
+
+    function renderNode(node) {
+      if (node.key) {
+        const file = node.file || {name: node.key, is_dir: true, is_text: false, is_image: false, type: "asset"};
+        renderEntry(file, node.depth, node.name);
+        if (collapsedFolders.has(node.key)) return;
+      }
+      const sorted = [...node.children].sort(compareTreeNodes);
+      for (const child of sorted) renderNode(child);
+    }
+
+    renderEntry(mainEntry, 0, mainFileName);
+    const rootChildren = [...treeRoot.children].sort(compareTreeNodes);
+    for (const child of rootChildren) renderNode(child);
   }
 
 
@@ -1350,7 +1780,7 @@
     return Math.max(14, fontSize * 1.65);
   }
   function jumpToLine(n) {
-    if (selectedFile.name !== "main.tex") return;
+    if (!isMainSourceFile(selectedFile.name)) return;
     const lines = editor.value.split("\n");
     let pos = 0;
     for (let i=0; i<Math.max(0,n-1) && i<lines.length; i++) pos += lines[i].length + 1;
@@ -1598,10 +2028,44 @@
     } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
   }
 
+  async function loadProjectMeta() {
+    const data = await api(`/api/projects/${projectId}/`, {method:"GET"});
+    projectMeta = data || {};
+    const prevMainFileName = mainFileName;
+    const nextMainFileName = String(projectMeta.main_file_name || projectMeta.file_name || "main.tex");
+    mainFileName = nextMainFileName;
+    supportsSynctex = Boolean(projectMeta.supports_synctex);
+    currentFileLbl.textContent = mainFileName;
+    const selectedName = String(selectedFile?.name || "");
+    if (
+      !selectedName
+      || selectedFile?.type === "main"
+      || selectedName === prevMainFileName
+      || selectedName === "main.tex"
+      || selectedName === "main.typ"
+    ) {
+      selectedFile = {name: mainFileName, type: "main", is_text: true};
+    }
+  }
+
 
   async function loadMainFile() {
     const data = await api(`/api/projects/${projectId}/file/`, {method:"GET"});
+    const prevMainFileName = mainFileName;
+    if (data.file_name) {
+      mainFileName = String(data.file_name);
+    }
+    if (
+      selectedFile?.type === "main"
+      || selectedFile?.name === prevMainFileName
+      || selectedFile?.name === "main.tex"
+      || selectedFile?.name === "main.typ"
+    ) {
+      selectedFile = {name: mainFileName, type: "main", is_text: true};
+    }
+    currentFileLbl.textContent = selectedFile.name;
     editor.value = data.content || "";
+    mainFileContent = data.content || "";
     hasUnsavedChanges = false;
     syncHighlight();
     setSaveHint("Завантажено", "saved");
@@ -1641,23 +2105,65 @@
   }
 
 
-  async function saveMainFile() {
-    if (saving || selectedFile.name !== "main.tex") return;
-    saving = true; setSaveHint("Збереження…", "saving");
+  async function saveCurrentFile() {
+    if (saving || !selectedFile.is_text || selectedFile.is_dir) return;
+    saving = true;
+    setSaveHint("Збереження…", "saving");
     try {
-      await api(`/api/projects/${projectId}/file/`, {method:"PUT", body:JSON.stringify({content:editor.value})});
+      if (isMainSourceFile(selectedFile.name)) {
+        await api(`/api/projects/${projectId}/file/`, {
+          method: "PUT",
+          body: JSON.stringify({content: editor.value}),
+        });
+        mainFileContent = editor.value;
+      } else {
+        await api(`/api/projects/${projectId}/files/${encodeURIComponent(selectedFile.name)}/content/`, {
+          method: "PUT",
+          body: JSON.stringify({
+            content: editor.value,
+          }),
+        });
+        const savedSize = utf8ByteSize(editor.value);
+        selectedFile = {...selectedFile, size: savedSize};
+        projectFiles = projectFiles.map(item => (
+          item.name === selectedFile.name ? {...item, size: savedSize} : item
+        ));
+      }
       hasUnsavedChanges = false;
-      setSaveHint("Збережено", "saved"); setStatus("pending");
-      loadVersions(true).catch(()=>{});
-    } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
-    finally { saving = false; }
+      setSaveHint("Збережено", "saved");
+      setStatus("pending");
+      renderFileList();
+      loadVersions(true).catch(() => {});
+    } catch (err) {
+      setSaveHint(`Помилка: ${err.message}`, "error");
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function waitUntilSaveIdle(maxWaitMs = 4000) {
+    const startedAt = Date.now();
+    while (saving && Date.now() - startedAt < maxWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, 60));
+    }
   }
 
 
-  async function compileProject() {
-    logEl.textContent = "Компіляція…"; openLog();
+  async function runCompile(mode = "manual") {
+    if (compileInFlight) {
+      queueCompile(mode);
+      return;
+    }
+    compileInFlight = true;
+    if (shouldOpenCompileLog(mode)) {
+      logEl.textContent = "Компіляція…";
+      openLog();
+    } else {
+      setSaveHint("Typst: автокомпіляція…", "saving");
+    }
     try {
-      if (selectedFile.name === "main.tex") await saveMainFile();
+      await waitUntilSaveIdle();
+      await saveCurrentFile();
       const data = await api(`/api/projects/${projectId}/compile/`, {method:"POST"});
       setStatus(data.status); logEl.textContent = data.log || "";
       if (data.pdf_url) {
@@ -1666,7 +2172,27 @@
         openPdfLink.href = data.pdf_url;
         await loadPdfViewer(url);
       } else { pdfEmpty.style.display = "flex"; }
-    } catch (err) { setStatus("error"); logEl.textContent = `Помилка: ${err.message}`; }
+      if (!shouldOpenCompileLog(mode) && data.status === "success") {
+        setSaveHint("Typst: PDF оновлено", "saved");
+      }
+    } catch (err) {
+      setStatus("error");
+      logEl.textContent = `Помилка: ${err.message}`;
+      if (!shouldOpenCompileLog(mode)) {
+        setSaveHint(`Typst: помилка компіляції`, "error");
+      }
+    } finally {
+      compileInFlight = false;
+      if (queuedCompileMode) {
+        const nextMode = queuedCompileMode;
+        queuedCompileMode = null;
+        runCompile(nextMode).catch(()=>{});
+      }
+    }
+  }
+
+  async function compileProject() {
+    await runCompile("manual");
   }
 
   async function deleteCurrentProject() {
@@ -1703,22 +2229,89 @@
 
 
   async function selectFile(file) {
-    selectedFile = {name:file.name, type:file.type||"asset", ...file};
+    // Save current file before switching away
+    if (hasUnsavedChanges && selectedFile.is_text && !selectedFile.is_dir) {
+      clearTimeout(saveTimer);
+      await saveCurrentFile();
+    }
+
+    selectedFile = {name: file.name, type: file.type || "asset", ...file};
     currentFileLbl.textContent = file.name;
     renderFileList();
-    if (file.name === "main.tex") {
-      document.getElementById("editor-wrap").style.display = ""; assetView.style.display = "none"; return;
+
+    if (isMainSourceFile(file.name)) {
+      document.getElementById("editor-wrap").style.display = "";
+      assetView.style.display = "none";
+      editor.value = mainFileContent;
+      hasUnsavedChanges = false;
+      syncHighlight();
+      setSaveHint("", "");
+      return;
     }
-    document.getElementById("editor-wrap").style.display = "none"; assetView.style.display = "flex";
+
+    if (file.is_text && !file.is_dir) {
+      document.getElementById("editor-wrap").style.display = "";
+      assetView.style.display = "none";
+      setSaveHint("Завантаження…", "saving");
+      try {
+        const params = new URLSearchParams({include_text: "1"});
+        const data = await api(`/api/projects/${projectId}/files/${encodeURIComponent(file.name)}/content/?${params}`);
+        editor.value = data.text_content || "";
+        hasUnsavedChanges = false;
+        syncHighlight();
+        setSaveHint("Завантажено", "saved");
+      } catch (err) {
+        setSaveHint(`Помилка: ${err.message}`, "error");
+        selectedFile = {name: mainFileName, type: "main", is_text: true};
+        currentFileLbl.textContent = mainFileName;
+        editor.value = mainFileContent;
+        hasUnsavedChanges = false;
+        syncHighlight();
+        renderFileList();
+      }
+      return;
+    }
+
+    document.getElementById("editor-wrap").style.display = "none";
+    assetView.style.display = "flex";
+    if (file.is_dir) {
+      assetBox.innerHTML = `Папка: <strong>${file.name}</strong><br><br>Тут можна зберігати вкладені текстові файли та зображення.`;
+      return;
+    }
     const url = `/api/projects/${projectId}/files/${encodeURIComponent(file.name)}/`;
     if (file.is_image) { assetBox.innerHTML = `<img class="e-asset-img" src="${url}?t=${Date.now()}" alt="${file.name}">`; return; }
-    if (file.is_text) { try { assetBox.textContent = await api(url,{method:"GET"}); } catch (err) { assetBox.textContent = `Помилка: ${err.message}`; } return; }
     assetBox.innerHTML = `Бінарний файл: <strong>${file.name}</strong><br><br><a class="e-btn" href="${url}" target="_blank">Завантажити</a>`;
   }
 
+  async function createFolder() {
+    const folderName = await showCreateEntryDialog("directory");
+    if (!folderName) return;
+    await api(`/api/projects/${projectId}/files/`, {
+      method: "POST",
+      body: JSON.stringify({filename: folderName, entry_kind: "directory"}),
+    });
+    await Promise.all([loadFiles(), loadVersions(true)]);
+    const created = projectFiles.find(x => x.name === folderName.replace(/[\\/]+$/, ""));
+    if (created) await selectFile(created);
+    setSaveHint(`Папку створено: ${folderName}`, "saved");
+  }
+
+  async function createEmptyTextFile() {
+    const fileName = await showCreateEntryDialog("file");
+    if (!fileName) return;
+    await api(`/api/projects/${projectId}/files/`, {
+      method: "POST",
+      body: JSON.stringify({filename: fileName, text_content: ""}),
+    });
+    await Promise.all([loadFiles(), loadVersions(true)]);
+    const created = projectFiles.find(x => x.name === fileName);
+    if (created) await selectFile(created);
+    setSaveHint(`Файл створено: ${fileName}`, "saved");
+  }
+
   async function uploadFile(file) {
-    if (!isImageFile(file)) {
-      throw new Error("Дозволено завантажувати лише зображення");
+    if (!isUploadableProjectFile(file)) {
+      throw new Error("Дозволено завантажувати лише зображення та текстові файли");
     }
     const fd = new FormData(); fd.append("file", file);
     await api(`/api/projects/${projectId}/files/`, {method:"POST", body:fd});
@@ -1726,9 +2319,18 @@
     setSaveHint(`Завантажено: ${file.name}`, "saved");
   }
 
+  async function uploadZip(file) {
+    const fd = new FormData(); fd.append("file", file);
+    const result = await api(`/api/projects/${projectId}/files/`, {method:"POST", body:fd});
+    await Promise.all([loadFiles(), loadVersions(true)]);
+    const n = (result.files || []).length;
+    const label = n === 1 ? "файл" : n < 5 ? "файли" : "файлів";
+    setSaveHint(`ZIP: розпаковано ${n} ${label}`, "saved");
+  }
+
   async function renameFile(file) {
     const currentName = String(file?.name || "");
-    if (!currentName || currentName === "main.tex") return;
+    if (!currentName || isMainSourceFile(currentName)) return;
     const newName = await showRenameDialog(currentName);
     if (!newName) return;
     const trimmed = String(newName).trim();
@@ -1742,25 +2344,25 @@
       currentFileLbl.textContent = trimmed;
     }
     await Promise.all([loadFiles(), loadVersions(true)]);
-    if (selectedFile.name !== "main.tex") {
+    if (!isMainSourceFile(selectedFile.name)) {
       const next = projectFiles.find(x => x.name === selectedFile.name);
       if (next) await selectFile(next);
     }
-    setSaveHint(`Файл перейменовано: ${currentName} → ${trimmed}`, "saved");
+    setSaveHint(`${file?.is_dir ? "Папку" : "Файл"} перейменовано: ${currentName} → ${trimmed}`, "saved");
   }
 
   async function deleteFile(file) {
     const currentName = String(file?.name || "");
-    if (!currentName || currentName === "main.tex") return;
-    const ok = await showConfirm(`Видалити файл "${currentName}"?`);
+    if (!currentName || isMainSourceFile(currentName)) return;
+    const ok = await showConfirm(`Видалити ${file?.is_dir ? "папку" : "файл"} "${currentName}"?`);
     if (!ok) return;
     await api(`/api/projects/${projectId}/files/${encodeURIComponent(currentName)}/`, {method: "DELETE"});
     const wasSelected = selectedFile.name === currentName;
     await Promise.all([loadFiles(), loadVersions(true)]);
     if (wasSelected) {
-      await selectFile({name: "main.tex", type: "main", is_text: true});
+      await selectFile({name: mainFileName, type: "main", is_text: true});
     }
-    setSaveHint(`Файл видалено: ${currentName}`, "saved");
+    setSaveHint(`${file?.is_dir ? "Папку" : "Файл"} видалено: ${currentName}`, "saved");
   }
 
   function normalizeClipboardFile(file, idx = 0) {
@@ -1792,8 +2394,13 @@
   dropZone.addEventListener("drop", async e => {
     e.preventDefault(); dragCounter=0; dropZone.classList.remove("drag-active");
     for (const f of [...(e.dataTransfer.files||[])]) {
-      try { await uploadFile(f); }
-      catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+      if (f.name.toLowerCase().endsWith(".zip")) {
+        try { await uploadZip(f); }
+        catch (err) { setSaveHint(`Помилка ZIP: ${err.message}`, "error"); }
+      } else {
+        try { await uploadFile(f); }
+        catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+      }
     }
   });
 
@@ -1846,23 +2453,60 @@
     if (nearBottom) loadVersions(false).catch(()=>{});
   });
   uploadInput.addEventListener("change", async e => {
+    for (const f of [...(e.target.files || [])]) {
+      try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+    }
+    uploadInput.value = "";
+  });
+  document.getElementById("zip-upload").addEventListener("change", async e => {
     const f = e.target.files?.[0]; if (!f) return;
-    try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка upload: ${err.message}`, "error"); }
-    finally { uploadInput.value = ""; }
+    try { await uploadZip(f); } catch (err) { setSaveHint(`Помилка ZIP: ${err.message}`, "error"); }
+    finally { e.target.value = ""; }
+  });
+  newFolderBtn.addEventListener("click", () => {
+    createFolder().catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
+  });
+  newTextFileBtn.addEventListener("click", () => {
+    createEmptyTextFile().catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
+  });
+  fileListEl.addEventListener("dragover", e => {
+    if (!draggedFilePath) return;
+    e.preventDefault();
+  });
+  fileListEl.addEventListener("drop", e => {
+    if (!draggedFilePath) return;
+    const folderBtn = e.target.closest(".e-file-btn[data-is-dir='1']");
+    if (folderBtn) return;
+    e.preventDefault();
+    const sourcePath = draggedFilePath || e.dataTransfer?.getData("text/plain") || "";
+    if (!sourcePath) return;
+    moveFileToFolder(sourcePath, "").catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
   });
 
 
   editor.addEventListener("input", () => {
     syncHighlight();
-    if (selectedFile.name !== "main.tex") return;
+    if (!selectedFile.is_text || selectedFile.is_dir) return;
     hasUnsavedChanges = true;
     setSaveHint("Є незбережені зміни…", "saving");
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => saveMainFile().then(loadSections).catch(()=>{}), 1200);
+    clearTimeout(typstCompileTimer);
+    const savedName = selectedFile.name;
+    const isTypstTextFile = isTypstProject() && String(savedName || "").toLowerCase().endsWith(".typ");
+    saveTimer = setTimeout(() => {
+      saveCurrentFile()
+        .then(() => {
+          if (isTypstTextFile) runCompile("realtime").catch(() => {});
+          if (!isMainSourceFile(savedName)) return;
+          loadSections().catch(() => {});
+        })
+        .catch(() => {});
+    }, isTypstTextFile ? 200 : 1200);
   });
 
 
   async function init() {
+    await loadProjectMeta();
     await loadMainFile();
     await Promise.all([loadFiles(), loadSections(), loadVersions(true)]);
     const cd = await api(`/api/projects/${projectId}/compile/`, {method:"GET"});
@@ -1882,6 +2526,7 @@
   init().catch(err => setSaveHint(`Помилка ініціалізації: ${err.message}`, "error"));
   window.addEventListener("beforeunload", () => {
     if (statusPollTimer) clearInterval(statusPollTimer);
+    if (typstCompileTimer) clearTimeout(typstCompileTimer);
     if (projectWsReconnectTimer) clearTimeout(projectWsReconnectTimer);
     if (projectWs) {
       try { projectWs.close(); } catch (_) {}

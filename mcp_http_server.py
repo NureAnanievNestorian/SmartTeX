@@ -139,7 +139,7 @@ def _absolute_url(path: str | None) -> str | None:
     return f"{PUBLIC_BASE_URL}{path if path.startswith('/') else '/' + path}"
 
 
-def _compact_latex_log(log_text: str, max_chars: int = 4000) -> tuple[str, bool]:
+def _compact_compiler_log(log_text: str, max_chars: int = 4000) -> tuple[str, bool]:
     text = str(log_text or "")
     if not text:
         return "", False
@@ -190,7 +190,7 @@ def _enrich_compile_payload(
     }
     if compact_log and "log" in enriched:
         raw_log = str(enriched.get("log") or "")
-        compact, was_truncated = _compact_latex_log(raw_log, max_chars=max_log_chars)
+        compact, was_truncated = _compact_compiler_log(raw_log, max_chars=max_log_chars)
         enriched["log"] = compact
         enriched["log_compacted"] = True
         enriched["log_truncated"] = was_truncated
@@ -326,6 +326,21 @@ def _resource_uri(project_id: int, resource_name: str) -> str:
     return f"smarttex://projects/{int(project_id)}/{resource_name}"
 
 
+def _project_meta(project_id: int) -> dict[str, Any]:
+    payload = _call("GET", f"/api/projects/{project_id}/")
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _project_main_file_name(project_id: int) -> str:
+    project_meta = _project_meta(project_id)
+    file_name = str(project_meta.get("main_file_name") or "").strip()
+    if file_name:
+        return file_name
+    return "main.typ" if project_meta.get("markup_type") == "typst" else "main.tex"
+
+
 async def _notify_resource_updated(ctx: Context | None, uri: str) -> None:
     if ctx is None:
         return
@@ -349,11 +364,12 @@ async def _notify_project_write_updates(
 
 
 def _read_main_file_info(project_id: int) -> dict[str, Any]:
+    file_name = _project_main_file_name(project_id)
     window = _call(
         "GET",
-        f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': 'main.tex', 'start_line': 1, 'end_line': 1})}",
+        f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': file_name, 'start_line': 1, 'end_line': 1})}",
     )
-    project_meta = _call("GET", f"/api/projects/{project_id}/")
+    project_meta = _project_meta(project_id)
     assets_payload = _call("GET", f"/api/projects/{project_id}/files/")
 
     files = assets_payload.get("files") if isinstance(assets_payload, dict) else []
@@ -374,7 +390,7 @@ def _read_main_file_info(project_id: int) -> dict[str, Any]:
 
     return {
         "project_id": int(project_id),
-        "file_name": "main.tex",
+        "file_name": file_name,
         "line_count": int(window.get("total_lines", 0)) if isinstance(window, dict) else 0,
         "char_count": int(window.get("total_chars", 0)) if isinstance(window, dict) else 0,
         "last_modified": project_meta.get("updated_at") if isinstance(project_meta, dict) else None,
@@ -386,8 +402,9 @@ def _line_column_to_position(
         project_id: int,
         line: int,
         column: int,
-        file_name: str = "main.tex",
+        file_name: str | None = None,
 ) -> int:
+    resolved_file_name = file_name or _project_main_file_name(project_id)
     safe_line = int(line)
     safe_column = int(column)
     if safe_line < 1:
@@ -397,7 +414,7 @@ def _line_column_to_position(
 
     line_window = _call(
         "GET",
-        f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': file_name, 'start_line': 1, 'end_line': safe_line})}",
+        f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': resolved_file_name, 'start_line': 1, 'end_line': safe_line})}",
     )
     if not isinstance(line_window, dict):
         raise ValueError("unable to read file window")
@@ -487,14 +504,17 @@ if MCP_OAUTH_ENABLED:
 mcp = FastMCP(
     name="SmartTeX MCP",
     instructions="""
-    ## SmartTeX MCP — LuaLaTeX editor assistant
+    ## SmartTeX MCP — document editor assistant (LaTeX / Typst)
 
-    SmartTeX is a web-based LuaLaTeX editor. Documents are compiled with `lualatex`.
-    Use LuaLaTeX-compatible syntax and packages only (e.g. `fontspec`, `unicode-math` — yes; `inputenc` — no).
+    SmartTeX edits and compiles two markup formats: LaTeX and Typst.
 
     ### Project identity
     - NEVER auto-select a project. Wait until the user explicitly names a project (by name or id).
     - Once identified, store the project_id for the entire session — call `list_projects` only once if needed to resolve a name to an id.
+    - Before editing, read `markup_type` from `list_projects` or project metadata.
+    - If `markup_type == "latex"`: write LuaLaTeX-compatible code only (`fontspec`, `unicode-math`; no `inputenc`).
+    - If `markup_type == "typst"`: write valid Typst syntax only (`#set`, `#show`, `= Heading`).
+    - Never mix LaTeX and Typst syntax in one file.
 
     ### Before any edit — mandatory orientation
     1. Call `list_project_sections` (compact=True) — understand structure, get line ranges.
@@ -520,11 +540,22 @@ mcp = FastMCP(
 
     **Key principle**: the edit scope must match the change scope. Rewriting 200 lines to change 3 is always wrong.
 
+    ### Working with project files
+    - Typical Typst projects use `main.typ` plus extra `.typ` files such as `chapters/intro.typ`.
+    - Typical LaTeX projects use `main.tex` plus helper files such as `.sty`, `.cls`, `.bib`.
+    - To inspect project entries (files and folders), use `list_project_files`.
+    - To read an auxiliary text file, use `get_project_file_content(include_text=True)`.
+    - To create a new text file, use `create_project_text_file`.
+    - To create a new folder, use `create_project_folder`.
+    - To rename/delete entries, use `rename_project_file` / `delete_project_file`.
+    - To edit an existing auxiliary text file, use `rewrite_project_window` with explicit `file_name`.
+    - For Typst multi-file projects: changing any imported `.typ` file still requires compile to update PDF.
+
     ### Preserving document integrity
     - Always read the current content of what you're about to change before writing.
-    - Preserve existing formatting, indentation, and LaTeX structure.
+    - Preserve existing formatting, indentation, and document structure.
     - Never introduce or remove blank lines outside the edit target.
-    - Never change `\\begin{document}`, preamble, or `\\end{document}` unless user explicitly asks.
+    - For LaTeX, never change `\\begin{document}`, preamble, or `\\end{document}` unless user explicitly asks.
     - After a window rewrite, verify line counts are consistent — a rewrite must not silently shift unrelated content.
 
     ### change_summary — derive automatically
@@ -534,6 +565,7 @@ mcp = FastMCP(
     ### Compilation
     - Do NOT compile unless user explicitly asks.
     - To fix compilation errors: `get_compile_log` → locate via `search_project_content` → fix with targeted edit → then compile.
+    - SyncTeX mappings are available only for LaTeX projects. Do not call SyncTeX tools for Typst.
 
     ### What never to do
     - Never select a project without explicit user instruction.
@@ -575,6 +607,7 @@ class MCPCompatibilityMiddleware(BaseHTTPMiddleware):
 
 @mcp.tool
 def list_projects(project_id: int | None = None, name_query: str | None = None) -> list[dict[str, Any]]:
+    """List user projects and their metadata (`id`, `title`, `markup_type`, compile state)."""
     projects = _call("GET", "/api/projects/")
     if not isinstance(projects, list):
         return []
@@ -606,9 +639,10 @@ def read_project_file(
         end_line: int | None = None,
         start_char: int | None = None,
         end_char: int | None = None,
-        file_name: str = "main.tex",
+        file_name: str | None = None,
 ) -> dict[str, Any]:
-    """Read project file content; use start_line/end_line to avoid reading the entire file."""
+    """Read a text file window from the project (`main.tex`/`main.typ` by default)."""
+    resolved_file_name = file_name or _project_main_file_name(project_id)
     if (
             start_line is None
             and end_line is None
@@ -617,15 +651,15 @@ def read_project_file(
     ):
         probe = _call(
             "GET",
-            f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': file_name, 'start_line': 1, 'end_line': 1})}",
+            f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': resolved_file_name, 'start_line': 1, 'end_line': 1})}",
         )
         total_lines = 1
         if isinstance(probe, dict):
             total_lines = max(1, int(probe.get("total_lines") or 1))
-        params = urlencode({"file_name": file_name, "start_line": 1, "end_line": total_lines})
+        params = urlencode({"file_name": resolved_file_name, "start_line": 1, "end_line": total_lines})
         return _call("GET", f"/api/projects/{project_id}/read-window/?{params}")
 
-    query: dict[str, Any] = {"file_name": file_name}
+    query: dict[str, Any] = {"file_name": resolved_file_name}
     if start_line is not None:
         query["start_line"] = int(start_line)
     if end_line is not None:
@@ -648,6 +682,7 @@ async def update_project_file(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
+    """Replace the whole main source file (`main.tex` or `main.typ`)."""
     summary = _require_summary(change_summary)
     payload = _call(
         "PUT",
@@ -666,8 +701,15 @@ async def update_project_file(
 
 
 @mcp.tool
-def list_project_image_assets(project_id: int) -> dict[str, Any]:
+def list_project_files(project_id: int) -> dict[str, Any]:
+    """List project entries (files and folders)."""
     return _call("GET", f"/api/projects/{project_id}/files/")
+
+
+@mcp.tool
+def list_project_image_assets(project_id: int) -> dict[str, Any]:
+    """[deprecated] Use `list_project_files`."""
+    return list_project_files(project_id)
 
 
 @mcp.tool
@@ -681,6 +723,7 @@ async def upload_project_image_asset(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
+    """Upload an image file only (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`, `.webp`)."""
     summary = _require_summary(change_summary)
     ext = Path(asset_filename).suffix.lower()
     if ext not in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}:
@@ -707,10 +750,84 @@ async def upload_project_image_asset(
 
 
 @mcp.tool
-def get_project_image_asset_content(project_id: int, asset_filename: str, include_text: bool = False) -> dict[str, Any]:
+def get_project_file_content(project_id: int, asset_filename: str, include_text: bool = False) -> dict[str, Any]:
+    """Read file bytes (base64). Set `include_text=True` for text files."""
     params = urlencode({"include_text": str(bool(include_text)).lower()})
     safe_name = quote(asset_filename, safe="")
     return _call("GET", f"/api/projects/{project_id}/files/{safe_name}/content/?{params}")
+
+
+@mcp.tool
+def get_project_image_asset_content(project_id: int, asset_filename: str, include_text: bool = False) -> dict[str, Any]:
+    """[deprecated] Use `get_project_file_content`."""
+    return get_project_file_content(project_id, asset_filename, include_text=include_text)
+
+
+@mcp.tool
+async def create_project_text_file(
+        project_id: int,
+        filename: str,
+        content: str,
+        change_summary: str,
+        ctx: Context,
+        compileAlso: bool = False,
+        compileLogCompact: bool = True,
+        compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    """Create a new text file (supports nested paths like `chapters/intro.typ`)."""
+    summary = _require_summary(change_summary)
+    payload = _call(
+        "POST",
+        f"/api/projects/{project_id}/files/",
+        {
+            "filename": filename,
+            "text_content": content,
+            "change_summary": summary,
+            "change_source": "mcp",
+        },
+    )
+    result = _with_optional_compile(
+        project_id,
+        payload,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
+    await _notify_project_write_updates(ctx, project_id, include_compile_log=bool(compileAlso))
+    return result
+
+
+@mcp.tool
+async def create_project_folder(
+        project_id: int,
+        folder_path: str,
+        change_summary: str,
+        ctx: Context,
+        compileAlso: bool = False,
+        compileLogCompact: bool = True,
+        compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    """Create a new folder in the project (supports nested paths like `chapters/appendix`)."""
+    summary = _require_summary(change_summary)
+    payload = _call(
+        "POST",
+        f"/api/projects/{project_id}/files/",
+        {
+            "filename": folder_path,
+            "entry_kind": "directory",
+            "change_summary": summary,
+            "change_source": "mcp",
+        },
+    )
+    result = _with_optional_compile(
+        project_id,
+        payload,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
+    await _notify_project_write_updates(ctx, project_id, include_compile_log=bool(compileAlso))
+    return result
 
 
 @mcp.tool
@@ -724,6 +841,7 @@ async def rename_project_image_asset(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
+    """[deprecated] Use `rename_project_file`."""
     summary = _require_summary(change_summary)
     safe_name = quote(asset_filename, safe="")
     payload = _call(
@@ -752,6 +870,7 @@ async def delete_project_image_asset(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
+    """[deprecated] Use `delete_project_file`."""
     summary = _require_summary(change_summary)
     safe_name = quote(asset_filename, safe="")
     payload = _call(
@@ -771,7 +890,54 @@ async def delete_project_image_asset(
 
 
 @mcp.tool
+async def rename_project_file(
+        project_id: int,
+        asset_filename: str,
+        new_asset_filename: str,
+        change_summary: str,
+        ctx: Context,
+        compileAlso: bool = False,
+        compileLogCompact: bool = True,
+        compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    """Rename a project file or folder."""
+    return await rename_project_image_asset(
+        project_id=project_id,
+        asset_filename=asset_filename,
+        new_asset_filename=new_asset_filename,
+        change_summary=change_summary,
+        ctx=ctx,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
+
+
+@mcp.tool
+async def delete_project_file(
+        project_id: int,
+        asset_filename: str,
+        change_summary: str,
+        ctx: Context,
+        compileAlso: bool = False,
+        compileLogCompact: bool = True,
+        compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    """Delete a project file or folder."""
+    return await delete_project_image_asset(
+        project_id=project_id,
+        asset_filename=asset_filename,
+        change_summary=change_summary,
+        ctx=ctx,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
+
+
+@mcp.tool
 def list_project_sections(project_id: int, compact: bool = True) -> dict[str, Any]:
+    """List detected document sections/headings from the main source file."""
     payload = _call("GET", f"/api/projects/{project_id}/sections/")
     if isinstance(payload, dict):
         return _compact_sections_payload(payload, compact=bool(compact))
@@ -824,6 +990,7 @@ def get_project_section(
         include_content: bool = False,
         content_preview_chars: int = 800,
 ) -> dict[str, Any]:
+    """Get one section from the main source file by section index."""
     payload = _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
     if not isinstance(payload, dict):
         return {}
@@ -850,6 +1017,7 @@ async def update_project_section(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
+    """Replace one section in the main source file."""
     summary = _require_summary(change_summary)
     payload = _call(
         "PUT",
@@ -886,15 +1054,16 @@ async def insert_text_at_position(
         position: int | None = None,
         line: int | None = None,
         column: int | None = None,
-        file_name: str = "main.tex",
+        file_name: str | None = None,
         compileAlso: bool = False,
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
-    """Insert text using either absolute char `position` or 1-based `line`/`column`."""
+    """Insert text into the main source file using absolute char `position` or 1-based `line`/`column`."""
     summary = _require_summary(change_summary)
-    if file_name != "main.tex":
-        raise ValueError("insert_text_at_position currently supports main.tex only")
+    resolved_file_name = file_name or _project_main_file_name(project_id)
+    if resolved_file_name not in {"main.tex", "main.typ"}:
+        raise ValueError("insert_text_at_position supports main source file only")
     if position is None:
         if line is None:
             raise ValueError("provide either position or line")
@@ -903,7 +1072,7 @@ async def insert_text_at_position(
             project_id,
             line=int(line),
             column=resolved_column,
-            file_name=file_name,
+            file_name=resolved_file_name,
         )
     payload = _call(
         "POST",
@@ -933,7 +1102,9 @@ async def replace_in_project_file(
         max_replacements: int = 0,  # 0 = all
         dry_run: bool = True,
 ) -> dict[str, Any]:
-    file_payload = read_project_file(project_id=project_id, file_name="main.tex")
+    """Pattern replace in the main source file; use `dry_run=True` first."""
+    main_file_name = _project_main_file_name(project_id)
+    file_payload = read_project_file(project_id=project_id, file_name=main_file_name)
     content = str(file_payload.get("content") or "")
     analysis = _preview_replacements(
         content,
@@ -946,7 +1117,7 @@ async def replace_in_project_file(
 
     response: dict[str, Any] = {
         "project_id": int(project_id),
-        "file_name": "main.tex",
+        "file_name": main_file_name,
         "dry_run": bool(dry_run),
         "is_regex": bool(is_regex),
         "ignore_case": bool(ignore_case),
@@ -994,6 +1165,7 @@ def search_project_content(
         include_line_text: bool = False,
         max_matches_in_response: int = 50,
 ) -> dict[str, Any]:
+    """Search text across project files (main source + optional assets)."""
     params = urlencode(
         {
             "query": query,
@@ -1023,9 +1195,9 @@ def read_project_window(
         end_line: int | None = None,
         start_char: int | None = None,
         end_char: int | None = None,
-        file_name: str = "main.tex",
+        file_name: str | None = None,
 ) -> dict[str, Any]:
-    """Deprecated alias for read_project_file."""
+    """[deprecated] Use `read_project_file`."""
     return read_project_file(
         project_id=project_id,
         start_line=start_line,
@@ -1041,7 +1213,7 @@ async def rewrite_project_window(
         project_id: int,
         replacement: str,
         ctx: Context,
-        file_name: str = "main.tex",
+        file_name: str | None = None,
         start_line: int | None = None,
         end_line: int | None = None,
         start_char: int | None = None,
@@ -1051,9 +1223,10 @@ async def rewrite_project_window(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
+    """Rewrite a line/char window in a target text file (`file_name` defaults to main source)."""
     summary = _require_summary(change_summary)
     payload = {
-        "file_name": file_name,
+        "file_name": file_name or _project_main_file_name(project_id),
         "replacement": replacement,
         "change_summary": summary,
         "change_source": "mcp",
@@ -1104,14 +1277,15 @@ def get_project_pdf_page_count(project_id: int) -> dict[str, Any]:
 def synctex_line_to_page(
         project_id: int,
         line: int,
-        file_name: str = "main.tex",
+        file_name: str | None = None,
         column: int = 1,
 ) -> dict[str, Any]:
+    """Map source line/column to PDF coordinates (LaTeX only; Typst is unsupported)."""
     params = urlencode(
         {
             "line": int(line),
             "column": int(column),
-            "file_name": file_name,
+            "file_name": file_name or _project_main_file_name(project_id),
         }
     )
     return _call("GET", f"/api/projects/{project_id}/synctex/line/?{params}")
@@ -1119,6 +1293,7 @@ def synctex_line_to_page(
 
 @mcp.tool
 def synctex_page_to_line(project_id: int, page: int, x: float, y: float) -> dict[str, Any]:
+    """Map PDF coordinates back to source position (LaTeX only; Typst is unsupported)."""
     params = urlencode({"page": int(page), "x": float(x), "y": float(y)})
     return _call("GET", f"/api/projects/{project_id}/synctex/pdf/?{params}")
 
@@ -1231,7 +1406,7 @@ def list_templates() -> list[dict[str, Any]]:
     "smarttex://projects/{project_id}/sections",
     name="project-sections",
     title="Project Sections",
-    description="Compact list of TeX sections for a project.",
+    description="Compact list of document sections for a project.",
     mime_type="application/json",
 )
 def resource_project_sections(project_id: int) -> dict[str, Any]:
@@ -1264,7 +1439,7 @@ def resource_project_compile_log(project_id: int) -> dict[str, Any]:
     "smarttex://projects/{project_id}/file-info",
     name="project-file-info",
     title="Project Main File Metadata",
-    description="Metadata for main.tex including size counters and image assets.",
+    description="Metadata for the main source file including size counters and project files.",
     mime_type="application/json",
 )
 def resource_project_file_info(project_id: int) -> dict[str, Any]:

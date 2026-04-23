@@ -7,6 +7,8 @@
   .create-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
   .create-field { flex: 1 1 220px; }
   .create-field label { display: block; font-size: 11px; font-weight: 700; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .create-help { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .tpl-markup-hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
   .section-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
   .section-bar h2 { margin: 0; font-size: 17px; font-weight: 700; }
@@ -78,11 +80,21 @@
       </div>
       <div class="create-field">
         <label>Шаблон</label>
-        <select name="template_id">
+        <select name="template_id" id="template-id">
           <option value="">— Без шаблону —</option>
           {% for tpl in templates %}
-            <option value="{{ tpl.id }}">{{ tpl.title }} · {{ tpl.get_category_display }}</option>
+            <option value="{{ tpl.id }}" data-markup-type="{{ tpl.markup_type }}">
+              {{ tpl.title }} · {{ tpl.get_category_display }} · {{ tpl.get_markup_type_display }}
+            </option>
           {% endfor %}
+        </select>
+        <div id="template-markup-hint" class="tpl-markup-hint" hidden></div>
+      </div>
+      <div class="create-field">
+        <label>Тип документа</label>
+        <select name="markup_type" id="markup-type">
+          <option value="typst">Typst</option>
+          <option value="latex">LaTeX</option>
         </select>
       </div>
       <div>
@@ -123,11 +135,37 @@
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
     </div>
     <div class="empty-title">Проєктів ще немає</div>
-    <div class="empty-sub">Створіть перший LaTeX-проєкт за допомогою форми вище</div>
+    <div class="empty-sub">Створіть перший LaTeX- або Typst-проєкт за допомогою форми вище</div>
   </div>
 {% endif %}
 <script>
 (() => {
+  const templateSelect = document.getElementById("template-id");
+  const markupSelect = document.getElementById("markup-type");
+  const markupHelp = document.getElementById("markup-help");
+  const templateMarkupHint = document.getElementById("template-markup-hint");
+
+  function syncMarkupControls() {
+    if (!templateSelect || !markupSelect) return;
+    const selected = templateSelect.options[templateSelect.selectedIndex];
+    const templateMarkupType = selected?.dataset?.markupType || "";
+    const hasTemplate = Boolean(templateSelect.value);
+
+    if (hasTemplate && templateMarkupType) {
+      markupSelect.value = templateMarkupType;
+      markupSelect.disabled = true;
+      templateMarkupHint.hidden = false;
+      return;
+    }
+
+    markupSelect.disabled = false;
+    templateMarkupHint.hidden = true;
+  }
+
+  if (templateSelect) {
+    templateSelect.addEventListener("change", syncMarkupControls);
+    syncMarkupControls();
+  }
 
   const grid = document.getElementById("projects-grid");
   if (!grid) return;

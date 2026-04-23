@@ -5,22 +5,25 @@ import re
 import difflib
 import base64
 import io
+import zipfile
 from datetime import datetime, UTC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-import pypdfium2 as pdfium
 from django.conf import settings
+
+from SmartTeX.markup import MarkupType, source_filename_for_markup
 
 from .models import Project, ProjectVersion
 
 COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=3)
-TEXT_EXTENSIONS = {".tex", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml"}
+TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
 ALLOWED_UPLOAD_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
 MAX_PROJECT_FILES_TOTAL_SIZE = 20 * 1024 * 1024
+PROTECTED_FILENAMES = {"main.tex", "main.typ", "main.pdf", "main.log"}
 LATEX_ARTIFACT_EXTENSIONS = {
     ".aux",
     ".log",
@@ -55,6 +58,7 @@ SECTION_LEVELS = {
     "paragraph": 5,
     "subparagraph": 6,
 }
+TYPST_HEADING_RE = re.compile(r"^(?P<marks>={1,6})\s+(?P<title>.+?)\s*$", flags=re.MULTILINE)
 
 
 @dataclass
@@ -80,8 +84,12 @@ def project_dir(project: Project) -> Path:
     return settings.MEDIA_ROOT / "projects" / str(project.owner_id) / str(project.id)
 
 
-def tex_file_path(project: Project) -> Path:
-    return project_dir(project) / "main.tex"
+def main_source_filename(project: Project) -> str:
+    return source_filename_for_markup(project.markup_type)
+
+
+def source_file_path(project: Project) -> Path:
+    return project_dir(project) / main_source_filename(project)
 
 
 def pdf_file_path(project: Project) -> Path:
@@ -109,21 +117,21 @@ def ensure_project_dir(project: Project) -> Path:
     return root
 
 
-def initialize_main_tex(project: Project, content: str) -> None:
+def initialize_main_source(project: Project, content: str) -> None:
     ensure_project_dir(project)
-    tex_file_path(project).write_text(content, encoding="utf-8")
+    source_file_path(project).write_text(content, encoding="utf-8")
 
 
-def read_tex_content(project: Project) -> str:
-    path = tex_file_path(project)
+def read_source_content(project: Project) -> str:
+    path = source_file_path(project)
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
 
 
-def write_tex_content(project: Project, content: str) -> None:
+def write_source_content(project: Project, content: str) -> None:
     ensure_project_dir(project)
-    tex_file_path(project).write_text(content, encoding="utf-8")
+    source_file_path(project).write_text(content, encoding="utf-8")
 
 
 def read_compile_log(project: Project) -> str:
@@ -133,25 +141,104 @@ def read_compile_log(project: Project) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
-def _safe_filename(filename: str) -> str:
-    clean = Path(filename).name.strip()
-    if not clean:
+def _safe_file_path(project: Project, filename: str) -> Path:
+    name = str(filename or "").strip()
+    if not name:
         raise ValueError("filename is required")
-    if clean in {"main.tex", "main.pdf", "main.log"}:
-        raise ValueError("cannot overwrite protected project file")
-    if any(ch in clean for ch in ("/", "\\", "\x00")):
+    if "\x00" in name:
         raise ValueError("invalid filename")
-    if clean.startswith("."):
-        raise ValueError("hidden files are not allowed")
-    ext = Path(clean).suffix.lower()
+
+    raw_path = Path(name)
+    parts = raw_path.parts
+    if not parts:
+        raise ValueError("filename is required")
+    if raw_path.is_absolute():
+        raise ValueError("absolute paths not allowed")
+    if any(part in {".", ".."} for part in parts):
+        raise ValueError("path traversal not allowed")
+
+    final = parts[-1]
+    if final.startswith("."):
+        raise ValueError("hidden files not allowed")
+
+    ext = Path(final).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXTENSIONS:
         raise ValueError(f"unsupported file extension: {ext or '(none)'}")
-    return clean
+
+    root = ensure_project_dir(project).resolve()
+    resolved = (root / raw_path).resolve()
+    if root != resolved and root not in resolved.parents:
+        raise ValueError("path escapes project directory")
+    if resolved.name in PROTECTED_FILENAMES:
+        raise ValueError("cannot overwrite protected project file")
+    return resolved
+
+
+def _safe_directory_path(project: Project, directory: str) -> Path:
+    name = str(directory or "").strip().rstrip("/\\")
+    if not name:
+        raise ValueError("directory path is required")
+    if "\x00" in name:
+        raise ValueError("invalid directory path")
+
+    raw_path = Path(name)
+    parts = raw_path.parts
+    if not parts:
+        raise ValueError("directory path is required")
+    if raw_path.is_absolute():
+        raise ValueError("absolute paths not allowed")
+    if any(part in {".", ".."} for part in parts):
+        raise ValueError("path traversal not allowed")
+    if any(part.startswith(".") for part in parts):
+        raise ValueError("hidden folders not allowed")
+
+    root = ensure_project_dir(project).resolve()
+    resolved = (root / raw_path).resolve()
+    if root != resolved and root not in resolved.parents:
+        raise ValueError("path escapes project directory")
+    if resolved == root:
+        raise ValueError("cannot use project root as a custom folder")
+    if resolved.name in PROTECTED_FILENAMES:
+        raise ValueError("protected names cannot be used for folders")
+    return resolved
+
+
+def _safe_entry_path(project: Project, name: str) -> Path:
+    raw = str(name or "").strip().rstrip("/\\")
+    if not raw:
+        raise ValueError("path is required")
+    try:
+        return _safe_file_path(project, raw)
+    except ValueError as exc:
+        if str(exc).startswith("unsupported file extension:"):
+            return _safe_directory_path(project, raw)
+        raise
 
 
 def project_asset_path(project: Project, filename: str) -> Path:
-    clean = _safe_filename(filename)
-    return project_dir(project) / clean
+    return _safe_entry_path(project, filename)
+
+
+def _relative_project_path(project: Project, path: Path) -> str:
+    root = ensure_project_dir(project).resolve()
+    return str(path.resolve().relative_to(root)).replace("\\", "/")
+
+
+def _asset_payload(project: Project, path: Path) -> dict[str, Any]:
+    rel_path = _relative_project_path(project, path)
+    is_dir = path.is_dir()
+    ext = path.suffix.lower()
+    return {
+        "name": rel_path,
+        "path": rel_path,
+        "size": None if is_dir else path.stat().st_size,
+        "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+        "is_dir": is_dir,
+        "is_image": False if is_dir else ext in IMAGE_EXTENSIONS,
+        "is_text": False if is_dir else ext in TEXT_EXTENSIONS,
+        "extension": "" if is_dir else ext,
+        "url": None if is_dir else f"/api/projects/{project.id}/files/{quote(rel_path, safe='')}",
+    }
 
 
 def _is_system_artifact_file(path: Path) -> bool:
@@ -170,27 +257,17 @@ def _is_system_artifact_file(path: Path) -> bool:
 def list_project_assets(project: Project) -> list[dict[str, Any]]:
     root = ensure_project_dir(project)
     assets = []
-    for path in sorted(root.iterdir(), key=lambda p: p.name.lower()):
-        if not path.is_file():
-            continue
-        if path.name in {"main.tex", "main.pdf", "main.log"}:
-            continue
-        ext = path.suffix.lower()
+    for path in sorted(root.rglob("*"), key=lambda p: str(p.relative_to(root)).lower()):
         if path.name.startswith("."):
+            continue
+        if path.is_dir():
+            assets.append(_asset_payload(project, path))
+            continue
+        if path.parent == root and path.name in PROTECTED_FILENAMES:
             continue
         if _is_system_artifact_file(path):
             continue
-        assets.append(
-            {
-                "name": path.name,
-                "size": path.stat().st_size,
-                "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
-                "is_image": ext in IMAGE_EXTENSIONS,
-                "is_text": ext in TEXT_EXTENSIONS,
-                "extension": ext,
-                "url": f"/api/projects/{project.id}/files/{quote(path.name)}",
-            }
-        )
+        assets.append(_asset_payload(project, path))
     return assets
 
 
@@ -200,9 +277,9 @@ def save_project_asset(project: Project, filename: str, data: bytes) -> dict[str
     existing_size = path.stat().st_size if path.exists() and path.is_file() else 0
 
     total_size = 0
-    tex_path = tex_file_path(project)
-    if tex_path.exists() and tex_path.is_file():
-        total_size += tex_path.stat().st_size
+    source_path = source_file_path(project)
+    if source_path.exists() and source_path.is_file():
+        total_size += source_path.stat().st_size
     for asset in list_project_assets(project):
         total_size += int(asset.get("size") or 0)
 
@@ -212,17 +289,49 @@ def save_project_asset(project: Project, filename: str, data: bytes) -> dict[str
             f"project files total size exceeds {MAX_PROJECT_FILES_TOTAL_SIZE // (1024 * 1024)}MB"
         )
 
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+    return _asset_payload(project, path)
+
+
+def create_project_text_file(project: Project, filename: str, content: str) -> dict[str, Any]:
+    if not isinstance(content, str):
+        raise ValueError("content must be a string")
+    if is_source_too_large(content):
+        raise ValueError("File exceeds 1MB")
+
+    path = project_asset_path(project, filename)
     ext = path.suffix.lower()
-    return {
-        "name": path.name,
-        "size": path.stat().st_size,
-        "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
-        "is_image": ext in IMAGE_EXTENSIONS,
-        "is_text": ext in TEXT_EXTENSIONS,
-        "extension": ext,
-        "url": f"/api/projects/{project.id}/files/{quote(path.name)}",
-    }
+    if ext not in TEXT_EXTENSIONS:
+        raise ValueError(f"not a text file extension: {ext or '(none)'}")
+    if path.exists():
+        raise ValueError("file already exists; use write_project_window to edit")
+
+    total_size = 0
+    source_path = source_file_path(project)
+    if source_path.exists() and source_path.is_file():
+        total_size += source_path.stat().st_size
+    for asset in list_project_assets(project):
+        total_size += int(asset.get("size") or 0)
+    content_bytes = content.encode("utf-8")
+    if total_size + len(content_bytes) > MAX_PROJECT_FILES_TOTAL_SIZE:
+        raise ValueError(
+            f"project files total size exceeds {MAX_PROJECT_FILES_TOTAL_SIZE // (1024 * 1024)}MB"
+        )
+
+    ensure_project_dir(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content_bytes)
+    return _asset_payload(project, path)
+
+
+def create_project_directory(project: Project, directory: str) -> dict[str, Any]:
+    path = _safe_directory_path(project, directory)
+    if path.exists():
+        raise ValueError("folder already exists")
+    ensure_project_dir(project)
+    path.mkdir(parents=True, exist_ok=False)
+    return _asset_payload(project, path)
 
 
 def read_project_asset_content(
@@ -237,13 +346,14 @@ def read_project_asset_content(
     data = path.read_bytes()
     ext = path.suffix.lower()
     payload: dict[str, Any] = {
-        "name": path.name,
+        "name": _relative_project_path(project, path),
+        "path": _relative_project_path(project, path),
         "size": len(data),
         "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
         "is_image": ext in IMAGE_EXTENSIONS,
         "is_text": ext in TEXT_EXTENSIONS,
         "extension": ext,
-        "url": f"/api/projects/{project.id}/files/{quote(path.name)}",
+        "url": f"/api/projects/{project.id}/files/{quote(_relative_project_path(project, path), safe='')}",
         "content_base64": base64.b64encode(data).decode("ascii"),
     }
     if include_text and ext in TEXT_EXTENSIONS:
@@ -251,51 +361,131 @@ def read_project_asset_content(
     return payload
 
 
-def rename_project_asset(project: Project, filename: str, new_filename: str) -> dict[str, Any]:
-    old_path = project_asset_path(project, filename)
-    if not old_path.exists() or not old_path.is_file():
-        raise ValueError("file not found")
+def write_project_asset_text(project: Project, filename: str, content: str) -> dict[str, Any]:
+    if not isinstance(content, str):
+        raise ValueError("content must be a string")
+    if is_source_too_large(content):
+        raise ValueError("File exceeds 1MB")
 
-    new_path = project_asset_path(project, new_filename)
-    if old_path.name == new_path.name:
-        raise ValueError("new filename must be different")
-    if old_path.suffix.lower() != new_path.suffix.lower():
-        raise ValueError("file extension cannot be changed")
-    if new_path.exists():
-        raise ValueError("target file already exists")
-
-    old_name = old_path.name
-    old_path.rename(new_path)
-    ext = new_path.suffix.lower()
-    return {
-        "old_name": old_name,
-        "name": new_path.name,
-        "size": new_path.stat().st_size,
-        "updated_at": datetime.fromtimestamp(new_path.stat().st_mtime, tz=UTC).isoformat(),
-        "is_image": ext in IMAGE_EXTENSIONS,
-        "is_text": ext in TEXT_EXTENSIONS,
-        "extension": ext,
-        "url": f"/api/projects/{project.id}/files/{quote(new_path.name)}",
-    }
-
-
-def delete_project_asset(project: Project, filename: str) -> dict[str, Any]:
     path = project_asset_path(project, filename)
     if not path.exists() or not path.is_file():
         raise ValueError("file not found")
 
-    size = path.stat().st_size
     ext = path.suffix.lower()
-    name = path.name
-    path.unlink()
-    return {
-        "name": name,
-        "size": size,
-        "is_image": ext in IMAGE_EXTENSIONS,
-        "is_text": ext in TEXT_EXTENSIONS,
-        "extension": ext,
-        "deleted": True,
-    }
+    if ext not in TEXT_EXTENSIONS:
+        raise ValueError("file is not a text file")
+
+    path.write_text(content, encoding="utf-8")
+    payload = _asset_payload(project, path)
+    payload["text_content"] = content
+    return payload
+
+
+def extract_project_zip(project: Project, zip_bytes: bytes) -> list[dict[str, Any]]:
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"Невалідний ZIP-файл: {exc}") from exc
+
+    root = ensure_project_dir(project).resolve()
+
+    total_size = 0
+    src = source_file_path(project)
+    if src.exists():
+        total_size += src.stat().st_size
+    for a in list_project_assets(project):
+        total_size += int(a.get("size") or 0)
+
+    # Strip common top-level directory shared by all entries (e.g. "project/...").
+    all_entries = [i for i in zf.infolist() if not i.is_dir()]
+    top_dirs = {i.filename.split("/")[0] for i in zf.infolist() if "/" in i.filename}
+    strip_prefix = ""
+    if len(top_dirs) == 1:
+        candidate = top_dirs.pop() + "/"
+        if all_entries and all(i.filename.startswith(candidate) for i in all_entries):
+            strip_prefix = candidate
+
+    created: list[dict[str, Any]] = []
+    with zf:
+        for info in all_entries:
+            name = info.filename
+            if strip_prefix and name.startswith(strip_prefix):
+                name = name[len(strip_prefix):]
+            name = name.strip("/")
+            if not name:
+                continue
+            parts = Path(name).parts
+            if not parts:
+                continue
+            if "__MACOSX" in parts or any(p.startswith(".") for p in parts):
+                continue
+            if any(p in {".", ".."} for p in parts):
+                continue
+
+            leaf = parts[-1]
+            ext = Path(leaf).suffix.lower()
+            if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+                continue
+            if len(parts) == 1 and leaf in PROTECTED_FILENAMES:
+                continue
+
+            data = zf.read(info.filename)
+            if total_size + len(data) > MAX_PROJECT_FILES_TOTAL_SIZE:
+                raise ValueError(
+                    f"Вміст ZIP перевищує ліміт проєкту {MAX_PROJECT_FILES_TOTAL_SIZE // (1024 * 1024)} МБ"
+                )
+
+            target = (root / Path(name)).resolve()
+            if root != target and root not in target.parents:
+                continue
+            if target.parent == root and target.name in PROTECTED_FILENAMES:
+                continue
+
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if ext in TEXT_EXTENSIONS:
+                try:
+                    target.write_text(data.decode("utf-8"), encoding="utf-8")
+                except UnicodeDecodeError:
+                    target.write_bytes(data)
+            else:
+                target.write_bytes(data)
+
+            total_size += len(data)
+            created.append(_asset_payload(project, target))
+
+    return created
+
+
+def rename_project_asset(project: Project, filename: str, new_filename: str) -> dict[str, Any]:
+    old_path = project_asset_path(project, filename)
+    if not old_path.exists():
+        raise ValueError("file not found")
+
+    new_path = _safe_directory_path(project, new_filename) if old_path.is_dir() else _safe_file_path(project, new_filename)
+    if _relative_project_path(project, old_path) == _relative_project_path(project, new_path):
+        raise ValueError("new filename must be different")
+    if old_path.is_file() and old_path.suffix.lower() != new_path.suffix.lower():
+        raise ValueError("file extension cannot be changed")
+    if new_path.exists():
+        raise ValueError("target path already exists")
+
+    old_name = _relative_project_path(project, old_path)
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.rename(new_path)
+    return {"old_name": old_name, **_asset_payload(project, new_path)}
+
+
+def delete_project_asset(project: Project, filename: str) -> dict[str, Any]:
+    path = project_asset_path(project, filename)
+    if not path.exists():
+        raise ValueError("file not found")
+
+    payload = _asset_payload(project, path)
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    return {**payload, "deleted": True}
 
 
 def _line_number_from_pos(content: str, pos: int) -> int:
@@ -384,49 +574,119 @@ def split_tex_sections(content: str) -> list[SectionChunk]:
     return chunks
 
 
-def list_tex_sections(project: Project) -> list[dict[str, Any]]:
-    chunks = split_tex_sections(read_tex_content(project))
+def split_typst_sections(content: str) -> list[SectionChunk]:
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+    matches = list(TYPST_HEADING_RE.finditer(content))
+
+    if not matches:
+        return [
+            SectionChunk(
+                index=0,
+                command="root",
+                level=0,
+                title="Преамбула / Загальний текст",
+                start_line=1,
+                end_line=max(1, total_lines),
+                start_char=0,
+                end_char=len(content),
+                content=content,
+            )
+        ]
+
+    chunks: list[SectionChunk] = []
+    first_start = _line_number_from_pos(content, matches[0].start())
+    pre_content = "".join(lines[: max(0, first_start - 1)])
+    chunks.append(
+        SectionChunk(
+            index=0,
+            command="root",
+            level=0,
+            title="Преамбула / До першого розділу",
+            start_line=1,
+            end_line=max(1, first_start - 1),
+            start_char=0,
+            end_char=matches[0].start(),
+            content=pre_content,
+        )
+    )
+
+    for idx, match in enumerate(matches, start=1):
+        marks = match.group("marks") or "="
+        level = min(len(marks), 6)
+        start_line = _line_number_from_pos(content, match.start())
+        start_char = match.start()
+        next_start_char = matches[idx].start() if idx < len(matches) else len(content)
+        next_start_line = (
+            _line_number_from_pos(content, matches[idx].start()) if idx < len(matches) else total_lines + 1
+        )
+        end_line = max(start_line, next_start_line - 1)
+        end_char = max(start_char, next_start_char)
+        section_content = "".join(lines[start_line - 1 : end_line])
+        title = (match.group("title") or "").strip() or f"Heading {level}"
+        chunks.append(
+            SectionChunk(
+                index=idx,
+                command=f"heading{level}",
+                level=level,
+                title=title,
+                start_line=start_line,
+                end_line=end_line,
+                start_char=start_char,
+                end_char=end_char,
+                content=section_content,
+            )
+        )
+    return chunks
+
+
+def _split_source_sections(project: Project, content: str) -> list[SectionChunk]:
+    if project.markup_type == MarkupType.TYPST:
+        return split_typst_sections(content)
+    return split_tex_sections(content)
+
+
+def _section_payload(chunk: SectionChunk, *, include_content: bool = False) -> dict[str, Any]:
+    payload = {
+        "index": chunk.index,
+        "command": chunk.command,
+        "level": chunk.level,
+        "title": chunk.title,
+        "start_line": chunk.start_line,
+        "end_line": chunk.end_line,
+        "start_char": chunk.start_char,
+        "end_char": chunk.end_char,
+    }
+    if include_content:
+        payload["content"] = chunk.content
+    else:
+        payload["line_count"] = max(0, chunk.end_line - chunk.start_line + 1)
+        payload["char_count"] = max(0, chunk.end_char - chunk.start_char)
+    return payload
+
+
+def list_source_sections(project: Project) -> list[dict[str, Any]]:
+    chunks = _split_source_sections(project, read_source_content(project))
     return [
-        {
-            "index": c.index,
-            "command": c.command,
-            "level": c.level,
-            "title": c.title,
-            "start_line": c.start_line,
-            "end_line": c.end_line,
-            "start_char": c.start_char,
-            "end_char": c.end_char,
-            "line_count": max(0, c.end_line - c.start_line + 1),
-            "char_count": max(0, c.end_char - c.start_char),
-        }
+        _section_payload(c, include_content=False)
         for c in chunks
     ]
 
 
-def get_tex_section(project: Project, section_index: int) -> dict[str, Any]:
-    chunks = split_tex_sections(read_tex_content(project))
+def get_source_section(project: Project, section_index: int) -> dict[str, Any]:
+    chunks = _split_source_sections(project, read_source_content(project))
     for chunk in chunks:
         if chunk.index == section_index:
-            return {
-                "index": chunk.index,
-                "command": chunk.command,
-                "level": chunk.level,
-                "title": chunk.title,
-                "start_line": chunk.start_line,
-                "end_line": chunk.end_line,
-                "start_char": chunk.start_char,
-                "end_char": chunk.end_char,
-                "content": chunk.content,
-            }
+            return _section_payload(chunk, include_content=True)
     raise ValueError("section not found")
 
 
-def update_tex_section(project: Project, section_index: int, new_content: str) -> dict[str, Any]:
+def update_source_section(project: Project, section_index: int, new_content: str) -> dict[str, Any]:
     if not isinstance(new_content, str):
         raise ValueError("content must be a string")
 
-    source = read_tex_content(project)
-    chunks = split_tex_sections(source)
+    source = read_source_content(project)
+    chunks = _split_source_sections(project, source)
     target = next((c for c in chunks if c.index == section_index), None)
     if not target:
         raise ValueError("section not found")
@@ -440,11 +700,11 @@ def update_tex_section(project: Project, section_index: int, new_content: str) -
     replacement_lines = replacement.splitlines(keepends=True)
     updated = "".join(lines[:start_idx] + replacement_lines + lines[end_idx:])
 
-    if is_tex_too_large(updated):
+    if is_source_too_large(updated):
         raise ValueError("File exceeds 1MB")
 
-    write_tex_content(project, updated)
-    return get_tex_section(project, section_index)
+    write_source_content(project, updated)
+    return get_source_section(project, section_index)
 
 
 def insert_text_at_position(project: Project, position: int, text: str) -> dict[str, Any]:
@@ -453,15 +713,15 @@ def insert_text_at_position(project: Project, position: int, text: str) -> dict[
     if not isinstance(text, str):
         raise ValueError("text must be a string")
 
-    source = read_tex_content(project)
+    source = read_source_content(project)
     if position < 0 or position > len(source):
         raise ValueError("position is out of bounds")
 
     updated = source[:position] + text + source[position:]
-    if is_tex_too_large(updated):
+    if is_source_too_large(updated):
         raise ValueError("File exceeds 1MB")
 
-    write_tex_content(project, updated)
+    write_source_content(project, updated)
     return {
         "position": position,
         "inserted_length": len(text),
@@ -470,14 +730,13 @@ def insert_text_at_position(project: Project, position: int, text: str) -> dict[
 
 
 def _resolve_text_file_path(project: Project, file_name: str) -> Path:
-    name = (file_name or "main.tex").strip()
+    default_name = main_source_filename(project)
+    name = (file_name or default_name).strip()
     if not name:
-        name = "main.tex"
-    if name == "main.tex":
-        return tex_file_path(project)
-    if Path(name).name != name or any(ch in name for ch in ("/", "\\", "\x00")):
-        raise ValueError("invalid file_name")
-    path = project_dir(project) / name
+        name = default_name
+    if name == default_name:
+        return source_file_path(project)
+    path = _safe_file_path(project, name)
     if not path.exists() or not path.is_file():
         raise ValueError("file not found")
     if path.suffix.lower() not in TEXT_EXTENSIONS:
@@ -492,7 +751,7 @@ def _read_text_file(path: Path) -> str:
 def read_project_window(
     project: Project,
     *,
-    file_name: str = "main.tex",
+    file_name: str | None = None,
     start_line: int | None = None,
     end_line: int | None = None,
     start_char: int | None = None,
@@ -558,7 +817,7 @@ def write_project_window(
     project: Project,
     *,
     replacement: str,
-    file_name: str = "main.tex",
+    file_name: str | None = None,
     start_line: int | None = None,
     end_line: int | None = None,
     start_char: int | None = None,
@@ -588,7 +847,7 @@ def write_project_window(
             raise ValueError("char offsets out of bounds")
 
         updated = source[:s_char] + replacement + source[e_char:]
-        if is_tex_too_large(updated):
+        if is_source_too_large(updated):
             raise ValueError("File exceeds 1MB")
         path.write_text(updated, encoding="utf-8")
         return {
@@ -619,7 +878,7 @@ def write_project_window(
         replacement_text = f"{replacement_text}\n"
     replacement_lines = replacement_text.splitlines(keepends=True)
     updated = "".join(lines_keepends[:start_idx] + replacement_lines + lines_keepends[end_idx:])
-    if is_tex_too_large(updated):
+    if is_source_too_large(updated):
         raise ValueError("File exceeds 1MB")
     path.write_text(updated, encoding="utf-8")
 
@@ -659,7 +918,7 @@ def search_project_content(
 
     files: list[Path] = []
     if include_main:
-        files.append(tex_file_path(project))
+        files.append(source_file_path(project))
     if include_assets:
         for asset in list_project_assets(project):
             if asset.get("is_text"):
@@ -784,7 +1043,7 @@ def get_project_version(project: Project, version_id: int) -> ProjectVersion:
 def build_version_diff(version: ProjectVersion, context_lines: int = 2) -> str:
     before = version.before_content.splitlines(keepends=True)
     after = version.after_content.splitlines(keepends=True)
-    target = (version.target or "main.tex").split(":", 1)[0]
+    target = (version.target or main_source_filename(version.project)).split(":", 1)[0]
     diff = difflib.unified_diff(
         before,
         after,
@@ -799,9 +1058,9 @@ def build_version_diff(version: ProjectVersion, context_lines: int = 2) -> str:
 
 def rollback_to_version(project: Project, version: ProjectVersion) -> None:
     target = (version.target or "").split(":", 1)[0]
-    if target != "main.tex":
-        raise ValueError("Rollback is supported only for main.tex versions")
-    write_tex_content(project, version.after_content)
+    if target not in {"main.tex", "main.typ"}:
+        raise ValueError("Rollback is supported only for source file versions")
+    write_source_content(project, version.after_content)
 
 
 def delete_project_files(project: Project) -> None:
@@ -810,16 +1069,21 @@ def delete_project_files(project: Project) -> None:
         shutil.rmtree(root)
 
 
+def _compiler_network_args(markup_type: str) -> list[str]:
+    if markup_type == MarkupType.TYPST:
+        network = str(getattr(settings, "TYPST_DOCKER_NETWORK", "bridge")).strip() or "bridge"
+    else:
+        network = "none"
+    return ["--network", network]
+
+
 def compile_project(project: Project) -> CompileResult:
     workdir = ensure_project_dir(project)
-    input_file = tex_file_path(project)
+    input_file = source_file_path(project)
 
     if not input_file.exists():
-        return CompileResult(status=Project.CompileStatus.ERROR, log="main.tex not found")
+        return CompileResult(status=Project.CompileStatus.ERROR, log=f"{input_file.name} not found")
 
-    image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
-    timeout = int(getattr(settings, "LATEX_TIMEOUT_SECONDS", 60))
-    strict_errors = bool(getattr(settings, "LATEX_STRICT_ERRORS", False))
     host_project_root = str(getattr(settings, "HOST_PROJECT_ROOT", "")).strip()
 
     # When running inside Docker with host docker socket mounted, docker daemon expects
@@ -829,30 +1093,52 @@ def compile_project(project: Project) -> CompileResult:
         docker_mount_source = Path(host_project_root) / "media" / "projects" / str(project.owner_id) / str(project.id)
         docker_mount_source.mkdir(parents=True, exist_ok=True)
 
-    latex_args = [
-        "lualatex",
-        "-interaction=nonstopmode",
-        "-synctex=1",
-    ]
-    if strict_errors:
-        latex_args.append("-halt-on-error")
-    latex_args.append("main.tex")
+    use_native_typst = (
+        project.markup_type == MarkupType.TYPST
+        and bool(getattr(settings, "TYPST_USE_NATIVE", False))
+    )
 
-    cmd = [
-        "docker",
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--memory=600m",
-        "--cpus=1.0",
-        "-v",
-        f"{docker_mount_source}:/workspace:rw",
-        "-w",
-        "/workspace",
-        image,
-        *latex_args,
-    ]
+    if use_native_typst:
+        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
+        typst_bin = str(getattr(settings, "TYPST_BINARY", "typst")).strip() or "typst"
+        cmd = [typst_bin, "compile", "main.typ", "main.pdf"]
+        run_kwargs: dict = {"cwd": str(workdir)}
+    elif project.markup_type == MarkupType.TYPST:
+        image = getattr(settings, "TYPST_DOCKER_IMAGE", "ghcr.io/typst/typst:latest")
+        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
+        compiler_args = ["compile", "main.typ", "main.pdf"]
+        cmd = [
+            "docker", "run", "--rm",
+            *_compiler_network_args(project.markup_type),
+            "--memory=600m", "--cpus=1.0",
+            "-v", f"{docker_mount_source}:/workspace:rw",
+            "-w", "/workspace",
+            image,
+            *compiler_args,
+        ]
+        run_kwargs = {}
+    else:
+        image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
+        timeout = int(getattr(settings, "LATEX_TIMEOUT_SECONDS", 60))
+        strict_errors = bool(getattr(settings, "LATEX_STRICT_ERRORS", False))
+        compiler_args = [
+            "lualatex",
+            "-interaction=nonstopmode",
+            "-synctex=1",
+        ]
+        if strict_errors:
+            compiler_args.append("-halt-on-error")
+        compiler_args.append("main.tex")
+        cmd = [
+            "docker", "run", "--rm",
+            *_compiler_network_args(project.markup_type),
+            "--memory=600m", "--cpus=1.0",
+            "-v", f"{docker_mount_source}:/workspace:rw",
+            "-w", "/workspace",
+            image,
+            *compiler_args,
+        ]
+        run_kwargs = {}
 
     existing_pdf = pdf_file_path(project)
     had_pdf_before = existing_pdf.exists()
@@ -869,6 +1155,7 @@ def compile_project(project: Project) -> CompileResult:
             text=True,
             timeout=timeout,
             check=False,
+            **run_kwargs,
         )
         log_text = (proc.stdout or "") + "\n" + (proc.stderr or "")
         log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
@@ -884,7 +1171,7 @@ def compile_project(project: Project) -> CompileResult:
             )
         )
 
-        # Success when LaTeX exited cleanly with a PDF, or produced/updated PDF despite non-fatal issues.
+        # Success when compiler exited cleanly with a PDF, or produced/updated PDF despite non-fatal issues.
         if pdf_exists_after and (proc.returncode == 0 or pdf_was_updated):
             return CompileResult(status=Project.CompileStatus.SUCCESS, log=log_text)
 
@@ -894,7 +1181,10 @@ def compile_project(project: Project) -> CompileResult:
         log_file_path(project).write_text(log_text, encoding="utf-8")
         return CompileResult(status=Project.CompileStatus.ERROR, log=log_text)
     except FileNotFoundError:
-        log_text = "Docker is not installed or unavailable in PATH"
+        log_text = (
+            "typst binary not found in PATH" if use_native_typst
+            else "Docker is not installed or unavailable in PATH"
+        )
         log_file_path(project).write_text(log_text, encoding="utf-8")
         return CompileResult(status=Project.CompileStatus.ERROR, log=log_text)
     except Exception as exc:  # pragma: no cover
@@ -905,7 +1195,7 @@ def compile_project(project: Project) -> CompileResult:
         COMPILE_SEMAPHORE.release()
 
 
-def is_tex_too_large(content: str) -> bool:
+def is_source_too_large(content: str) -> bool:
     limit = int(getattr(settings, "MAX_TEX_FILE_SIZE", 1024 * 1024))
     return len(content.encode("utf-8")) > limit
 
@@ -944,6 +1234,10 @@ def render_pdf_page_image(
     scale: float = 1.5,
     image_format: str = "png",
 ) -> dict[str, Any]:
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:  # pragma: no cover
+        raise ValueError("PDF rendering dependency is not installed") from exc
     pdf_path = pdf_file_path(project)
     if not pdf_path.exists():
         raise ValueError("PDF not found")
@@ -988,6 +1282,10 @@ def render_pdf_page_image(
 
 
 def get_project_pdf_page_count(project: Project) -> dict[str, Any]:
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:  # pragma: no cover
+        raise ValueError("PDF rendering dependency is not installed") from exc
     pdf_path = pdf_file_path(project)
     if not pdf_path.exists():
         raise ValueError("PDF not found; compile project first")
@@ -1012,15 +1310,17 @@ def synctex_line_to_pdf(
     project: Project,
     *,
     line: int,
-    file_name: str = "main.tex",
+    file_name: str | None = None,
     column: int = 1,
 ) -> dict[str, Any]:
+    if project.markup_type == MarkupType.TYPST:
+        raise ValueError("Source mapping is not available for Typst projects")
     if line < 1:
         raise ValueError("line must be >= 1")
     if column < 1:
         raise ValueError("column must be >= 1")
 
-    tex_path = _resolve_text_file_path(project, file_name)
+    tex_path = _resolve_text_file_path(project, file_name or main_source_filename(project))
     pdf_path = pdf_file_path(project)
     if not pdf_path.exists():
         raise ValueError("PDF not found; compile project first")
@@ -1104,6 +1404,8 @@ def synctex_pdf_to_line(
     y: float,
 ) -> dict[str, Any]:
     """Reverse SyncTeX: given a position in the PDF, return the LaTeX source location."""
+    if project.markup_type == MarkupType.TYPST:
+        raise ValueError("Source mapping is not available for Typst projects")
     if page < 1:
         raise ValueError("page must be >= 1")
 

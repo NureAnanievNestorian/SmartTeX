@@ -147,6 +147,17 @@ MAX_TEX_FILE_SIZE = 1 * 1024 * 1024
 LATEX_DOCKER_IMAGE = 'latex-ua:latest'
 LATEX_TIMEOUT_SECONDS = 60
 LATEX_STRICT_ERRORS = os.getenv('LATEX_STRICT_ERRORS', 'False').lower() in {'1', 'true', 'yes'}
+TYPST_DOCKER_IMAGE = os.getenv('TYPST_DOCKER_IMAGE', 'ghcr.io/typst/typst:latest')
+TYPST_TIMEOUT_SECONDS = int(os.getenv('TYPST_TIMEOUT_SECONDS', '60'))
+TYPST_DOCKER_NETWORK = os.getenv('TYPST_DOCKER_NETWORK', 'bridge').strip() or 'bridge'
+# Run Typst as a native subprocess instead of via Docker.
+# Safe: Typst has no shell-execution primitives unlike LaTeX.
+# Requires the `typst` binary in PATH (or set TYPST_BINARY to an absolute path).
+TYPST_USE_NATIVE = os.getenv('TYPST_USE_NATIVE', 'false').lower() in {'1', 'true', 'yes'}
+# Path to the typst binary. Defaults to 'typst' (resolved via PATH).
+# Override with an absolute path when the binary is not on the server's PATH,
+# e.g. TYPST_BINARY=/opt/homebrew/bin/typst on macOS or /usr/local/bin/typst on Linux.
+TYPST_BINARY = os.getenv('TYPST_BINARY', 'typst').strip() or 'typst'
 
 OAUTH_ISSUER_URL = os.getenv('OAUTH_ISSUER_URL', '').strip()
 MCP_SERVER_PUBLIC_URL = os.getenv('MCP_SERVER_PUBLIC_URL', '').strip()

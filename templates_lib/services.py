@@ -5,6 +5,8 @@ from pathlib import Path
 
 from django.conf import settings
 
+from SmartTeX.markup import MarkupType, source_filename_for_markup
+
 from .models import Template
 
 COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=2)
@@ -16,12 +18,20 @@ class TemplateCompileResult:
     log: str
 
 
+def _compiler_network_args(markup_type: str) -> list[str]:
+    if markup_type == MarkupType.TYPST:
+        network = str(getattr(settings, "TYPST_DOCKER_NETWORK", "bridge")).strip() or "bridge"
+    else:
+        network = "none"
+    return ["--network", network]
+
+
 def template_preview_dir(template: Template) -> Path:
     return settings.MEDIA_ROOT / "templates" / str(template.id)
 
 
-def template_tex_path(template: Template) -> Path:
-    return template_preview_dir(template) / "main.tex"
+def template_source_path(template: Template) -> Path:
+    return template_preview_dir(template) / source_filename_for_markup(template.markup_type)
 
 
 def template_pdf_path(template: Template) -> Path:
@@ -48,11 +58,8 @@ def compile_template_preview(template: Template) -> TemplateCompileResult:
     workdir = template_preview_dir(template)
     workdir.mkdir(parents=True, exist_ok=True)
 
-    tex_path = template_tex_path(template)
-    tex_path.write_text(template.content, encoding="utf-8")
-
-    image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
-    timeout = int(getattr(settings, "LATEX_TIMEOUT_SECONDS", 60))
+    source_path = template_source_path(template)
+    source_path.write_text(template.content, encoding="utf-8")
 
     host_project_root = str(getattr(settings, "HOST_PROJECT_ROOT", "")).strip()
     docker_mount_source = workdir
@@ -60,16 +67,28 @@ def compile_template_preview(template: Template) -> TemplateCompileResult:
         docker_mount_source = Path(host_project_root) / "media" / "templates" / str(template.id)
         docker_mount_source.mkdir(parents=True, exist_ok=True)
 
+    if template.markup_type == MarkupType.TYPST:
+        image = getattr(settings, "TYPST_DOCKER_IMAGE", "ghcr.io/typst/typst:latest")
+        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
+        compiler_args = ["compile", "main.typ", "preview.pdf"]
+    else:
+        image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
+        timeout = int(getattr(settings, "LATEX_TIMEOUT_SECONDS", 60))
+        compiler_args = [
+            "lualatex",
+            "-interaction=nonstopmode",
+            "-jobname=preview",
+            "main.tex",
+        ]
+
     cmd = [
         "docker", "run", "--rm",
-        "--network", "none",
+        *_compiler_network_args(template.markup_type),
         "--memory=600m", "--cpus=1.0",
         "-v", f"{docker_mount_source}:/workspace:rw",
         "-w", "/workspace",
         image,
-        "lualatex", "-interaction=nonstopmode",
-        "-jobname=preview",
-        "main.tex",
+        *compiler_args,
     ]
 
     acquired = COMPILE_SEMAPHORE.acquire(timeout=timeout)

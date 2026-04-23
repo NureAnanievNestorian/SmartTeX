@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 
+from SmartTeX.markup import MarkupType
 from templates_lib.models import Template
 
 
@@ -13,6 +14,7 @@ class Project(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="projects")
     title = models.CharField(max_length=255)
     template = models.ForeignKey(Template, null=True, blank=True, on_delete=models.SET_NULL)
+    markup_type = models.CharField(max_length=10, choices=MarkupType.choices, default=MarkupType.LATEX)
     last_status = models.CharField(max_length=16, choices=CompileStatus.choices, default=CompileStatus.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

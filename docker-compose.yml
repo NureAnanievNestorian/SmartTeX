@@ -24,6 +24,9 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      TYPST_DOCKER_IMAGE: ghcr.io/typst/typst:latest
+      TYPST_DOCKER_NETWORK: bridge
     ports:
       - "${WEB_PORT}:8000"
     volumes:
@@ -38,6 +41,9 @@ services:
       - web
     env_file:
       - .env
+    environment:
+      TYPST_DOCKER_IMAGE: ghcr.io/typst/typst:latest
+      TYPST_DOCKER_NETWORK: bridge
     command: python mcp_http_server.py
     ports:
       - "${MCP_PORT}:${MCP_PORT}"
