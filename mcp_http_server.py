@@ -139,6 +139,39 @@ def _absolute_url(path: str | None) -> str | None:
     return f"{PUBLIC_BASE_URL}{path if path.startswith('/') else '/' + path}"
 
 
+def _normalized_mcp_path() -> str:
+    path = (MCP_PATH or "/mcp").strip() or "/"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if path != "/":
+        path = path.rstrip("/")
+    return path
+
+
+def _protected_resource_metadata_path() -> str:
+    mcp_path = _normalized_mcp_path()
+    if mcp_path == "/":
+        return "/.well-known/oauth-protected-resource"
+    return f"/.well-known/oauth-protected-resource{mcp_path}"
+
+
+def _protected_resource_metadata_url() -> str:
+    return f"{MCP_SERVER_PUBLIC_URL}{_protected_resource_metadata_path()}"
+
+
+def _canonical_mcp_resource_url() -> str:
+    return f"{MCP_SERVER_PUBLIC_URL}{_normalized_mcp_path()}"
+
+
+def _protected_resource_metadata_payload() -> dict[str, Any]:
+    return {
+        "resource": _canonical_mcp_resource_url(),
+        "authorization_servers": [AUTH_SERVER_ISSUER_URL],
+        "scopes_supported": ["openid", "profile", "smarttex:read", "smarttex:write"],
+        "bearer_methods_supported": ["header"],
+    }
+
+
 def _compact_compiler_log(log_text: str, max_chars: int = 4000) -> tuple[str, bool]:
     text = str(log_text or "")
     if not text:
@@ -601,7 +634,26 @@ class MCPCompatibilityMiddleware(BaseHTTPMiddleware):
                         "path": MCP_PATH,
                     }
                 )
-        return await call_next(request)
+        response = await call_next(request)
+        if response.status_code == 401 and request.url.path.rstrip("/") == _normalized_mcp_path().rstrip("/"):
+            response.headers.setdefault(
+                "WWW-Authenticate",
+                (
+                    'Bearer realm="mcp", error="invalid_token", '
+                    f'resource_metadata="{_protected_resource_metadata_url()}"'
+                ),
+            )
+        return response
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource_metadata_root(_request: Request):
+    return JSONResponse(_protected_resource_metadata_payload())
+
+
+@mcp.custom_route(_protected_resource_metadata_path(), methods=["GET"])
+async def oauth_protected_resource_metadata_for_mcp(_request: Request):
+    return JSONResponse(_protected_resource_metadata_payload())
 
 
 
