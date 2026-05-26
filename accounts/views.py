@@ -3,6 +3,7 @@ import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Optional
 
 from django.conf import settings
 from django.contrib import messages
@@ -16,6 +17,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.crypto import get_random_string
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .email_verification import ensure_unverified_state, is_user_email_verified, mark_user_email_verified
@@ -64,12 +66,36 @@ def _ensure_unique_username(email: str) -> str:
     return f"user_{secrets.token_hex(8)}"[:150]
 
 
+def _safe_next_url(request: HttpRequest) -> str:
+    candidate = ""
+    if request.method == "POST":
+        candidate = str(request.POST.get("next", "")).strip()
+    if not candidate:
+        candidate = str(request.GET.get("next", "")).strip()
+    if not candidate:
+        return ""
+    if url_has_allowed_host_and_scheme(
+        url=candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return ""
+
+
+def _post_login_redirect(request: HttpRequest, user) -> str:
+    next_url = _safe_next_url(request)
+    if next_url:
+        return next_url
+    if is_user_email_verified(user):
+        return reverse("projects:dashboard")
+    return reverse("email-verification-required")
+
+
 @require_http_methods(["GET", "POST"])
 def login_view(request: HttpRequest):
     if request.user.is_authenticated:
-        if is_user_email_verified(request.user):
-            return redirect("projects:dashboard")
-        return redirect("email-verification-required")
+        return redirect(_post_login_redirect(request, request.user))
 
     post_data = request.POST.copy() if request.method == "POST" else None
     if post_data and post_data.get("username"):
@@ -79,9 +105,7 @@ def login_view(request: HttpRequest):
     if request.method == "POST":
         if form.is_valid():
             login(request, form.get_user())
-            if is_user_email_verified(form.get_user()):
-                return redirect("projects:dashboard")
-            return redirect("email-verification-required")
+            return redirect(_post_login_redirect(request, form.get_user()))
 
     return render(
         request,
@@ -89,6 +113,7 @@ def login_view(request: HttpRequest):
         {
             "form": form,
             "google_oauth_enabled": _google_oauth_enabled(),
+            "next_url": _safe_next_url(request),
         },
     )
 
@@ -142,13 +167,18 @@ def register_view(request: HttpRequest):
 @require_GET
 def google_auth_login_view(request: HttpRequest):
     if request.user.is_authenticated:
-        return redirect("projects:dashboard")
+        return redirect(_post_login_redirect(request, request.user))
     if not _google_oauth_enabled():
         messages.error(request, "Google авторизацію не налаштовано на сервері.")
         return redirect("login")
 
     state = secrets.token_urlsafe(32)
     request.session["google_oauth_state"] = state
+    next_url = _safe_next_url(request)
+    if next_url:
+        request.session["google_oauth_next"] = next_url
+    else:
+        request.session.pop("google_oauth_next", None)
     params = {
         "client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
         "redirect_uri": _google_redirect_uri(request),
@@ -247,6 +277,13 @@ def google_auth_callback_view(request: HttpRequest):
 
     login(request, user)
     messages.success(request, "Вхід через Google успішний.")
+    next_url = str(request.session.pop("google_oauth_next", "")).strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
     return redirect("projects:dashboard")
 
 

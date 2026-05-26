@@ -71,6 +71,7 @@ class EmailVerificationRequiredMiddleware:
         "verify-email",
         "resend-verification",
         "email-verification-required",
+        "oauth-authorize",
         "password_reset",
         "password_reset_done",
         "password_reset_confirm",

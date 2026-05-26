@@ -73,6 +73,9 @@
   <p class="auth-sub">Введіть пошту і пароль для входу</p>
   <form method="post">
     {% csrf_token %}
+    {% if next_url %}
+      <input type="hidden" name="next" value="{{ next_url }}">
+    {% endif %}
     {% if form.non_field_errors %}
       <ul class="errorlist">
         {% for err in form.non_field_errors %}
@@ -110,7 +113,7 @@
   </form>
   {% if google_oauth_enabled %}
     <div class="oauth-divider">або</div>
-    <a class="google-btn" href="{% url 'google-auth-login' %}">
+    <a class="google-btn" href="{% if next_url %}{% url 'google-auth-login' %}?next={{ next_url|urlencode }}{% else %}{% url 'google-auth-login' %}{% endif %}">
       <img class="google-btn-icon" src="{% static 'projects/branding/google-logo.svg' %}" alt="Google">
       Увійти через Google
     </a>

@@ -99,7 +99,7 @@ def oauth_register(request: HttpRequest) -> JsonResponse:
     if not isinstance(redirect_uris, list) or not redirect_uris:
         return JsonResponse({"error": "invalid_redirect_uri"}, status=400)
     token_auth_method = str(body.get("token_endpoint_auth_method", "none")).strip() or "none"
-    if token_auth_method not in {"none", "client_secret_basic", "client_secret_post"}:
+    if token_auth_method != "none":
         return JsonResponse({"error": "invalid_client_metadata"}, status=400)
 
     client_id = OAuthClient.issue_client_id()
