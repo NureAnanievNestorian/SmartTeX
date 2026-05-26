@@ -167,7 +167,7 @@ def _protected_resource_metadata_payload() -> dict[str, Any]:
     return {
         "resource": _canonical_mcp_resource_url(),
         "authorization_servers": [AUTH_SERVER_ISSUER_URL],
-        "scopes_supported": ["openid", "profile", "smarttex:read", "smarttex:write"],
+        "scopes_supported": ["smarttex:read", "smarttex:write"],
         "bearer_methods_supported": ["header"],
     }
 
@@ -531,7 +531,7 @@ if MCP_OAUTH_ENABLED:
         authorization_servers=[AnyHttpUrl(AUTH_SERVER_ISSUER_URL)],
         base_url=AnyHttpUrl(MCP_SERVER_PUBLIC_URL),
         resource_base_url=AnyHttpUrl(MCP_SERVER_PUBLIC_URL),
-        scopes_supported=["openid", "profile", "smarttex:read", "smarttex:write"],
+        scopes_supported=["smarttex:read", "smarttex:write"],
     )
 
 mcp = FastMCP(

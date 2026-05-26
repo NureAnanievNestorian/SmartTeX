@@ -23,7 +23,7 @@ class OAuthAuthorizeVerificationGateTests(TestCase):
             grant_types=["authorization_code"],
             response_types=["code"],
             token_endpoint_auth_method="none",
-            scope="openid profile smarttex:read smarttex:write",
+            scope="smarttex:read smarttex:write",
         )
         self.authorize_url = reverse("oauth-authorize")
         self.authorize_params = {
@@ -83,7 +83,7 @@ class OAuthLoginRedirectTests(TestCase):
             grant_types=["authorization_code"],
             response_types=["code"],
             token_endpoint_auth_method="none",
-            scope="openid profile smarttex:read smarttex:write",
+            scope="smarttex:read smarttex:write",
         )
         self.next_url = (
             f"{reverse('oauth-authorize')}?"

@@ -86,7 +86,7 @@ def oauth_authorization_server_metadata(request: HttpRequest) -> JsonResponse:
             "grant_types_supported": ["authorization_code"],
             "code_challenge_methods_supported": ["S256", "plain"],
             "token_endpoint_auth_methods_supported": ["none"],
-            "scopes_supported": ["openid", "profile", "smarttex:read", "smarttex:write"],
+            "scopes_supported": ["smarttex:read", "smarttex:write"],
         }
     )
 
@@ -113,7 +113,7 @@ def oauth_register(request: HttpRequest) -> JsonResponse:
         grant_types=body.get("grant_types") or ["authorization_code"],
         response_types=body.get("response_types") or ["code"],
         token_endpoint_auth_method=token_auth_method,
-        scope=str(body.get("scope", "openid profile smarttex:read smarttex:write")).strip(),
+        scope=str(body.get("scope", "smarttex:read smarttex:write")).strip(),
     )
     return JsonResponse(
         {
@@ -138,7 +138,7 @@ def oauth_authorize(request: HttpRequest):
     client_id = params.get("client_id", "").strip()
     redirect_uri = params.get("redirect_uri", "").strip()
     state = params.get("state", "")
-    scope = params.get("scope", "openid profile smarttex:read smarttex:write").strip()
+    scope = params.get("scope", "smarttex:read smarttex:write").strip()
     code_challenge = params.get("code_challenge", "").strip()
     code_challenge_method = params.get("code_challenge_method", "S256").strip()
 
@@ -290,7 +290,7 @@ def oauth_introspect(request: HttpRequest) -> JsonResponse:
                 "client_id": "mcp_token",
                 "username": mcp_token.user.username,
                 "sub": str(mcp_token.user_id),
-                "scope": "openid profile smarttex:read smarttex:write",
+                "scope": "smarttex:read smarttex:write",
             }
         )
 
