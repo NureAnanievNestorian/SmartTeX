@@ -1291,24 +1291,125 @@
 
         /* ── Bottom panel (Problems / Log) ────────────────────────── */
         .e-bottom-panel {
+            --bottom-panel-h: 220px;
             border-top: 1px solid var(--e-border);
             background: var(--e-surface);
             flex-shrink: 0;
             display: flex;
             flex-direction: column;
-            max-height: 0;
+            height: 0;
+            min-height: 0;
             overflow: hidden;
-            transition: max-height .2s ease;
+            transition: height .16s ease, border-color .16s ease;
         }
 
         .e-bottom-panel.open {
-            max-height: 220px;
+            height: var(--bottom-panel-h, 220px);
+            min-height: 92px;
+            max-height: min(60vh, 520px);
+        }
+
+        .e-bottom-panel.open.collapsed {
+            height: 31px;
+            min-height: 31px;
+        }
+
+        .e-bottom-panel.collapsed .e-bottom-resize,
+        .e-bottom-panel.collapsed .e-bp-body {
+            display: none !important;
+        }
+
+        .e-bottom-resize {
+            height: 5px;
+            margin-top: -1px;
+            flex-shrink: 0;
+            cursor: ns-resize;
+            background: transparent;
+            position: relative;
+            z-index: 2;
+        }
+
+        .e-bottom-resize::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 2px;
+            height: 1px;
+            background: transparent;
+            transition: background .12s;
+        }
+
+        .e-bottom-resize:hover::after,
+        .e-bottom-resize.dragging::after {
+            background: var(--e-accent);
+        }
+
+        .e-bottom-opener {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 30px;
+            flex-shrink: 0;
+            padding: 0 8px;
+            background: var(--e-raised);
+            border-top: 1px solid var(--e-border);
+            color: var(--e-text2);
+            position: relative;
+            z-index: 4;
+        }
+
+        .e-bottom-panel.open + .e-bottom-opener {
+            display: none;
+        }
+
+        .e-bottom-panel:not(.open) + .e-bottom-opener {
+            display: flex;
+        }
+
+        .e-bottom-open-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 22px;
+            padding: 0 9px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--e-text2);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .35px;
+            cursor: pointer;
+        }
+
+        .e-bottom-open-btn:hover {
+            background: var(--e-soft);
+            color: var(--e-text);
+        }
+
+        .e-bottom-open-btn svg {
+            width: 12px;
+            height: 12px;
+            flex-shrink: 0;
+            color: currentColor;
+            stroke: currentColor;
+        }
+
+        .e-bottom-open-btn:focus-visible,
+        .e-bp-tab:focus-visible,
+        .e-bp-close:focus-visible,
+        .e-bp-collapse:focus-visible {
+            outline: 2px solid rgba(34, 197, 94, .55);
+            outline-offset: -2px;
         }
 
         .e-bp-tabbar {
             display: flex;
             align-items: stretch;
             flex-shrink: 0;
+            overflow: hidden;
             border-bottom: 1px solid var(--e-border);
             background: var(--e-raised);
             height: 30px;
@@ -1323,6 +1424,8 @@
             border-bottom: 2px solid transparent;
             background: transparent;
             color: var(--e-muted);
+            min-width: 0;
+            overflow: hidden;
             font-size: 11px;
             font-weight: 700;
             text-transform: uppercase;
@@ -1379,22 +1482,38 @@
             flex: 1;
         }
 
-        .e-bp-close {
+        .e-bp-close,
+        .e-bp-collapse {
             width: 30px;
             height: 30px;
+            flex-shrink: 0;
             border: 0;
-            background: transparent;
-            color: var(--e-muted);
+            border-radius: 3px;
+            background: rgba(255, 255, 255, .04);
+            color: var(--e-text2);
             cursor: pointer;
-            font-size: 14px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            transition: color .12s;
+            transition: color .12s, background .12s;
         }
 
-        .e-bp-close:hover {
+        .e-bp-close svg,
+        .e-bp-collapse svg,
+        .e-bp-tab svg {
+            color: currentColor;
+            stroke: currentColor;
+            fill: none;
+        }
+
+        .e-bp-close:hover,
+        .e-bp-collapse:hover {
             color: var(--e-text);
+            background: rgba(255, 255, 255, .1);
+        }
+
+        .e-bottom-panel.collapsed .e-bp-collapse svg {
+            transform: rotate(180deg);
         }
 
         .e-bp-body {
@@ -1915,6 +2034,215 @@
                 grid-template-columns: 1fr;
             }
         }
+
+
+        /* ── Light theme for the editor workspace ─────────────────────────── */
+        html[data-theme="light"] {
+            --e-bg: #ffffff;
+            --e-surface: #f6f8fa;
+            --e-raised: #f3f4f6;
+            --e-soft: #e5e7eb;
+            --e-border: #d0d7de;
+            --e-text: #24292f;
+            --e-text2: #57606a;
+            --e-muted: #8c959f;
+            --e-accent: #16a34a;
+            --e-blue: #0969da;
+            --e-danger: #cf222e;
+            --e-warn: #9a6700;
+            --e-statusbar: #0969da;
+            --e-tab-active: #ffffff;
+        }
+
+        html[data-theme="light"] .editor-shell {
+            background: var(--e-bg);
+            color: var(--e-text);
+        }
+
+        html[data-theme="light"] .e-btn {
+            background: #ffffff;
+            border-color: var(--e-border);
+            color: var(--e-text2);
+        }
+
+        html[data-theme="light"] .e-btn:hover,
+        html[data-theme="light"] .e-btn.ghost:hover,
+        html[data-theme="light"] .e-icon-btn:hover,
+        html[data-theme="light"] .e-sec-btn:hover,
+        html[data-theme="light"] .e-file-act:hover {
+            background: var(--e-soft);
+            color: var(--e-text);
+            border-color: var(--e-border);
+        }
+
+        html[data-theme="light"] .e-btn.primary {
+            background: var(--e-accent);
+            border-color: transparent;
+            color: #ffffff;
+        }
+
+        html[data-theme="light"] .e-kbd {
+            background: rgba(255, 255, 255, .35);
+            border-color: rgba(255, 255, 255, .45);
+            color: rgba(255, 255, 255, .9);
+        }
+
+        html[data-theme="light"] .e-menu {
+            box-shadow: 0 12px 28px rgba(31, 35, 40, .16);
+        }
+
+        html[data-theme="light"] .e-file-btn:hover,
+        html[data-theme="light"] .e-outline-btn:hover {
+            background: rgba(9, 105, 218, .08);
+            color: var(--e-text);
+        }
+
+        html[data-theme="light"] .e-file-btn.active,
+        html[data-theme="light"] .e-edtab.active {
+            background: rgba(9, 105, 218, .10);
+            color: var(--e-text);
+        }
+
+        html[data-theme="light"] .e-main-star {
+            color: var(--e-accent);
+        }
+
+        html[data-theme="light"] .e-file-actions {
+            background: linear-gradient(to right, transparent 0, rgba(246, 248, 250, .96) 10px);
+        }
+
+        html[data-theme="light"] .e-bp-tab.active,
+        html[data-theme="light"] .e-tab.active,
+        html[data-theme="light"] .e-ver-item.active {
+            background: #ffffff;
+            color: var(--e-text);
+        }
+
+        html[data-theme="light"] .e-bottom-opener,
+        html[data-theme="light"] .e-bp-tabbar {
+            background: #f6f8fa;
+            border-color: var(--e-border);
+            color: var(--e-text2);
+        }
+
+        html[data-theme="light"] .e-bottom-open-btn,
+        html[data-theme="light"] .e-bp-tab,
+        html[data-theme="light"] .e-bp-close,
+        html[data-theme="light"] .e-bp-collapse {
+            color: var(--e-text2);
+        }
+
+        html[data-theme="light"] .e-bp-close,
+        html[data-theme="light"] .e-bp-collapse {
+            background: rgba(0, 0, 0, .04);
+        }
+
+        html[data-theme="light"] .e-bottom-open-btn:hover,
+        html[data-theme="light"] .e-bp-tab:hover,
+        html[data-theme="light"] .e-bp-close:hover,
+        html[data-theme="light"] .e-bp-collapse:hover {
+            background: rgba(9, 105, 218, .08);
+            color: var(--e-text);
+        }
+
+        html[data-theme="light"] .e-bottom-panel,
+        html[data-theme="light"] .e-log-body,
+        html[data-theme="light"] .e-diag-panel,
+        html[data-theme="light"] .asset-box,
+        html[data-theme="light"] .pdf-empty {
+            background: #ffffff;
+            color: var(--e-text);
+        }
+
+        html[data-theme="light"] .e-statusbar {
+            background: var(--e-statusbar);
+            color: #ffffff;
+        }
+
+        html[data-theme="light"] .e-statusbar * {
+            color: inherit;
+        }
+
+        html[data-theme="light"] .status-chip {
+            background: #ffffff;
+            border-color: var(--e-border);
+            color: var(--e-text2);
+        }
+
+        html[data-theme="light"] .status-chip.success,
+        html[data-theme="light"] .e-save-hint.saved,
+        html[data-theme="light"] .e-save-hint.success {
+            color: #15803d;
+            border-color: rgba(21, 128, 61, .25);
+            background: rgba(21, 128, 61, .08);
+        }
+
+        html[data-theme="light"] .status-chip.error,
+        html[data-theme="light"] .e-save-hint.error {
+            color: #b91c1c;
+            border-color: rgba(185, 28, 28, .25);
+            background: rgba(185, 28, 28, .08);
+        }
+
+        html[data-theme="light"] .status-chip.pending {
+            color: #92400e;
+            border-color: rgba(146, 64, 14, .25);
+            background: rgba(146, 64, 14, .08);
+        }
+
+        /* CodeMirror light overrides. The editor is initialized once, so CSS keeps it in sync with the global toggle. */
+        html[data-theme="light"] #cm-editor .cm-editor,
+        html[data-theme="light"] #cm-editor .cm-scroller {
+            background: #ffffff !important;
+            color: #24292f !important;
+        }
+
+        html[data-theme="light"] #cm-editor .cm-content {
+            caret-color: #24292f !important;
+        }
+
+        html[data-theme="light"] #cm-editor .cm-gutters {
+            background: #ffffff !important;
+            border-right-color: #d0d7de !important;
+            color: #6e7781 !important;
+        }
+
+        html[data-theme="light"] #cm-editor .cm-activeLine,
+        html[data-theme="light"] #cm-editor .cm-activeLineGutter {
+            background: #f6f8fa !important;
+        }
+
+        html[data-theme="light"] #cm-editor .cm-cursor,
+        html[data-theme="light"] #cm-editor .cm-dropCursor {
+            border-left-color: #24292f !important;
+        }
+
+        html[data-theme="light"] #cm-editor .cm-selectionBackground,
+        html[data-theme="light"] #cm-editor.cm-focused .cm-selectionBackground,
+        html[data-theme="light"] #cm-editor .cm-editor.cm-focused .cm-selectionBackground {
+            background: rgba(9, 105, 218, .22) !important;
+        }
+
+        html[data-theme="light"] #cm-editor .cm-tooltip,
+        html[data-theme="light"] #cm-editor .cm-panels {
+            background: #ffffff !important;
+            border-color: #d0d7de !important;
+            color: #24292f !important;
+        }
+
+        html[data-theme="light"] #cm-editor .cm-panels input,
+        html[data-theme="light"] #cm-editor .cm-panels button {
+            background: #f6f8fa !important;
+            color: #24292f !important;
+            border: 1px solid #d0d7de !important;
+        }
+
+        html[data-theme="light"] #cm-editor .ͼb { color: #0550ae !important; }
+        html[data-theme="light"] #cm-editor .ͼc { color: #116329 !important; }
+        html[data-theme="light"] #cm-editor .ͼd { color: #953800 !important; }
+        html[data-theme="light"] #cm-editor .ͼe { color: #0550ae !important; }
+        html[data-theme="light"] #cm-editor .ͼf { color: #8250df !important; }
+
     </style>
 {% endblock %}
 
@@ -2135,6 +2463,7 @@
                 </div>
                 <!-- ── Bottom panel ────────────────────────── -->
                 <div class="e-bottom-panel" id="bottom-panel">
+                    <div class="e-bottom-resize" id="bottom-resize" aria-hidden="true"></div>
                     <div class="e-bp-tabbar">
                         <button class="e-bp-tab active" id="tab-problems-btn" type="button">
                             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -2156,12 +2485,19 @@
                             ЛОГ
                         </button>
                         <div class="e-bp-spacer"></div>
+                        <button class="e-bp-collapse" id="bottom-collapse-btn" type="button" title="Згорнути панель"
+                                aria-label="Collapse panel">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="2 5 7 10 12 5"/>
+                            </svg>
+                        </button>
                         <button class="e-bp-close" id="bottom-close-btn" type="button" title="Закрити панель"
                                 aria-label="Close panel">
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
-                                 stroke-width="1.8" stroke-linecap="round">
-                                <line x1="1" y1="1" x2="11" y2="11"/>
-                                <line x1="11" y1="1" x2="1" y2="11"/>
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                                 stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                <line x1="2" y1="2" x2="12" y2="12"/>
+                                <line x1="12" y1="2" x2="2" y2="12"/>
                             </svg>
                         </button>
                     </div>
@@ -2175,6 +2511,27 @@
                     <div id="log-panel-body" class="e-bp-body">
                         <pre id="log"></pre>
                     </div>
+                </div>
+                <div class="e-bottom-opener" id="bottom-opener">
+                    <button class="e-bottom-open-btn" type="button" data-open-bottom="problems" title="Відкрити проблеми">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="8" cy="8" r="6"/>
+                            <line x1="8" y1="5" x2="8" y2="8.5"/>
+                            <line x1="8" y1="11" x2="8" y2="11"/>
+                        </svg>
+                        Проблеми
+                        <span class="e-bp-badge empty" id="diag-count-closed">0</span>
+                    </button>
+                    <button class="e-bottom-open-btn" type="button" data-open-bottom="log" title="Відкрити лог">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+                            <line x1="5" y1="7" x2="11" y2="7"/>
+                            <line x1="5" y1="10" x2="9" y2="10"/>
+                        </svg>
+                        Лог
+                    </button>
                 </div>
             </section>
 

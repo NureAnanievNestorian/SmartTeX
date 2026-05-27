@@ -1526,12 +1526,68 @@ def _compiler_network_args(markup_type: str) -> list[str]:
     return ["--network", network]
 
 
+def _project_compile_debug_header(
+    *,
+    project: Project,
+    workdir: Path,
+    docker_mount_source: Path,
+    src_filename: str,
+    input_file: Path,
+    cmd: list[str],
+    timeout: int,
+    use_native_typst: bool,
+) -> str:
+    try:
+        visible_files = sorted(
+            str(path.relative_to(workdir)).replace("\\", "/")
+            for path in workdir.rglob("*")
+            if path.is_file() and ".smarttex-git" not in path.parts
+        )[:100]
+    except OSError:
+        visible_files = []
+
+    lines = [
+        "=== SmartTeX project compile debug ===",
+        f"project_id={project.id}",
+        f"title={project.title}",
+        f"markup_type={project.markup_type}",
+        f"project_main_file_field={project.main_file or '<empty>'}",
+        f"resolved_main_file={src_filename}",
+        f"input_file={input_file}",
+        f"input_exists={input_file.exists()}",
+        f"input_size={input_file.stat().st_size if input_file.exists() else 0}",
+        f"workdir={workdir}",
+        f"docker_mount_source={docker_mount_source}",
+        f"pdf_path={pdf_file_path(project)}",
+        f"log_path={log_file_path(project)}",
+        f"timeout={timeout}",
+        f"use_native_typst={use_native_typst}",
+        "workdir_files_sample=" + ", ".join(visible_files[:60]),
+        "cmd=" + " ".join(str(part) for part in cmd),
+        "=== compiler output ===",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def compile_project(project: Project) -> CompileResult:
     workdir = ensure_project_dir(project)
     input_file = source_file_path(project)
 
     if not input_file.exists():
-        log_text = f"{input_file.name} not found"
+        log_text = (
+            "=== SmartTeX project compile debug ===\n"
+            f"project_id={project.id}\n"
+            f"markup_type={project.markup_type}\n"
+            f"project_main_file_field={project.main_file or '<empty>'}\n"
+            f"resolved_main_file={main_source_filename(project)}\n"
+            f"input_file={input_file}\n"
+            f"input_exists=False\n"
+            "=== compiler output ===\n"
+            f"{input_file.name} not found"
+        )
+        log_file_path(project).parent.mkdir(parents=True, exist_ok=True)
+        log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
+        logger.warning("Project main file not found before compile", extra={"project_id": project.id, "main_file": main_source_filename(project), "input_file": str(input_file)})
         return CompileResult(
             status=Project.CompileStatus.ERROR,
             log=log_text,
@@ -1592,6 +1648,7 @@ def compile_project(project: Project) -> CompileResult:
             "lualatex",
             "-interaction=nonstopmode",
             "-synctex=1",
+            "-jobname=main",
         ]
         if strict_errors:
             compiler_args.append("-halt-on-error")
@@ -1607,13 +1664,31 @@ def compile_project(project: Project) -> CompileResult:
         ]
         run_kwargs = {}
 
+    debug_header = _project_compile_debug_header(
+        project=project,
+        workdir=workdir,
+        docker_mount_source=docker_mount_source,
+        src_filename=src_filename,
+        input_file=input_file,
+        cmd=cmd,
+        timeout=timeout,
+        use_native_typst=use_native_typst,
+    )
+
+    logger.info(
+        "Starting project compile",
+        extra={"project_id": project.id, "main_file": src_filename, "workdir": str(workdir)},
+    )
+
     existing_pdf = pdf_file_path(project)
     had_pdf_before = existing_pdf.exists()
     pdf_mtime_before = existing_pdf.stat().st_mtime_ns if had_pdf_before else None
 
     acquired = COMPILE_SEMAPHORE.acquire(timeout=timeout)
     if not acquired:
-        return CompileResult(status=Project.CompileStatus.ERROR, log="Compilation queue timeout")
+        log_text = debug_header + "Compilation queue timeout"
+        log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
+        return CompileResult(status=Project.CompileStatus.ERROR, log=log_text)
 
     try:
         proc = subprocess.run(
@@ -1624,8 +1699,7 @@ def compile_project(project: Project) -> CompileResult:
             check=False,
             **run_kwargs,
         )
-        log_text = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
+        compiler_output = (proc.stdout or "") + "\n" + (proc.stderr or "")
 
         pdf_exists_after = existing_pdf.exists()
         pdf_mtime_after = existing_pdf.stat().st_mtime_ns if pdf_exists_after else None
@@ -1637,9 +1711,19 @@ def compile_project(project: Project) -> CompileResult:
                 or pdf_mtime_after != pdf_mtime_before
             )
         )
+        footer = (
+            "\n=== SmartTeX project compile result ===\n"
+            f"returncode={proc.returncode}\n"
+            f"pdf_exists_after={pdf_exists_after}\n"
+            f"pdf_was_updated={pdf_was_updated}\n"
+            f"pdf_size={existing_pdf.stat().st_size if pdf_exists_after else 0}\n"
+        )
+        log_text = debug_header + compiler_output + footer
+        log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
 
         # Success when compiler exited cleanly with a PDF, or produced/updated PDF despite non-fatal issues.
         if pdf_exists_after and (proc.returncode == 0 or pdf_was_updated):
+            logger.info("Project compile succeeded", extra={"project_id": project.id, "main_file": src_filename})
             return CompileResult(
                 status=Project.CompileStatus.SUCCESS,
                 log=log_text,
@@ -1648,6 +1732,7 @@ def compile_project(project: Project) -> CompileResult:
             )
 
         failure_log = log_text or "Compilation failed"
+        logger.warning("Project compile failed", extra={"project_id": project.id, "main_file": src_filename, "returncode": proc.returncode, "pdf_exists_after": pdf_exists_after})
         return CompileResult(
             status=Project.CompileStatus.ERROR,
             log=failure_log,
@@ -1655,7 +1740,7 @@ def compile_project(project: Project) -> CompileResult:
             compile_state="failed",
         )
     except subprocess.TimeoutExpired:
-        log_text = f"Compilation timed out after {timeout} seconds"
+        log_text = debug_header + f"Compilation timed out after {timeout} seconds"
         log_file_path(project).write_text(log_text, encoding="utf-8")
         return CompileResult(
             status=Project.CompileStatus.ERROR,
@@ -1664,7 +1749,7 @@ def compile_project(project: Project) -> CompileResult:
             compile_state="failed",
         )
     except FileNotFoundError:
-        log_text = (
+        log_text = debug_header + (
             "typst binary not found in PATH" if use_native_typst
             else "Docker is not installed or unavailable in PATH"
         )
@@ -1676,7 +1761,7 @@ def compile_project(project: Project) -> CompileResult:
             compile_state="failed",
         )
     except Exception as exc:  # pragma: no cover
-        log_text = f"Unexpected error: {exc}"
+        log_text = debug_header + f"Unexpected error: {exc}"
         log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
         logger.exception("Unexpected compile failure", extra={"project_id": project.id})
         return CompileResult(

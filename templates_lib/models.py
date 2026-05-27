@@ -16,6 +16,7 @@ class Template(models.Model):
     markup_type = models.CharField(max_length=10, choices=MarkupType.choices, default=MarkupType.LATEX)
     content = models.TextField(blank=True, default="")
     zip_file = models.FileField(upload_to="template_zips/", blank=True, null=True)
+    main_file = models.CharField(max_length=255, blank=True, default="")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

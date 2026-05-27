@@ -16,6 +16,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 from accounts.auth_helpers import get_api_user
 from SmartTeX.markup import MarkupType, source_filename_for_markup
 from templates_lib.models import Template
+from templates_lib.services import normalize_template_main_file
 
 from .models import Project, ProjectVersion
 from .services import (
@@ -316,10 +317,12 @@ def api_projects(request: HttpRequest) -> JsonResponse:
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
     content = _default_content_for_markup(markup_type)
+    project_main_file = ""
     if template_id is not None:
         template_obj = get_object_or_404(Template, id=template_id, is_active=True)
         markup_type = template_obj.markup_type
-        content = template_obj.content
+        content = template_obj.content or _default_content_for_markup(markup_type)
+        project_main_file = normalize_template_main_file(template_obj)
 
     if is_source_too_large(content):
         return JsonResponse({"detail": "Template content exceeds 1MB"}, status=400)
@@ -330,6 +333,7 @@ def api_projects(request: HttpRequest) -> JsonResponse:
             title=title,
             template=template_obj,
             markup_type=markup_type,
+            main_file=project_main_file,
         )
         initialize_main_source(project, content)
         create_text_project_version(
@@ -1274,10 +1278,12 @@ def create_project_from_dashboard(request: HttpRequest):
         markup_type = MarkupType.LATEX
 
     template_zip = None
+    project_main_file = ""
     content = _default_content_for_markup(markup_type)
     if template_id:
         template_obj = get_object_or_404(Template, id=template_id, is_active=True)
         markup_type = template_obj.markup_type
+        project_main_file = normalize_template_main_file(template_obj)
         content = template_obj.content or _default_content_for_markup(markup_type)
         if template_obj.zip_file:
             template_zip = template_obj.zip_file
@@ -1293,6 +1299,7 @@ def create_project_from_dashboard(request: HttpRequest):
             title=title,
             template=template_obj,
             markup_type=markup_type,
+            main_file=project_main_file,
         )
         if not zip_only:
             initialize_main_source(project, content)
@@ -1310,14 +1317,18 @@ def create_project_from_dashboard(request: HttpRequest):
         try:
             zip_bytes = template_zip.read()
             created = extract_project_zip(project, zip_bytes, allow_main_override=True)
-            # Auto-detect main file from the ZIP if not already set
-            if zip_only:
+            # Prefer the configured template main file, then fall back to common names from the ZIP.
+            configured_main = normalize_template_main_file(template_obj) if template_obj else ""
+            created_names = [f["name"] for f in created]
+            if configured_main and configured_main in created_names:
+                detected = configured_main
+            else:
                 default_main = source_filename_for_markup(markup_type)
-                main_candidates = [f["name"] for f in created if f["name"] in (default_main, "main.tex", "main.typ")]
-                detected = main_candidates[0] if main_candidates else (created[0]["name"] if created else None)
-                if detected:
-                    project.main_file = detected
-                    project.save(update_fields=["main_file"])
+                main_candidates = [name for name in created_names if name in (default_main, "main.tex", "main.typ")]
+                detected = main_candidates[0] if main_candidates else (created_names[0] if created_names else None)
+            if detected and project.main_file != detected:
+                project.main_file = detected
+                project.save(update_fields=["main_file"])
             create_text_project_version(
                 project=project,
                 actor=request.user,

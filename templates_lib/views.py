@@ -6,7 +6,7 @@ from django.views.decorators.http import require_GET
 from accounts.auth_helpers import get_api_user
 
 from .models import Template
-from .services import has_template_pdf, template_pdf_path, template_pdf_url
+from .services import has_template_pdf, normalize_template_main_file, read_template_compile_log, template_pdf_path, template_pdf_url, template_zip_summary
 
 
 def _template_payload(template: Template, with_content: bool = False) -> dict:
@@ -19,6 +19,8 @@ def _template_payload(template: Template, with_content: bool = False) -> dict:
         "markup_type": template.markup_type,
         "created_at": template.created_at.isoformat(),
         "updated_at": template.updated_at.isoformat(),
+        "has_zip": bool(template.zip_file),
+        "main_file": normalize_template_main_file(template),
     }
     if with_content:
         payload["content"] = template.content
@@ -70,10 +72,14 @@ def template_preview_page(request: HttpRequest, template_id: int):
     template = get_object_or_404(Template, id=template_id, is_active=True)
     pdf_exists = has_template_pdf(template)
     pdf_url = template_pdf_url(template) if pdf_exists else None
+    zip_summary = template_zip_summary(template)
+    compile_log = read_template_compile_log(template)
     return render(request, "templates_lib/preview.html", {
         "template_obj": template,
         "pdf_exists": pdf_exists,
         "pdf_url": pdf_url,
+        "zip_summary": zip_summary,
+        "compile_log": compile_log,
     })
 
 

@@ -3,93 +3,107 @@
 {% block head %}
 <style>
   .preview-header { margin-bottom: 20px; }
-  .back-link {
-    display: inline-flex; align-items: center; gap: 6px;
-    text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 500;
-    padding: 6px 10px; border-radius: 8px; border: 1px solid transparent;
-    transition: background .15s, border-color .15s, color .15s;
-    margin-bottom: 16px;
-  }
-  .back-link:hover { background: var(--surface-soft); border-color: var(--border); color: var(--text); }
+  .back-link { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 600; padding: 7px 11px; border-radius: 8px; border: 1px solid var(--border-soft); background: var(--surface-soft); transition: background .15s, border-color .15s, color .15s; }
+  .back-link:hover { background: var(--surface-raised); border-color: var(--border); color: var(--text); }
   .back-link svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-
-  .preview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .preview-grid { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr); gap: 14px; }
   @media (max-width: 900px) { .preview-grid { grid-template-columns: 1fr; } }
-
-  .preview-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; overflow: hidden; }
-  .preview-card-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border-soft); }
-  .preview-card-header h1 { margin: 0 0 10px; font-size: 20px; font-weight: 700; }
-  .preview-card-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .cat-badge {
-    display: inline-block; padding: 3px 9px; border-radius: 999px;
-    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
-    background: var(--blue-dim); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd;
-  }
-  .preview-desc { color: var(--muted); font-size: 14px; }
-  .preview-code { padding: 0; }
-  .preview-code pre {
-    border-radius: 0 0 14px 14px; border: 0; border-top: 1px solid var(--border-soft);
-    padding: 20px 24px; font-size: 13px; line-height: 1.7; max-height: 74vh;
-  }
-
-  .pdf-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
-  .pdf-card-header { padding: 16px 20px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .preview-card, .pdf-card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+  .preview-card-header, .pdf-card-header { padding: 16px 20px; border-bottom: 1px solid var(--border-soft); }
+  .preview-card-header h1 { margin: 0 0 11px; font-size: 20px; font-weight: 750; }
+  .preview-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cat-badge, .type-badge, .main-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; line-height: 1; }
+  .cat-badge { text-transform: uppercase; letter-spacing: .4px; background: var(--blue-dim); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd; }
+  .type-badge { background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.34); color: var(--accent); }
+  .main-badge { background: var(--surface-soft); border: 1px solid var(--border-soft); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  [data-theme="light"] .cat-badge { color: #1d4ed8; }
+  .preview-desc { margin-top: 12px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+  .zip-panel { margin: 16px 20px 0; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface-soft); overflow: hidden; }
+  .zip-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
+  .zip-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .zip-icon { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; background: var(--surface-raised); border: 1px solid var(--border); color: var(--accent); font-weight: 800; }
+  .zip-title-main { font-size: 13px; font-weight: 750; color: var(--text); }
+  .zip-title-sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
+  .zip-main-status { white-space: nowrap; font-size: 12px; font-weight: 750; color: var(--muted); }
+  .zip-main-status.ok { color: var(--accent); }
+  .zip-file-list { max-height: 260px; overflow: auto; padding: 6px; }
+  .zip-file-row { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; padding: 7px 8px; border-radius: 8px; color: var(--muted); font-size: 12px; }
+  .zip-file-row:hover { background: var(--surface-raised); color: var(--text); }
+  .zip-file-row.is-main { color: var(--text); background: rgba(34,197,94,.09); }
+  .zip-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .zip-file-size { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .preview-code { padding: 16px 20px 20px; }
+  .preview-code-title { margin: 0 0 9px; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; }
+  .preview-code pre { border-radius: 10px; border: 1px solid var(--border-soft); padding: 14px; font-size: 13px; line-height: 1.65; max-height: 48vh; overflow: auto; background: var(--surface-soft); }
+  .no-inline-content { padding: 16px 20px 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .pdf-card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .pdf-card-header strong { font-size: 15px; }
-  .pdf-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+  .pdf-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
   .pdf-status.ready { color: #4ade80; }
   .pdf-status.pending { color: #fde68a; }
-  .pdf-status.none { color: var(--muted); }
   .pdf-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-
-  .pdf-canvas {
-    flex: 1; min-height: 60vh;
-    background: linear-gradient(180deg, #f1f5f9 0%, #dbe5f1 100%);
-    position: relative; overflow: hidden;
-  }
+  .pdf-canvas { flex: 1; min-height: 60vh; background: linear-gradient(180deg, #f1f5f9 0%, #dbe5f1 100%); position: relative; overflow: hidden; }
   #pdf-frame { width: 100%; height: 100%; min-height: 60vh; border: 0; background: #fff; }
-  .pdf-placeholder {
-    position: absolute; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 10px;
-    background: repeating-linear-gradient(-45deg, #f8fafc, #f8fafc 12px, #eef2f7 12px, #eef2f7 24px);
-    color: #64748b; font-size: 14px; font-weight: 600;
-  }
+  .pdf-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: repeating-linear-gradient(-45deg, #f8fafc, #f8fafc 12px, #eef2f7 12px, #eef2f7 24px); color: #64748b; font-size: 14px; font-weight: 650; text-align: center; padding: 24px; }
   .pdf-placeholder svg { width: 32px; height: 32px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: 0.6; }
 </style>
 {% endblock %}
 {% block content %}
 <div class="preview-header">
-  <a class="back-link" href="/templates/">
-    <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-    Назад до шаблонів
-  </a>
+  <a class="back-link" href="/templates/"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Назад до шаблонів</a>
 </div>
 
 <div class="preview-grid">
-  <!-- Left: source code -->
   <div class="preview-card">
     <div class="preview-card-header">
       <h1>{{ template_obj.title }}</h1>
       <div class="preview-card-meta">
         <span class="cat-badge">{{ template_obj.get_category_display }}</span>
-        {% if template_obj.description %}
-          <span class="preview-desc">{{ template_obj.description }}</span>
-        {% endif %}
+        {% if template_obj.zip_file %}<span class="type-badge">ZIP шаблон</span>{% endif %}
+        <span class="main-badge">main: {{ zip_summary.main_file }}</span>
       </div>
+      {% if template_obj.description %}<div class="preview-desc">{{ template_obj.description }}</div>{% endif %}
     </div>
-    <div class="preview-code">
-      <pre class="mono">{{ template_obj.content }}</pre>
-    </div>
+
+    {% if template_obj.zip_file %}
+      <div class="zip-panel">
+        <div class="zip-panel-head">
+          <div class="zip-title">
+            <div class="zip-icon">ZIP</div>
+            <div>
+              <div class="zip-title-main">Архів шаблону</div>
+              <div class="zip-title-sub">{{ zip_summary.file_count }} файлів · entry point: {{ zip_summary.main_file }}</div>
+            </div>
+          </div>
+          <div class="zip-main-status {% if zip_summary.main_file_exists %}ok{% endif %}">{% if zip_summary.main_file_exists %}main знайдено{% else %}main не знайдено{% endif %}</div>
+        </div>
+        <div class="zip-file-list">
+          {% for file in zip_summary.files %}
+            <div class="zip-file-row {% if file.is_main %}is-main{% endif %}">
+              <span>{% if file.is_main %}●{% else %}•{% endif %}</span>
+              <span class="zip-file-name">{{ file.name }}</span>
+              <span class="zip-file-size">{{ file.size }} B</span>
+            </div>
+          {% empty %}
+            <div class="zip-file-row"><span>•</span><span class="zip-file-name">Немає доступних файлів для превʼю</span><span></span></div>
+          {% endfor %}
+          {% if zip_summary.more_count %}<div class="zip-file-row"><span>…</span><span class="zip-file-name">Ще {{ zip_summary.more_count }} файлів</span><span></span></div>{% endif %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if template_obj.content %}
+      <div class="preview-code">
+        <div class="preview-code-title">Inline content</div>
+        <pre class="mono">{{ template_obj.content }}</pre>
+      </div>
+    {% endif %}
   </div>
 
-  <!-- Right: PDF preview -->
   <div class="pdf-card">
     <div class="pdf-card-header">
       <strong>PDF Preview</strong>
-      {% if pdf_exists %}
-        <span class="pdf-status ready"><span class="pdf-status-dot"></span>Готово</span>
-      {% else %}
-        <span class="pdf-status pending"><span class="pdf-status-dot"></span>Генерується...</span>
-      {% endif %}
+      {% if pdf_exists %}<span class="pdf-status ready"><span class="pdf-status-dot"></span>Готово</span>{% else %}<span class="pdf-status pending"><span class="pdf-status-dot"></span>Генерується...</span>{% endif %}
     </div>
     <div class="pdf-canvas">
       {% if pdf_exists %}
@@ -97,7 +111,7 @@
       {% else %}
         <div class="pdf-placeholder">
           <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          PDF генерується у фоні...
+          <span>PDF ще не згенеровано. Перевір main file у шаблоні, якщо ZIP має нестандартну структуру.</span>
         </div>
       {% endif %}
     </div>

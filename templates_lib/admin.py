@@ -5,7 +5,7 @@ from .models import Template
 
 @admin.register(Template)
 class TemplateAdmin(admin.ModelAdmin):
-    list_display = ("id", "title", "category", "markup_type", "has_zip", "is_active", "updated_at")
+    list_display = ("id", "title", "category", "markup_type", "main_file", "has_zip", "is_active", "updated_at")
     list_filter = ("category", "markup_type", "is_active")
     search_fields = ("title", "description")
     fieldsets = (
@@ -14,8 +14,8 @@ class TemplateAdmin(admin.ModelAdmin):
         ("Multifile ZIP (optional)", {
             "description": "Upload a .zip archive to seed new projects with multiple files. "
                            "Files in the ZIP will be extracted into the project alongside the main file. "
-                           "If the ZIP contains main.tex or main.typ it will override the Content field above.",
-            "fields": ("zip_file",),
+                           "Set Main file when the archive entry point is not main.tex/main.typ, for example report/main.tex or thesis.typ.",
+            "fields": ("zip_file", "main_file"),
         }),
     )
 

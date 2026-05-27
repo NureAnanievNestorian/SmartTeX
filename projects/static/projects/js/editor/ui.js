@@ -8,6 +8,7 @@ export const saveHintEl      = document.getElementById("save-hint");
 export const logEl           = document.getElementById("log");
 export const diagListEl      = document.getElementById("diag-list");
 export const diagCountEl     = document.getElementById("diag-count");
+export const diagCountClosedEl = document.getElementById("diag-count-closed");
 export const sbCompileEl     = document.getElementById("sb-compile");
 export const sbLangEl        = document.getElementById("sb-lang");
 export const sbLineColEl     = document.getElementById("sb-linecol");
@@ -19,6 +20,9 @@ export const logPanelBody    = document.getElementById("log-panel-body");
 export const tabProblemsBtn  = document.getElementById("tab-problems-btn");
 export const logToggleBtn    = document.getElementById("log-toggle");
 export const bottomCloseBtn  = document.getElementById("bottom-close-btn");
+export const bottomCollapseBtn = document.getElementById("bottom-collapse-btn");
+export const bottomOpener    = document.getElementById("bottom-opener");
+export const bottomResizeHandle = document.getElementById("bottom-resize");
 export const editorWrapEl    = document.getElementById("editor-wrap");
 export const assetView       = document.getElementById("asset-view");
 export const assetBox        = document.getElementById("asset-box");
@@ -105,6 +109,7 @@ export function setSaveHint(text, type = "") {
 export function switchBottomTab(tab) {
   if (!bottomPanel) return;
   bottomPanel.classList.add("open");
+  bottomPanel.classList.remove("collapsed");
   const diagPanel = document.getElementById("diag-panel");
   if (tab === "log") {
     logToggleBtn?.classList.add("active");
@@ -151,6 +156,10 @@ export function renderDiagnostics(diagnostics, openOutlineLocation) {
   if (!diagListEl || !diagCountEl) return;
   diagCountEl.textContent = String(diagnostics.length);
   diagCountEl.classList.toggle("empty", diagnostics.length === 0);
+  if (diagCountClosedEl) {
+    diagCountClosedEl.textContent = String(diagnostics.length);
+    diagCountClosedEl.classList.toggle("empty", diagnostics.length === 0);
+  }
   if (!diagnostics.length) {
     diagListEl.innerHTML = `<div class="e-empty-card"><strong>No problems</strong>Compile the project to check for errors.</div>`;
     return;
@@ -354,6 +363,87 @@ export function initResizeHandles() {
 
   makeDragger("resize-left", "left");
   makeDragger("resize-right", "right");
+
+  // Bottom panel controls: close, collapse, reopen, vertical resize
+  const BOTTOM_LS_KEY = "editor-bottom-panel-height";
+  const BOTTOM_MIN_H = 92;
+  const BOTTOM_DEFAULT_H = 220;
+
+  function getBottomHeight() {
+    const raw = parseInt(getComputedStyle(bottomPanel || document.documentElement).getPropertyValue("--bottom-panel-h"), 10);
+    return Number.isFinite(raw) ? raw : BOTTOM_DEFAULT_H;
+  }
+
+  function setBottomHeight(h) {
+    if (!bottomPanel) return;
+    const center = document.querySelector(".e-center");
+    const maxH = Math.max(BOTTOM_MIN_H, Math.min(window.innerHeight * 0.6, (center?.clientHeight || window.innerHeight) - 150));
+    const next = clamp(h, BOTTOM_MIN_H, maxH);
+    bottomPanel.style.setProperty("--bottom-panel-h", next + "px");
+    try { localStorage.setItem(BOTTOM_LS_KEY, String(next)); } catch (_) {}
+  }
+
+  try {
+    const savedBottomH = parseInt(localStorage.getItem(BOTTOM_LS_KEY) || "", 10);
+    if (Number.isFinite(savedBottomH)) setBottomHeight(savedBottomH);
+  } catch (_) {}
+
+  function setBottomOpen(open, tab = null) {
+    if (!bottomPanel) return;
+    bottomPanel.classList.toggle("open", !!open);
+    if (!open) {
+      bottomPanel.classList.remove("collapsed");
+      bottomCollapseBtn?.setAttribute("aria-expanded", "false");
+      return;
+    }
+    bottomPanel.classList.remove("collapsed");
+    bottomCollapseBtn?.setAttribute("aria-expanded", "true");
+    if (tab) switchBottomTab(tab);
+  }
+
+  bottomCollapseBtn?.addEventListener("click", e => {
+    e.preventDefault();
+    if (!bottomPanel) return;
+    if (!bottomPanel.classList.contains("open")) {
+      setBottomOpen(true);
+      return;
+    }
+    const willCollapse = !bottomPanel.classList.contains("collapsed");
+    bottomPanel.classList.toggle("collapsed", willCollapse);
+    bottomCollapseBtn.setAttribute("aria-expanded", willCollapse ? "false" : "true");
+  });
+
+  bottomCloseBtn?.addEventListener("click", e => {
+    e.preventDefault();
+    setBottomOpen(false);
+  });
+
+  bottomOpener?.querySelectorAll("[data-open-bottom]").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.preventDefault();
+      setBottomOpen(true, btn.dataset.openBottom || "problems");
+    });
+  });
+
+  bottomResizeHandle?.addEventListener("mousedown", e => {
+    if (!bottomPanel || bottomPanel.classList.contains("collapsed")) return;
+    e.preventDefault();
+    bottomPanel.classList.add("open");
+    bottomResizeHandle.classList.add("dragging");
+    const startY = e.clientY;
+    const startH = bottomPanel.getBoundingClientRect().height || getBottomHeight();
+
+    function onMove(me) {
+      setBottomHeight(startH + (startY - me.clientY));
+    }
+    function onUp() {
+      bottomResizeHandle.classList.remove("dragging");
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
 
   // Outline vertical resize
   const outlineHandle = document.getElementById("resize-outline");
