@@ -14,16 +14,20 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
 from accounts.auth_helpers import get_api_user
-from SmartTeX.markup import MarkupType
+from SmartTeX.markup import MarkupType, source_filename_for_markup
 from templates_lib.models import Template
 
-from .models import Project
+from .models import Project, ProjectVersion
 from .services import (
+    ALLOWED_UPLOAD_EXTENSIONS,
     build_version_diff,
+    compile_state_for_status,
+    commit_project_text_changes,
     compile_project,
     create_project_directory,
     create_project_text_file,
     create_project_version,
+    create_text_project_version,
     delete_project_asset,
     delete_project_files,
     get_project_version,
@@ -35,11 +39,13 @@ from .services import (
     list_project_assets,
     list_source_sections,
     main_source_filename,
+    parse_compile_diagnostics,
     pdf_file_path,
     project_pdf_download_name,
     pdf_relative_url,
     pdf_version,
     project_asset_path,
+    project_dir,
     read_compile_log,
     read_project_asset_content,
     write_project_asset_text,
@@ -115,6 +121,18 @@ def _compile_project_after_create(project: Project) -> None:
     project.save(update_fields=["last_status", "updated_at"])
 
 
+def _compile_payload(project: Project, *, status: str, log: str, request_mode: str) -> dict[str, object]:
+    diagnostics = parse_compile_diagnostics(project, log)
+    return {
+        "status": status,
+        "compile_state": compile_state_for_status(status, request_mode=request_mode),
+        "pdf_url": pdf_relative_url(project) if has_pdf(project) else None,
+        "pdf_version": pdf_version(project),
+        "log": log,
+        "diagnostics": diagnostics,
+    }
+
+
 def _change_meta(request: HttpRequest, body: dict | None = None) -> dict:
     body = body or {}
     source = (
@@ -150,6 +168,33 @@ def _default_content_for_markup(markup_type: str) -> str:
     if markup_type == MarkupType.TYPST:
         return DEFAULT_TYPST
     return DEFAULT_LATEX
+
+
+def _default_change_summary(operation: str, target: str = "") -> str:
+    label = target.strip() if target else "document"
+    mapping = {
+        "create_project": "Initialized project",
+        "update_project_file": f"Updated {label}",
+        "write_project_window": f"Edited {label}",
+        "create_project_file": f"Created {label}",
+        "update_project_asset": f"Updated {label}",
+        "delete_project_file": f"Deleted {label}",
+        "rename_project_file": f"Renamed {label}",
+        "update_project_section": f"Updated section in {label}",
+        "insert_text_at_position": f"Inserted text into {label}",
+        "rollback": f"Rolled back {label}",
+        "create_project_folder": f"Created folder {label}",
+        "upload_project_file": f"Uploaded file {label}",
+    }
+    return mapping.get(operation, f"Updated {label}")
+
+
+def _read_text_target(project: Project, file_name: str) -> str:
+    target = str(file_name or main_source_filename(project)).strip() or main_source_filename(project)
+    if target == main_source_filename(project):
+        return read_source_content(project)
+    payload = read_project_asset_content(project, target, include_text=True)
+    return str(payload.get("text_content") or "")
 
 
 def _normalize_markup_type(raw_value: object) -> str:
@@ -280,17 +325,22 @@ def api_projects(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"detail": "Template content exceeds 1MB"}, status=400)
 
     with transaction.atomic():
-        project = Project.objects.create(owner=user, title=title, template=template_obj, markup_type=markup_type)
+        project = Project.objects.create(
+            owner=user,
+            title=title,
+            template=template_obj,
+            markup_type=markup_type,
+        )
         initialize_main_source(project, content)
-        create_project_version(
+        create_text_project_version(
             project=project,
             actor=user,
             source="api",
             operation="create_project",
             target=main_source_filename(project),
-            summary="Initial project document",
-            before_content="",
-            after_content=content,
+            target_file=main_source_filename(project),
+            summary=_default_change_summary("create_project", main_source_filename(project)),
+            tracked_files=[main_source_filename(project)],
         )
     _compile_project_after_create(project)
     return JsonResponse(_project_payload(project), status=201)
@@ -312,10 +362,20 @@ def api_project_detail(request: HttpRequest, project_id: int) -> JsonResponse:
 
     if request.method == "PATCH":
         body = _json_body(request)
+        update_fields = ["updated_at"]
         title = body.get("title", "").strip()
         if title:
             project.title = title
-            project.save(update_fields=["title", "updated_at"])
+            update_fields.append("title")
+        if "main_file" in body:
+            new_main = str(body["main_file"] or "").strip()
+            if new_main:
+                main_path = project_dir(project) / new_main
+                if not main_path.exists():
+                    return JsonResponse({"error": "file not found"}, status=400)
+            project.main_file = new_main
+            update_fields.append("main_file")
+        project.save(update_fields=update_fields)
         return JsonResponse(_project_payload(project))
 
     delete_project_files(project)
@@ -350,16 +410,15 @@ def api_project_file(request: HttpRequest, project_id: int) -> JsonResponse:
     write_source_content(project, content)
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
-    if meta["source"] == "mcp" and before != content:
-        create_project_version(
+    if before != content and meta["source"] == "mcp":
+        create_text_project_version(
             project=project,
             actor=user,
             source=meta["source"],
             operation="update_project_file",
             target=main_source_filename(project),
-            summary=meta["summary"],
-            before_content=before,
-            after_content=content,
+            target_file=main_source_filename(project),
+            summary=meta["summary"] or _default_change_summary("update_project_file", main_source_filename(project)),
         )
     return JsonResponse({"detail": "saved"})
 
@@ -442,11 +501,12 @@ def api_project_write_window(request: HttpRequest, project_id: int) -> JsonRespo
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    before = read_source_content(project)
+    target_file = str(body.get("file_name") or main_source_filename(project))
+    before_text = _read_text_target(project, target_file)
     try:
         payload = write_project_window(
             project,
-            file_name=str(body.get("file_name") or main_source_filename(project)),
+            file_name=target_file,
             replacement=replacement,
             start_line=_to_int(body.get("start_line")),
             end_line=_to_int(body.get("end_line")),
@@ -458,18 +518,17 @@ def api_project_write_window(request: HttpRequest, project_id: int) -> JsonRespo
 
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
-    after = read_source_content(project)
-    if meta["source"] == "mcp" and before != after:
+    after_text = _read_text_target(project, target_file)
+    if before_text != after_text and meta["source"] == "mcp":
         target = f"{payload.get('file_name', main_source_filename(project))}:{payload.get('mode', 'window')}"
-        create_project_version(
+        create_text_project_version(
             project=project,
             actor=user,
             source=meta["source"],
             operation="write_project_window",
             target=target,
-            summary=meta["summary"],
-            before_content=before,
-            after_content=after,
+            target_file=str(payload.get("file_name") or target_file),
+            summary=meta["summary"] or _default_change_summary("write_project_window", str(payload.get("file_name") or target_file)),
         )
     return JsonResponse(payload)
 
@@ -510,8 +569,8 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
             project.save(update_fields=["last_status", "updated_at"])
             return JsonResponse({"files": created}, status=201)
 
-        if upload_ext not in IMAGE_EXTENSIONS | TEXT_EXTENSIONS:
-            return JsonResponse({"detail": "Only image and text file uploads are allowed"}, status=400)
+        if upload_ext not in ALLOWED_UPLOAD_EXTENSIONS:
+            return JsonResponse({"detail": "Unsupported file type"}, status=400)
         try:
             if upload_ext in TEXT_EXTENSIONS:
                 text_content = upload.read().decode("utf-8")
@@ -522,29 +581,31 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
             return JsonResponse({"detail": str(exc)}, status=400)
         project.last_status = Project.CompileStatus.PENDING
         project.save(update_fields=["last_status", "updated_at"])
-        if meta["source"] == "mcp":
-            if asset.get("is_text"):
-                create_project_version(
-                    project=project,
-                    actor=user,
-                    source=meta["source"],
-                    operation="create_project_file",
-                    target=asset["name"],
-                    summary=meta["summary"],
-                    before_content="",
-                    after_content=text_content,
-                )
-            else:
-                create_project_version(
-                    project=project,
-                    actor=user,
-                    source=meta["source"],
-                    operation="upload_project_file",
-                    target=asset["name"],
-                    summary=meta["summary"],
-                    before_content="",
-                    after_content=f"[binary upload] {asset['name']} ({asset['size']} bytes)",
-                )
+        if asset.get("is_text"):
+            create_text_project_version(
+                project=project,
+                actor=user,
+                source=meta["source"],
+                operation="create_project_file",
+                target=asset["name"],
+                target_file=asset["name"],
+                summary=meta["summary"] or _default_change_summary("create_project_file", asset["name"]),
+            )
+        else:
+            create_project_version(
+                project=project,
+                actor=user,
+                source=meta["source"],
+                operation="upload_project_file",
+                target=asset["name"],
+                target_file=asset["name"],
+                summary=meta["summary"] or _default_change_summary("upload_project_file", asset["name"]),
+                before_content="",
+                after_content="",
+                snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+                event_payload={"name": asset["name"], "size": asset["size"], "kind": "binary_upload"},
+                is_revertible=False,
+            )
         return JsonResponse(asset, status=201)
 
     body = raw_body
@@ -561,24 +622,28 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
             return JsonResponse({"detail": str(exc)}, status=400)
         project.last_status = Project.CompileStatus.PENDING
         project.save(update_fields=["last_status", "updated_at"])
-        if meta["source"] == "mcp":
-            create_project_version(
-                project=project,
-                actor=user,
-                source=meta["source"],
-                operation="create_project_folder",
-                target=asset["name"],
-                summary=meta["summary"],
-                before_content="",
-                after_content=f"[folder] {asset['name']}",
-            )
+        create_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="create_project_folder",
+            target=asset["name"],
+            target_file=asset["name"],
+            summary=meta["summary"] or _default_change_summary("create_project_folder", asset["name"]),
+            before_content="",
+            after_content="",
+            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+            event_payload={"name": asset["name"], "kind": "folder_create"},
+            is_revertible=False,
+        )
         return JsonResponse(asset, status=201)
     if content_base64 is None and text_content is None:
         return JsonResponse({"detail": "content_base64 or text_content is required"}, status=400)
     ext = _ext_from_name(filename)
     is_image = ext in IMAGE_EXTENSIONS
     is_text = ext in TEXT_EXTENSIONS
-    if not is_image and not is_text:
+    is_pdf = ext == ".pdf"
+    if not is_image and not is_text and not is_pdf:
         return JsonResponse({"detail": "Unsupported file type"}, status=400)
 
     try:
@@ -598,29 +663,31 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
         return JsonResponse({"detail": str(exc)}, status=400)
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
-    if meta["source"] == "mcp":
-        if is_text:
-            create_project_version(
-                project=project,
-                actor=user,
-                source=meta["source"],
-                operation="create_project_file",
-                target=asset["name"],
-                summary=meta["summary"],
-                before_content="",
-                after_content=decoded_text,
-            )
-        else:
-            create_project_version(
-                project=project,
-                actor=user,
-                source=meta["source"],
-                operation="upload_project_file",
-                target=asset["name"],
-                summary=meta["summary"],
-                before_content="",
-                after_content=f"[binary upload] {asset['name']} ({asset['size']} bytes)",
-            )
+    if is_text:
+        create_text_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="create_project_file",
+            target=asset["name"],
+            target_file=asset["name"],
+            summary=meta["summary"] or _default_change_summary("create_project_file", asset["name"]),
+        )
+    else:
+        create_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="upload_project_file",
+            target=asset["name"],
+            target_file=asset["name"],
+            summary=meta["summary"] or _default_change_summary("upload_project_file", asset["name"]),
+            before_content="",
+            after_content="",
+            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+            event_payload={"name": asset["name"], "size": asset["size"], "kind": "binary_upload"},
+            is_revertible=False,
+        )
     return JsonResponse(asset, status=201)
 
 
@@ -660,18 +727,49 @@ def api_project_asset(request: HttpRequest, project_id: int, filename: str):
         return JsonResponse({"detail": message}, status=status)
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
-
-    if meta["source"] == "mcp":
-        deleted_name = str(payload.get("name") or filename)
+    deleted_name = str(payload.get("name") or filename)
+    deleted_is_text = bool(payload.get("is_text"))
+    if deleted_is_text:
+        commit_info = commit_project_text_changes(
+            project,
+            summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
+            operation="delete_project_file",
+            source=meta["source"],
+            target_files=[deleted_name],
+        )
         create_project_version(
             project=project,
             actor=user,
             source=meta["source"],
             operation="delete_project_file",
             target=deleted_name,
-            summary=meta["summary"],
-            before_content=f"[binary file] {deleted_name}",
+            target_file=deleted_name,
+            summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
+            before_content="",
             after_content="",
+            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+            event_payload={
+                "name": deleted_name,
+                "kind": "text_delete",
+                "git_commit": commit_info.commit_hash or "",
+                "before_commit": commit_info.before_commit or "",
+            },
+            is_revertible=bool(commit_info.before_commit),
+        )
+    else:
+        create_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="delete_project_file",
+            target=deleted_name,
+            target_file=deleted_name,
+            summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
+            before_content="",
+            after_content="",
+            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+            event_payload={"name": deleted_name, "kind": "binary_delete"},
+            is_revertible=False,
         )
     return JsonResponse(payload)
 
@@ -699,6 +797,11 @@ def api_project_asset_content(request: HttpRequest, project_id: int, filename: s
     if not isinstance(content, str):
         return JsonResponse({"detail": "content must be a string"}, status=400)
     try:
+        meta = _change_meta(request, body)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    before_text = _read_text_target(project, filename)
+    try:
         payload = write_project_asset_text(project, filename, content)
     except ValueError as exc:
         message = str(exc)
@@ -706,6 +809,16 @@ def api_project_asset_content(request: HttpRequest, project_id: int, filename: s
         return JsonResponse({"detail": message}, status=status)
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
+    if before_text != content:
+        create_text_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="update_project_asset",
+            target=filename,
+            target_file=filename,
+            summary=meta["summary"] or _default_change_summary("update_project_asset", filename),
+        )
     return JsonResponse(payload)
 
 
@@ -734,19 +847,51 @@ def api_project_asset_rename(request: HttpRequest, project_id: int, filename: st
         status = 404 if message == "file not found" else 400
         return JsonResponse({"detail": message}, status=status)
 
-    if meta["source"] == "mcp":
-        old_name = str(payload.get("old_name") or filename)
-        new_name = str(payload.get("name") or new_filename)
-        if old_name != new_name:
+    old_name = str(payload.get("old_name") or filename)
+    new_name = str(payload.get("name") or new_filename)
+    if old_name != new_name:
+        if bool(payload.get("is_text")):
+            commit_info = commit_project_text_changes(
+                project,
+                summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
+                operation="rename_project_file",
+                source=meta["source"],
+                target_files=[old_name, new_name],
+            )
             create_project_version(
                 project=project,
                 actor=user,
                 source=meta["source"],
                 operation="rename_project_file",
                 target=f"{old_name}->{new_name}",
-                summary=meta["summary"],
-                before_content=f"[binary file] {old_name}",
-                after_content=f"[binary file] {new_name}",
+                target_file=new_name,
+                summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
+                before_content="",
+                after_content="",
+                snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+                event_payload={
+                    "old_name": old_name,
+                    "new_name": new_name,
+                    "kind": "text_rename",
+                    "git_commit": commit_info.commit_hash or "",
+                    "before_commit": commit_info.before_commit or "",
+                },
+                is_revertible=bool(commit_info.before_commit),
+            )
+        else:
+            create_project_version(
+                project=project,
+                actor=user,
+                source=meta["source"],
+                operation="rename_project_file",
+                target=f"{old_name}->{new_name}",
+                target_file=new_name,
+                summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
+                before_content="",
+                after_content="",
+                snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+                event_payload={"old_name": old_name, "new_name": new_name, "kind": "binary_rename"},
+                is_revertible=False,
             )
     return JsonResponse(payload)
 
@@ -759,6 +904,37 @@ def api_project_sections(request: HttpRequest, project_id: int) -> JsonResponse:
         return _unauthorized()
     project = _project_with_owner(project_id, user)
     return JsonResponse({"sections": list_source_sections(project)})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_typst_import(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    if not request.FILES.get("file"):
+        return JsonResponse({"detail": "file is required"}, status=400)
+
+    zip_bytes = request.FILES["file"].read()
+    try:
+        created = extract_project_zip(project, zip_bytes)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    project.last_status = Project.CompileStatus.PENDING
+    project.save(update_fields=["last_status", "updated_at"])
+    create_text_project_version(
+        project=project,
+        actor=user,
+        source="web",
+        operation="import_zip",
+        target=main_source_filename(project),
+        target_file=main_source_filename(project),
+        summary="Imported ZIP",
+    )
+    return JsonResponse({"files": created}, status=201)
 
 
 @csrf_exempt
@@ -785,25 +961,24 @@ def api_project_section(request: HttpRequest, project_id: int, section_index: in
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    before_file = read_source_content(project)
+    section_before = get_source_section(project, section_index)
     try:
         payload = update_source_section(project, section_index, content)
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
-    after_file = read_source_content(project)
 
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
-    if meta["source"] == "mcp" and before_file != after_file:
-        create_project_version(
+    if section_before.get("content") != payload.get("content"):
+        target_file = str(payload.get("file_name") or main_source_filename(project))
+        create_text_project_version(
             project=project,
             actor=user,
             source=meta["source"],
             operation="update_project_section",
-            target=f"{main_source_filename(project)}:section:{section_index}",
-            summary=meta["summary"],
-            before_content=before_file,
-            after_content=after_file,
+            target=f"{target_file}:section:{section_index}",
+            target_file=target_file,
+            summary=meta["summary"] or _default_change_summary("update_project_section", target_file),
         )
     return JsonResponse(payload)
 
@@ -832,20 +1007,19 @@ def api_project_insert(request: HttpRequest, project_id: int) -> JsonResponse:
         result = insert_text_at_position(project, position, text)
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
-    after = read_source_content(project)
 
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
-    if meta["source"] == "mcp" and before != after:
-        create_project_version(
+    after = read_source_content(project)
+    if before != after:
+        create_text_project_version(
             project=project,
             actor=user,
             source=meta["source"],
             operation="insert_text_at_position",
             target=f"{main_source_filename(project)}:char:{position}",
-            summary=meta["summary"],
-            before_content=before,
-            after_content=after,
+            target_file=main_source_filename(project),
+            summary=meta["summary"] or _default_change_summary("insert_text_at_position", main_source_filename(project)),
         )
     return JsonResponse(result)
 
@@ -868,7 +1042,8 @@ def api_project_versions(request: HttpRequest, project_id: int) -> JsonResponse:
             before_id = int(raw_before)
         except ValueError:
             return JsonResponse({"detail": "before_id must be an integer"}, status=400)
-    return JsonResponse(list_project_versions(project, limit=limit, before_id=before_id))
+    file_filter = request.GET.get("file") or None
+    return JsonResponse(list_project_versions(project, limit=limit, before_id=before_id, file_filter=file_filter))
 
 
 @csrf_exempt
@@ -888,6 +1063,10 @@ def api_project_version_detail(request: HttpRequest, project_id: int, version_id
             "source": version.source,
             "operation": version.operation,
             "target": version.target,
+            "target_file": version.target_file,
+            "snapshot_kind": version.snapshot_kind,
+            "event_payload": version.event_payload,
+            "is_revertible": version.is_revertible,
             "summary": version.summary,
             "created_at": version.created_at.isoformat(),
             "actor": version.actor.username if version.actor else None,
@@ -917,25 +1096,26 @@ def api_project_version_rollback(request: HttpRequest, project_id: int, version_
     except Exception:
         return JsonResponse({"detail": "version not found"}, status=404)
 
-    before = read_source_content(project)
+    rollback_target = version.target_file or main_source_filename(project)
+    before = _read_text_target(project, rollback_target)
     try:
         rollback_to_version(project, version)
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
-    after = read_source_content(project)
+    after = _read_text_target(project, rollback_target)
 
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
-    create_project_version(
-        project=project,
-        actor=user,
-        source=meta["source"],
-        operation="rollback",
-        target=main_source_filename(project),
-        summary=rollback_summary,
-        before_content=before,
-        after_content=after,
-    )
+    if before != after:
+        create_text_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="rollback",
+            target=rollback_target,
+            target_file=rollback_target,
+            summary=rollback_summary,
+        )
     return JsonResponse({"detail": "rolled back", "version_id": version_id})
 
 
@@ -952,23 +1132,34 @@ def api_project_compile(request: HttpRequest, project_id: int) -> JsonResponse:
         result = compile_project(project)
         project.last_status = result.status
         project.save(update_fields=["last_status", "updated_at"])
-        return JsonResponse(
-            {
-                "status": project.last_status,
-                "pdf_url": pdf_relative_url(project) if has_pdf(project) else None,
-                "pdf_version": pdf_version(project),
-                "log": result.log,
-            }
+        commit_info = commit_project_text_changes(
+            project,
+            summary="Compiled",
+            operation="compile",
+            source="web",
+            target_files=[],
         )
+        if commit_info.commit_hash:
+            create_project_version(
+                project=project,
+                actor=user,
+                source="web",
+                operation="compile",
+                target=main_source_filename(project),
+                target_file=main_source_filename(project),
+                summary="Compiled",
+                before_content="",
+                after_content="",
+                snapshot_kind=ProjectVersion.SnapshotKind.TEXT,
+                event_payload={
+                    "git_commit": commit_info.commit_hash,
+                    "before_commit": commit_info.before_commit or "",
+                },
+                is_revertible=True,
+            )
+        return JsonResponse(_compile_payload(project, status=project.last_status, log=result.log, request_mode="compile"))
 
-    return JsonResponse(
-        {
-            "status": project.last_status,
-            "pdf_url": pdf_relative_url(project) if has_pdf(project) else None,
-            "pdf_version": pdf_version(project),
-            "log": read_compile_log(project),
-        }
-    )
+    return JsonResponse(_compile_payload(project, status=project.last_status, log=read_compile_log(project), request_mode="read"))
 
 
 @csrf_exempt
@@ -1081,13 +1272,19 @@ def create_project_from_dashboard(request: HttpRequest):
         markup_type = _normalize_markup_type(requested_markup_type)
     except ValueError:
         markup_type = MarkupType.LATEX
+
+    template_zip = None
     content = _default_content_for_markup(markup_type)
     if template_id:
         template_obj = get_object_or_404(Template, id=template_id, is_active=True)
         markup_type = template_obj.markup_type
-        content = template_obj.content
+        content = template_obj.content or _default_content_for_markup(markup_type)
+        if template_obj.zip_file:
+            template_zip = template_obj.zip_file
 
-    if is_source_too_large(content):
+    zip_only = template_zip and not (template_obj and template_obj.content)
+
+    if not zip_only and is_source_too_large(content):
         return HttpResponseForbidden("Template file exceeds 1MB")
 
     with transaction.atomic():
@@ -1097,16 +1294,41 @@ def create_project_from_dashboard(request: HttpRequest):
             template=template_obj,
             markup_type=markup_type,
         )
-        initialize_main_source(project, content)
-        create_project_version(
-            project=project,
-            actor=request.user,
-            source="web",
-            operation="create_project",
-            target=main_source_filename(project),
-            summary="Initial project document",
-            before_content="",
-            after_content=content,
-        )
+        if not zip_only:
+            initialize_main_source(project, content)
+            create_text_project_version(
+                project=project,
+                actor=request.user,
+                source="web",
+                operation="create_project",
+                target=main_source_filename(project),
+                target_file=main_source_filename(project),
+                summary=_default_change_summary("create_project", main_source_filename(project)),
+            )
+
+    if template_zip:
+        try:
+            zip_bytes = template_zip.read()
+            created = extract_project_zip(project, zip_bytes, allow_main_override=True)
+            # Auto-detect main file from the ZIP if not already set
+            if zip_only:
+                default_main = source_filename_for_markup(markup_type)
+                main_candidates = [f["name"] for f in created if f["name"] in (default_main, "main.tex", "main.typ")]
+                detected = main_candidates[0] if main_candidates else (created[0]["name"] if created else None)
+                if detected:
+                    project.main_file = detected
+                    project.save(update_fields=["main_file"])
+            create_text_project_version(
+                project=project,
+                actor=request.user,
+                source="web",
+                operation="import_zip",
+                target=main_source_filename(project),
+                target_file=main_source_filename(project),
+                summary=f"Initialized from template ZIP: {template_obj.title}",
+            )
+        except (ValueError, OSError):
+            pass
+
     _compile_project_after_create(project)
     return redirect("projects:editor", project_id=project.id)

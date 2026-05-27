@@ -16,6 +16,7 @@ RUN set -eux; \
       libpq-dev \
       docker-cli \
       curl \
+      git \
       xz-utils \
       fontconfig \
       cabextract \

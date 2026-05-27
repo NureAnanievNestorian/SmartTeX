@@ -124,6 +124,18 @@ def _call(method: str, path: str, data: dict[str, Any] | None = None) -> Any:
     return {"status_code": response.status_code, "text": response.text}
 
 
+def _call_upload(path: str, file_bytes: bytes, filename: str = "upload.zip") -> Any:
+    url = f"{BASE_URL}{path}"
+    headers = {k: v for k, v in _headers().items() if k.lower() != "accept"}
+    with httpx.Client(timeout=120, headers=headers) as client:
+        response = client.post(url, files={"file": (filename, file_bytes, "application/octet-stream")})
+    response.raise_for_status()
+    ctype = response.headers.get("content-type", "")
+    if "application/json" in ctype:
+        return response.json()
+    return {"status_code": response.status_code, "text": response.text}
+
+
 def _require_summary(change_summary: str) -> str:
     summary = (change_summary or "").strip()
     if not summary:
@@ -269,6 +281,7 @@ def _compact_sections_payload(payload: dict[str, Any], compact: bool = True) -> 
             continue
         compact_sections.append(
             {
+                "file_name": section.get("file_name"),
                 "index": section.get("index"),
                 "level": section.get("level"),
                 "command": section.get("command"),
@@ -297,6 +310,7 @@ def _compact_single_section_payload(
 
     content = str(payload.get("content") or "")
     compact: dict[str, Any] = {
+        "file_name": payload.get("file_name"),
         "index": payload.get("index"),
         "command": payload.get("command"),
         "level": payload.get("level"),
@@ -548,9 +562,11 @@ mcp = FastMCP(
     - If `markup_type == "latex"`: write LuaLaTeX-compatible code only (`fontspec`, `unicode-math`; no `inputenc`).
     - If `markup_type == "typst"`: write valid Typst syntax only (`#set`, `#show`, `= Heading`).
     - Never mix LaTeX and Typst syntax in one file.
+    - The active main source file is `main_file_name` from project metadata (defaults to `main.tex` or `main.typ`).
 
     ### Before any edit — mandatory orientation
-    1. Call `list_project_sections` (compact=True) — understand structure, get line ranges.
+    1. Call `list_project_sections` (compact=True) — understand structure and get line ranges.
+       Each section now includes `file_name` — note which file it belongs to before editing.
     2. Assume the document is NOT empty. Read before writing.
     3. NEVER call `get_project_file` to read the entire file.
     4. Read only what you need — section content or a narrow window.
@@ -562,27 +578,40 @@ mcp = FastMCP(
     | Need content of one section | `get_project_section` include_content=True |
     | Section is large, need only a fragment | `read_project_window` with exact start_line/end_line |
     | Don't know where something is | `search_project_content` first, then read that window |
+    | Need content of an auxiliary file | `get_project_file_content(include_text=True)` |
 
     ### Choosing the right edit strategy
     Priority order — always use the most targeted option available:
 
     1. **`replace_in_project_file`** — for repetitive pattern-based changes across the file (rename a label, fix recurring syntax). Always use `dry_run=True` first to verify scope.
-    2. **`update_project_section`** — for meaningful content changes within a named section.
-    3. **`rewrite_project_window`** — for targeted changes within a section: if the edit touches only a small fragment of a large section, use `search_project_content` or `list_project_sections` to find the exact line range, then rewrite only those lines.
+    2. **`update_project_section`** — for meaningful content changes within a named section. Uses the section's `file_name` automatically.
+    3. **`rewrite_project_window`** — for targeted changes within a section or auxiliary file. Pass explicit `file_name` for non-main files. Use `search_project_content` or `list_project_sections` to get the exact line range.
     4. **`update_project_file`** — ONLY if user explicitly requests a full document replacement. Never use speculatively.
 
     **Key principle**: the edit scope must match the change scope. Rewriting 200 lines to change 3 is always wrong.
 
     ### Working with project files
-    - Typical Typst projects use `main.typ` plus extra `.typ` files such as `chapters/intro.typ`.
-    - Typical LaTeX projects use `main.tex` plus helper files such as `.sty`, `.cls`, `.bib`.
-    - To inspect project entries (files and folders), use `list_project_files`.
+    - Typst projects have a multi-file structure: `main.typ` orchestrates chapter files like `chapters/01-introduction.typ`.
+    - LaTeX projects use `main.tex` plus helpers such as `.sty`, `.cls`, `.bib`.
+    - Sections returned by `list_project_sections` include `file_name` — use it to target the right file for edits.
+    - To inspect all project entries (files and folders), use `list_project_files`.
     - To read an auxiliary text file, use `get_project_file_content(include_text=True)`.
     - To create a new text file, use `create_project_text_file`.
     - To create a new folder, use `create_project_folder`.
     - To rename/delete entries, use `rename_project_file` / `delete_project_file`.
     - To edit an existing auxiliary text file, use `rewrite_project_window` with explicit `file_name`.
-    - For Typst multi-file projects: changing any imported `.typ` file still requires compile to update PDF.
+    - To import a ZIP archive into a Typst project, use `import_project_zip` with the ZIP as base64.
+    - Changing any imported `.typ` file still requires compile to update PDF.
+
+    ### Version history
+    - `list_project_versions` returns a compacted history with `target_file` and `is_revertible`.
+    - Use `file_filter` to scope history to a single file (e.g. `file_filter="chapters/intro.typ"`).
+    - Only versions with `is_revertible=True` can be rolled back via `rollback_project_version`.
+    - Compile results also appear in version history (operation=`compile`).
+
+    ### Compile results
+    - Compile payloads now include `compile_state` (`synced`/`failed`/`out_of_date`) and `diagnostics` (list of `{file, line, column, severity, message}`).
+    - Use `diagnostics` to locate errors precisely instead of grepping the raw log.
 
     ### Preserving document integrity
     - Always read the current content of what you're about to change before writing.
@@ -597,7 +626,7 @@ mcp = FastMCP(
 
     ### Compilation
     - Do NOT compile unless user explicitly asks.
-    - To fix compilation errors: `get_compile_log` → locate via `search_project_content` → fix with targeted edit → then compile.
+    - To fix compilation errors: `get_compile_log` → check `diagnostics` for exact location → fix with targeted edit → then compile.
     - SyncTeX mappings are available only for LaTeX projects. Do not call SyncTeX tools for Typst.
 
     ### What never to do
@@ -1114,8 +1143,6 @@ async def insert_text_at_position(
     """Insert text into the main source file using absolute char `position` or 1-based `line`/`column`."""
     summary = _require_summary(change_summary)
     resolved_file_name = file_name or _project_main_file_name(project_id)
-    if resolved_file_name not in {"main.tex", "main.typ"}:
-        raise ValueError("insert_text_at_position supports main source file only")
     if position is None:
         if line is None:
             raise ValueError("provide either position or line")
@@ -1351,9 +1378,18 @@ def synctex_page_to_line(project_id: int, page: int, x: float, y: float) -> dict
 
 
 @mcp.tool
-def list_project_versions(project_id: int, compact: bool = True, limit: int = 20) -> dict[str, Any]:
+def list_project_versions(
+        project_id: int,
+        compact: bool = True,
+        limit: int = 20,
+        file_filter: str | None = None,
+) -> dict[str, Any]:
+    """List version history for a project. Use `file_filter` to restrict to a specific file."""
     safe_limit = max(1, min(int(limit), 100))
-    payload = _call("GET", f"/api/projects/{project_id}/versions/?{urlencode({'limit': safe_limit})}")
+    params: dict[str, Any] = {"limit": safe_limit}
+    if file_filter:
+        params["file"] = file_filter
+    payload = _call("GET", f"/api/projects/{project_id}/versions/?{urlencode(params)}")
     if not compact or not isinstance(payload, dict):
         return payload
     versions = payload.get("versions")
@@ -1367,6 +1403,8 @@ def list_project_versions(project_id: int, compact: bool = True, limit: int = 20
                 "version": item.get("number"),
                 "source": item.get("source"),
                 "operation": item.get("operation"),
+                "target_file": item.get("target_file"),
+                "is_revertible": item.get("is_revertible"),
                 "summary": item.get("summary"),
                 "created_at": item.get("created_at"),
             }
@@ -1452,6 +1490,28 @@ def list_templates() -> list[dict[str, Any]]:
         compact_item = {k: v for k, v in item.items() if k != "content"}
         cleaned.append(compact_item)
     return cleaned
+
+
+@mcp.tool
+async def import_project_zip(
+        project_id: int,
+        zip_base64: str,
+        ctx: Context,
+) -> dict[str, Any]:
+    """Import a ZIP archive into a Typst project, replacing or adding files.
+
+    Pass the ZIP file contents as a base64-encoded string in `zip_base64`.
+    The endpoint extracts text and binary assets into the project directory.
+    Returns the list of files that were created or updated.
+    """
+    import base64
+    try:
+        zip_bytes = base64.b64decode(zip_base64)
+    except Exception as exc:
+        raise ValueError(f"zip_base64 is not valid base64: {exc}") from exc
+    result = _call_upload(f"/api/projects/{project_id}/typst-import/", zip_bytes, filename="import.zip")
+    await _notify_project_write_updates(ctx, project_id)
+    return result if isinstance(result, dict) else {"files": result}
 
 
 @mcp.resource(

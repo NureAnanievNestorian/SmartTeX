@@ -6,6 +6,8 @@ import difflib
 import base64
 import io
 import zipfile
+import os
+import logging
 from datetime import datetime, UTC
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,11 +20,13 @@ from SmartTeX.markup import MarkupType, source_filename_for_markup
 
 from .models import Project, ProjectVersion
 
+logger = logging.getLogger(__name__)
+
 COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=3)
 TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
 ALLOWED_UPLOAD_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
-MAX_PROJECT_FILES_TOTAL_SIZE = 20 * 1024 * 1024
+MAX_PROJECT_FILES_TOTAL_SIZE = int(getattr(settings, "MAX_PROJECT_TOTAL_SIZE", 64 * 1024 * 1024))
 PROTECTED_FILENAMES = {"main.tex", "main.typ", "main.pdf", "main.log"}
 LATEX_ARTIFACT_EXTENSIONS = {
     ".aux",
@@ -65,10 +69,19 @@ TYPST_HEADING_RE = re.compile(r"^(?P<marks>={1,6})\s+(?P<title>.+?)\s*$", flags=
 class CompileResult:
     status: str
     log: str
+    diagnostics: list[dict[str, Any]] | None = None
+    compile_state: str = "failed"
+
+
+@dataclass
+class GitCommitInfo:
+    before_commit: str | None
+    commit_hash: str | None
 
 
 @dataclass
 class SectionChunk:
+    file_name: str
     index: int
     command: str
     level: int
@@ -84,8 +97,12 @@ def project_dir(project: Project) -> Path:
     return settings.MEDIA_ROOT / "projects" / str(project.owner_id) / str(project.id)
 
 
+def project_git_dir(project: Project) -> Path:
+    return project_dir(project) / ".smarttex-git"
+
+
 def main_source_filename(project: Project) -> str:
-    return source_filename_for_markup(project.markup_type)
+    return project.main_file or source_filename_for_markup(project.markup_type)
 
 
 def source_file_path(project: Project) -> Path:
@@ -115,6 +132,168 @@ def ensure_project_dir(project: Project) -> Path:
     root = project_dir(project)
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _hidden_repo_backup_dir(project: Project) -> Path:
+    stamp = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+    return project_dir(project) / f".smarttex-git.corrupt-{stamp}"
+
+
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("GIT_AUTHOR_NAME", "SmartTeX")
+    env.setdefault("GIT_AUTHOR_EMAIL", "smarttex@local")
+    env.setdefault("GIT_COMMITTER_NAME", "SmartTeX")
+    env.setdefault("GIT_COMMITTER_EMAIL", "smarttex@local")
+    return env
+
+
+def _git_executable() -> str | None:
+    return shutil.which("git")
+
+
+def _run_project_git(project: Project, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    git_executable = _git_executable()
+    if not git_executable:
+        raise RuntimeError("git executable is not available")
+    ensure_project_dir(project)
+    git_dir = project_git_dir(project)
+    cmd = [
+        git_executable,
+        f"--git-dir={git_dir}",
+        f"--work-tree={project_dir(project)}",
+        *args,
+    ]
+    proc = subprocess.run(
+        cmd,
+        cwd=str(project_dir(project)),
+        env=_git_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "git command failed").strip())
+    return proc
+
+
+def _project_git_is_healthy(project: Project) -> bool:
+    git_dir = project_git_dir(project)
+    if not git_dir.exists():
+        return False
+    try:
+        proc = _run_project_git(project, ["rev-parse", "--git-dir"], check=False)
+    except RuntimeError:
+        return False
+    return proc.returncode == 0
+
+
+def _current_git_head(project: Project) -> str | None:
+    if not _git_executable() or not _project_git_is_healthy(project):
+        return None
+    proc = _run_project_git(project, ["rev-parse", "HEAD"], check=False)
+    if proc.returncode != 0:
+        return None
+    value = (proc.stdout or "").strip()
+    return value or None
+
+
+def ensure_project_git_repo(project: Project) -> None:
+    if not _git_executable():
+        return
+    git_dir = project_git_dir(project)
+    if git_dir.exists() and not _project_git_is_healthy(project):
+        backup_dir = _hidden_repo_backup_dir(project)
+        try:
+            shutil.move(str(git_dir), str(backup_dir))
+            logger.warning("Recovered corrupt project git repo", extra={"project_id": project.id, "backup_dir": str(backup_dir)})
+        except Exception:
+            logger.exception("Failed to back up corrupt git repo for project %s", project.id)
+            shutil.rmtree(git_dir, ignore_errors=True)
+    if git_dir.exists() and _project_git_is_healthy(project):
+        return
+    ensure_project_dir(project)
+    _run_project_git(project, ["init", "--quiet"])
+    _run_project_git(project, ["config", "core.quotePath", "false"])
+    _run_project_git(project, ["config", "commit.gpgsign", "false"])
+
+
+def list_git_trackable_text_files(project: Project) -> list[str]:
+    root = ensure_project_dir(project)
+    paths = {main_source_filename(project)}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part.startswith(".") for part in path.relative_to(root).parts):
+            continue
+        rel = str(path.relative_to(root)).replace("\\", "/")
+        if rel == main_source_filename(project):
+            paths.add(rel)
+            continue
+        if path.suffix.lower() in TEXT_EXTENSIONS:
+            paths.add(rel)
+    return sorted(paths)
+
+
+def commit_project_text_changes(
+    project: Project,
+    *,
+    summary: str,
+    operation: str,
+    source: str,
+    target_files: list[str],
+) -> GitCommitInfo:
+    if not _git_executable():
+        return GitCommitInfo(before_commit=None, commit_hash=None)
+    ensure_project_git_repo(project)
+    before_commit = _current_git_head(project)
+    normalized = sorted({str(path or "").strip() for path in target_files if str(path or "").strip()})
+    if not normalized:
+        normalized = list_git_trackable_text_files(project)
+
+    try:
+        add_args = ["add", "-A", "--", *normalized]
+        _run_project_git(project, add_args)
+        status = _run_project_git(project, ["status", "--short", "--", *normalized], check=False)
+        if status.returncode != 0:
+            raise RuntimeError((status.stderr or status.stdout or "git status failed").strip())
+        if not (status.stdout or "").strip():
+            return GitCommitInfo(before_commit=before_commit, commit_hash=None)
+
+        message = "\n".join(
+            [
+                summary.strip() or operation,
+                "",
+                f"operation: {operation}",
+                f"source: {source}",
+                "tracked: text-only",
+            ]
+        )
+        _run_project_git(project, ["commit", "--quiet", "-m", message, "--", *normalized])
+        proc = _run_project_git(project, ["rev-parse", "HEAD"])
+        return GitCommitInfo(before_commit=before_commit, commit_hash=(proc.stdout or "").strip() or None)
+    except Exception:
+        logger.exception(
+            "Failed to commit text changes",
+            extra={"project_id": project.id, "operation": operation, "source": source, "target_files": normalized},
+        )
+        raise
+
+
+def read_git_version_diff(project: Project, commit_hash: str, target_file: str, context_lines: int = 2) -> str:
+    args = ["show", f"--unified={max(0, int(context_lines))}", "--format=", commit_hash, "--", target_file]
+    proc = _run_project_git(project, args, check=False)
+    text = (proc.stdout or "").strip("\n")
+    return text or "(no changes)"
+
+
+def read_git_version_content(project: Project, commit_hash: str, target_file: str) -> str:
+    proc = _run_project_git(project, ["show", f"{commit_hash}:{target_file}"], check=False)
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout
+
+
 
 
 def initialize_main_source(project: Project, content: str) -> None:
@@ -156,10 +335,10 @@ def _safe_file_path(project: Project, filename: str) -> Path:
         raise ValueError("absolute paths not allowed")
     if any(part in {".", ".."} for part in parts):
         raise ValueError("path traversal not allowed")
+    if any(part.startswith(".") for part in parts):
+        raise ValueError("hidden files not allowed")
 
     final = parts[-1]
-    if final.startswith("."):
-        raise ValueError("hidden files not allowed")
 
     ext = Path(final).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXTENSIONS:
@@ -169,8 +348,6 @@ def _safe_file_path(project: Project, filename: str) -> Path:
     resolved = (root / raw_path).resolve()
     if root != resolved and root not in resolved.parents:
         raise ValueError("path escapes project directory")
-    if resolved.name in PROTECTED_FILENAMES:
-        raise ValueError("cannot overwrite protected project file")
     return resolved
 
 
@@ -198,8 +375,6 @@ def _safe_directory_path(project: Project, directory: str) -> Path:
         raise ValueError("path escapes project directory")
     if resolved == root:
         raise ValueError("cannot use project root as a custom folder")
-    if resolved.name in PROTECTED_FILENAMES:
-        raise ValueError("protected names cannot be used for folders")
     return resolved
 
 
@@ -254,16 +429,18 @@ def _is_system_artifact_file(path: Path) -> bool:
     return False
 
 
+def _has_hidden_relative_parts(root: Path, path: Path) -> bool:
+    return any(part.startswith(".") for part in path.relative_to(root).parts)
+
+
 def list_project_assets(project: Project) -> list[dict[str, Any]]:
     root = ensure_project_dir(project)
     assets = []
     for path in sorted(root.rglob("*"), key=lambda p: str(p.relative_to(root)).lower()):
-        if path.name.startswith("."):
+        if _has_hidden_relative_parts(root, path):
             continue
         if path.is_dir():
             assets.append(_asset_payload(project, path))
-            continue
-        if path.parent == root and path.name in PROTECTED_FILENAMES:
             continue
         if _is_system_artifact_file(path):
             continue
@@ -381,7 +558,7 @@ def write_project_asset_text(project: Project, filename: str, content: str) -> d
     return payload
 
 
-def extract_project_zip(project: Project, zip_bytes: bytes) -> list[dict[str, Any]]:
+def extract_project_zip(project: Project, zip_bytes: bytes, *, allow_main_override: bool = False) -> list[dict[str, Any]]:
     try:
         zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
     except zipfile.BadZipFile as exc:
@@ -426,7 +603,7 @@ def extract_project_zip(project: Project, zip_bytes: bytes) -> list[dict[str, An
             ext = Path(leaf).suffix.lower()
             if ext not in ALLOWED_UPLOAD_EXTENSIONS:
                 continue
-            if len(parts) == 1 and leaf in PROTECTED_FILENAMES:
+            if not allow_main_override and len(parts) == 1 and leaf in PROTECTED_FILENAMES:
                 continue
 
             data = zf.read(info.filename)
@@ -438,7 +615,7 @@ def extract_project_zip(project: Project, zip_bytes: bytes) -> list[dict[str, An
             target = (root / Path(name)).resolve()
             if root != target and root not in target.parents:
                 continue
-            if target.parent == root and target.name in PROTECTED_FILENAMES:
+            if not allow_main_override and target.parent == root and target.name in PROTECTED_FILENAMES:
                 continue
 
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -500,6 +677,7 @@ def split_tex_sections(content: str) -> list[SectionChunk]:
     if not matches:
         return [
             SectionChunk(
+                file_name="main.tex",
                 index=0,
                 command="root",
                 level=0,
@@ -517,6 +695,7 @@ def split_tex_sections(content: str) -> list[SectionChunk]:
     pre_content = "".join(lines[: max(0, first_start - 1)])
     chunks.append(
         SectionChunk(
+            file_name="main.tex",
             index=0,
             command="root",
             level=0,
@@ -560,6 +739,7 @@ def split_tex_sections(content: str) -> list[SectionChunk]:
             title = command.capitalize()
         chunks.append(
             SectionChunk(
+                file_name="main.tex",
                 index=idx,
                 command=command,
                 level=SECTION_LEVELS.get(command, 2),
@@ -582,6 +762,7 @@ def split_typst_sections(content: str) -> list[SectionChunk]:
     if not matches:
         return [
             SectionChunk(
+                file_name="main.typ",
                 index=0,
                 command="root",
                 level=0,
@@ -599,6 +780,7 @@ def split_typst_sections(content: str) -> list[SectionChunk]:
     pre_content = "".join(lines[: max(0, first_start - 1)])
     chunks.append(
         SectionChunk(
+            file_name="main.typ",
             index=0,
             command="root",
             level=0,
@@ -626,6 +808,7 @@ def split_typst_sections(content: str) -> list[SectionChunk]:
         title = (match.group("title") or "").strip() or f"Heading {level}"
         chunks.append(
             SectionChunk(
+                file_name="main.typ",
                 index=idx,
                 command=f"heading{level}",
                 level=level,
@@ -648,6 +831,7 @@ def _split_source_sections(project: Project, content: str) -> list[SectionChunk]
 
 def _section_payload(chunk: SectionChunk, *, include_content: bool = False) -> dict[str, Any]:
     payload = {
+        "file_name": chunk.file_name,
         "index": chunk.index,
         "command": chunk.command,
         "level": chunk.level,
@@ -666,11 +850,38 @@ def _section_payload(chunk: SectionChunk, *, include_content: bool = False) -> d
 
 
 def list_source_sections(project: Project) -> list[dict[str, Any]]:
+    main_file = main_source_filename(project)
     chunks = _split_source_sections(project, read_source_content(project))
-    return [
-        _section_payload(c, include_content=False)
-        for c in chunks
-    ]
+    # Correct the file_name — split functions use hardcoded literals ("main.tex"/"main.typ")
+    for c in chunks:
+        c.file_name = main_file
+
+    result = [_section_payload(c, include_content=False) for c in chunks]
+
+    if project.markup_type != MarkupType.TYPST:
+        return result
+
+    # For Typst: also include heading sections from auxiliary .typ files
+    root = ensure_project_dir(project)
+    next_index = (max(c.index for c in chunks) if chunks else -1) + 1
+    for path in sorted(root.rglob("*.typ"), key=lambda p: str(p.relative_to(root)).lower()):
+        if _has_hidden_relative_parts(root, path):
+            continue
+        rel = str(path.relative_to(root)).replace("\\", "/")
+        if rel == main_file:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for c in split_typst_sections(content):
+            if c.command == "root":
+                continue  # skip preamble sections from chapter files
+            c.file_name = rel
+            c.index = next_index
+            next_index += 1
+            result.append(_section_payload(c, include_content=False))
+    return result
 
 
 def get_source_section(project: Project, section_index: int) -> dict[str, Any]:
@@ -690,6 +901,7 @@ def update_source_section(project: Project, section_index: int, new_content: str
     target = next((c for c in chunks if c.index == section_index), None)
     if not target:
         raise ValueError("section not found")
+    file_path = source_file_path(project)
 
     lines = source.splitlines(keepends=True)
     start_idx = max(0, target.start_line - 1)
@@ -703,7 +915,7 @@ def update_source_section(project: Project, section_index: int, new_content: str
     if is_source_too_large(updated):
         raise ValueError("File exceeds 1MB")
 
-    write_source_content(project, updated)
+    file_path.write_text(updated, encoding="utf-8")
     return get_source_section(project, section_index)
 
 
@@ -976,6 +1188,10 @@ def create_project_version(
     summary: str,
     before_content: str,
     after_content: str,
+    target_file: str | None = None,
+    snapshot_kind: str = ProjectVersion.SnapshotKind.TEXT,
+    event_payload: dict[str, Any] | None = None,
+    is_revertible: bool = True,
 ) -> ProjectVersion:
     from django.db import transaction
     with transaction.atomic():
@@ -993,10 +1209,54 @@ def create_project_version(
             source=source,
             operation=operation,
             target=target,
+            target_file=(target_file or target.split(":", 1)[0]).strip(),
+            snapshot_kind=snapshot_kind,
+            event_payload=event_payload or {},
+            is_revertible=is_revertible,
             summary=summary.strip(),
             before_content=before_content,
             after_content=after_content,
         )
+
+
+def create_text_project_version(
+    *,
+    project: Project,
+    actor,
+    source: str,
+    operation: str,
+    target: str,
+    target_file: str,
+    summary: str,
+    tracked_files: list[str] | None = None,
+    is_revertible: bool = True,
+) -> ProjectVersion | None:
+    commit_info = commit_project_text_changes(
+        project,
+        summary=summary,
+        operation=operation,
+        source=source,
+        target_files=tracked_files or [target_file],
+    )
+    if not commit_info.commit_hash:
+        return None
+    return create_project_version(
+        project=project,
+        actor=actor,
+        source=source,
+        operation=operation,
+        target=target,
+        target_file=target_file,
+        summary=summary,
+        before_content="",
+        after_content="",
+        snapshot_kind=ProjectVersion.SnapshotKind.TEXT,
+        event_payload={
+            "git_commit": commit_info.commit_hash,
+            "before_commit": commit_info.before_commit or "",
+        },
+        is_revertible=is_revertible,
+    )
 
 
 def list_project_versions(
@@ -1004,9 +1264,12 @@ def list_project_versions(
     *,
     limit: int = 40,
     before_id: int | None = None,
+    file_filter: str | None = None,
 ) -> dict[str, Any]:
     safe_limit = max(1, min(int(limit), 120))
     qs = ProjectVersion.objects.filter(project=project)
+    if file_filter:
+        qs = qs.filter(target_file=file_filter)
     if before_id is not None:
         qs = qs.filter(id__lt=int(before_id))
     rows = list(
@@ -1022,6 +1285,10 @@ def list_project_versions(
             "source": v.source,
             "operation": v.operation,
             "target": v.target,
+            "target_file": v.target_file,
+            "snapshot_kind": v.snapshot_kind,
+            "event_payload": v.event_payload,
+            "is_revertible": v.is_revertible,
             "summary": v.summary,
             "actor": v.actor.username if v.actor else None,
             "created_at": v.created_at.isoformat(),
@@ -1040,10 +1307,53 @@ def get_project_version(project: Project, version_id: int) -> ProjectVersion:
     return ProjectVersion.objects.get(project=project, id=version_id)
 
 
+def _fmt_bytes(n: int | None) -> str:
+    if n is None:
+        return ""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1_048_576:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / 1_048_576:.1f} MB"
+
+
 def build_version_diff(version: ProjectVersion, context_lines: int = 2) -> str:
+    if version.snapshot_kind == ProjectVersion.SnapshotKind.EVENT:
+        payload = version.event_payload or {}
+        kind = str(payload.get("kind") or "")
+        name = str(payload.get("name") or version.target_file or "")
+        old_name = str(payload.get("old_name") or "")
+        new_name = str(payload.get("new_name") or name)
+        size = payload.get("size")
+
+        if "rename" in kind:
+            return f"Renamed: {old_name} → {new_name}"
+        if "delete" in kind:
+            return f"Deleted: {name}"
+        if "folder" in kind:
+            return f"Folder created: {name}"
+        if "upload" in kind or "binary" in kind:
+            sz = _fmt_bytes(size)
+            return f"File uploaded: {name}" + (f"  ({sz})" if sz else "")
+        if "create" in kind:
+            return f"File created: {name}"
+        # Generic event — omit git internals
+        skip = {"git_commit", "before_commit"}
+        lines = []
+        for key in sorted(payload):
+            if key not in skip:
+                lines.append(f"{key}: {payload[key]}")
+        return "\n".join(lines) or "(no details)"
+    commit_hash = str((version.event_payload or {}).get("git_commit") or "").strip()
+    target_file = version.target_file or (version.target or main_source_filename(version.project)).split(":", 1)[0]
+    if commit_hash and target_file:
+        try:
+            return read_git_version_diff(version.project, commit_hash, target_file, context_lines=context_lines)
+        except Exception:
+            pass
     before = version.before_content.splitlines(keepends=True)
     after = version.after_content.splitlines(keepends=True)
-    target = (version.target or main_source_filename(version.project)).split(":", 1)[0]
+    target = target_file
     diff = difflib.unified_diff(
         before,
         after,
@@ -1057,10 +1367,149 @@ def build_version_diff(version: ProjectVersion, context_lines: int = 2) -> str:
 
 
 def rollback_to_version(project: Project, version: ProjectVersion) -> None:
-    target = (version.target or "").split(":", 1)[0]
-    if target not in {"main.tex", "main.typ"}:
-        raise ValueError("Rollback is supported only for source file versions")
-    write_source_content(project, version.after_content)
+    if version.snapshot_kind != ProjectVersion.SnapshotKind.TEXT or not version.is_revertible:
+        payload = version.event_payload or {}
+        kind = str(payload.get("kind") or "").strip()
+        if kind == "text_delete":
+            restore_commit = str(payload.get("before_commit") or "").strip()
+            target_path = str(payload.get("name") or version.target_file or "").strip()
+            if not restore_commit or not target_path:
+                raise ValueError("Rollback is not supported for this version entry")
+            content = read_git_version_content(project, restore_commit, target_path)
+            path = project_asset_path(project, target_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            return
+        if kind == "text_rename":
+            restore_commit = str(payload.get("before_commit") or "").strip()
+            old_name = str(payload.get("old_name") or "").strip()
+            new_name = str(payload.get("new_name") or "").strip()
+            if not restore_commit or not old_name or not new_name:
+                raise ValueError("Rollback is not supported for this version entry")
+            content = read_git_version_content(project, restore_commit, old_name)
+            try:
+                current_path = project_asset_path(project, new_name)
+                if current_path.exists():
+                    if current_path.is_dir():
+                        shutil.rmtree(current_path)
+                    else:
+                        current_path.unlink()
+            except ValueError:
+                pass
+            old_path = project_asset_path(project, old_name)
+            old_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.write_text(content, encoding="utf-8")
+            return
+        raise ValueError("Rollback is not supported for this version entry")
+    target = version.target_file or (version.target or "").split(":", 1)[0]
+    if not target:
+        raise ValueError("Rollback target is missing")
+    commit_hash = str((version.event_payload or {}).get("git_commit") or "").strip()
+    if commit_hash:
+        content = read_git_version_content(project, commit_hash, target)
+        if target == main_source_filename(project):
+            write_source_content(project, content)
+            return
+        path = project_asset_path(project, target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return
+    if target == main_source_filename(project):
+        write_source_content(project, version.after_content)
+        return
+    path = project_asset_path(project, target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(version.after_content, encoding="utf-8")
+
+
+def parse_compile_diagnostics(project: Project, log_text: str) -> list[dict[str, Any]]:
+    text = str(log_text or "")
+    diagnostics: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int, str, str]] = set()
+
+    def _push(file_name: str, line: int, column: int, severity: str, message: str) -> None:
+        key = (file_name, line, column, severity, message.strip())
+        if key in seen:
+            return
+        seen.add(key)
+        diagnostics.append(
+            {
+                "file": file_name,
+                "line": max(1, int(line or 1)),
+                "column": max(1, int(column or 1)),
+                "severity": severity,
+                "message": message.strip() or "Compiler issue",
+            }
+        )
+
+    if project.markup_type == MarkupType.TYPST:
+        lines = text.splitlines()
+        pending_message = ""
+        for line in lines:
+            stripped = line.strip()
+            lowered = stripped.lower()
+            if lowered.startswith("error:"):
+                pending_message = stripped.split(":", 1)[1].strip()
+                continue
+            if lowered.startswith("warning:"):
+                pending_message = stripped.split(":", 1)[1].strip()
+                continue
+            arrow = re.search(r"-->\s+([A-Za-z0-9_./-]+\.typ):(\d+):(\d+)", line)
+            if arrow:
+                severity = "warning" if "warning" in pending_message.lower() else "error"
+                _push(
+                    arrow.group(1),
+                    int(arrow.group(2)),
+                    int(arrow.group(3)),
+                    severity,
+                    pending_message or "Typst compiler issue",
+                )
+                pending_message = ""
+        return diagnostics[:50]
+
+    current_file = main_source_filename(project)
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = re.search(r"^! (.+)$", line)
+        if match:
+            message = match.group(1).strip()
+            file_name = current_file
+            line_no = 1
+            column = 1
+            for probe in lines[index + 1 : index + 6]:
+                line_match = re.search(r"l\.(\d+)", probe)
+                file_match = re.search(r"([A-Za-z0-9_./-]+\.(?:tex|bib|sty|cls)):(\d+)(?::(\d+))?", probe)
+                if file_match:
+                    file_name = file_match.group(1)
+                    line_no = int(file_match.group(2))
+                    column = int(file_match.group(3) or 1)
+                    break
+                if line_match:
+                    line_no = int(line_match.group(1))
+                    break
+            _push(file_name, line_no, column, "error", message)
+            continue
+        warning = re.search(r"([A-Za-z0-9_./-]+\.(?:tex|bib|sty|cls)):(\d+)(?::(\d+))?.*?(warning|overfull|underfull)", line, flags=re.IGNORECASE)
+        if warning:
+            _push(
+                warning.group(1),
+                int(warning.group(2)),
+                int(warning.group(3) or 1),
+                "warning",
+                line.strip(),
+            )
+    return diagnostics[:50]
+
+
+def compile_state_for_status(status: str, *, request_mode: str = "read") -> str:
+    value = str(status or "").strip().lower()
+    if request_mode == "compile":
+        return "synced" if value == Project.CompileStatus.SUCCESS else "failed"
+    if value == Project.CompileStatus.SUCCESS:
+        return "synced"
+    if value == Project.CompileStatus.ERROR:
+        return "failed"
+    return "out_of_date"
 
 
 def delete_project_files(project: Project) -> None:
@@ -1082,7 +1531,13 @@ def compile_project(project: Project) -> CompileResult:
     input_file = source_file_path(project)
 
     if not input_file.exists():
-        return CompileResult(status=Project.CompileStatus.ERROR, log=f"{input_file.name} not found")
+        log_text = f"{input_file.name} not found"
+        return CompileResult(
+            status=Project.CompileStatus.ERROR,
+            log=log_text,
+            diagnostics=parse_compile_diagnostics(project, log_text),
+            compile_state="failed",
+        )
 
     host_project_root = str(getattr(settings, "HOST_PROJECT_ROOT", "")).strip()
 
@@ -1098,21 +1553,33 @@ def compile_project(project: Project) -> CompileResult:
         and bool(getattr(settings, "TYPST_USE_NATIVE", False))
     )
 
+    src_filename = main_source_filename(project)
+    fonts_dir = str(getattr(settings, "TYPST_FONTS_DIR", "")).strip()
+
     if use_native_typst:
         timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
         typst_bin = str(getattr(settings, "TYPST_BINARY", "typst")).strip() or "typst"
-        cmd = [typst_bin, "compile", "main.typ", "main.pdf"]
+        cmd = [typst_bin, "compile", "--root", "."]
+        if fonts_dir:
+            cmd += ["--font-path", fonts_dir]
+        cmd += [src_filename, "main.pdf"]
         run_kwargs: dict = {"cwd": str(workdir)}
     elif project.markup_type == MarkupType.TYPST:
         image = getattr(settings, "TYPST_DOCKER_IMAGE", "ghcr.io/typst/typst:latest")
         timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
-        compiler_args = ["compile", "main.typ", "main.pdf"]
+        compiler_args = ["compile", "--root", "/workspace"]
+        docker_font_args: list = []
+        if fonts_dir:
+            docker_font_args = ["-v", f"{fonts_dir}:/fonts:ro"]
+            compiler_args += ["--font-path", "/fonts"]
+        compiler_args += [src_filename, "main.pdf"]
         cmd = [
             "docker", "run", "--rm",
             *_compiler_network_args(project.markup_type),
             "--memory=600m", "--cpus=1.0",
             "-v", f"{docker_mount_source}:/workspace:rw",
             "-w", "/workspace",
+            *docker_font_args,
             image,
             *compiler_args,
         ]
@@ -1128,7 +1595,7 @@ def compile_project(project: Project) -> CompileResult:
         ]
         if strict_errors:
             compiler_args.append("-halt-on-error")
-        compiler_args.append("main.tex")
+        compiler_args.append(src_filename)
         cmd = [
             "docker", "run", "--rm",
             *_compiler_network_args(project.markup_type),
@@ -1173,24 +1640,51 @@ def compile_project(project: Project) -> CompileResult:
 
         # Success when compiler exited cleanly with a PDF, or produced/updated PDF despite non-fatal issues.
         if pdf_exists_after and (proc.returncode == 0 or pdf_was_updated):
-            return CompileResult(status=Project.CompileStatus.SUCCESS, log=log_text)
+            return CompileResult(
+                status=Project.CompileStatus.SUCCESS,
+                log=log_text,
+                diagnostics=parse_compile_diagnostics(project, log_text),
+                compile_state="synced",
+            )
 
-        return CompileResult(status=Project.CompileStatus.ERROR, log=log_text or "Compilation failed")
+        failure_log = log_text or "Compilation failed"
+        return CompileResult(
+            status=Project.CompileStatus.ERROR,
+            log=failure_log,
+            diagnostics=parse_compile_diagnostics(project, failure_log),
+            compile_state="failed",
+        )
     except subprocess.TimeoutExpired:
         log_text = f"Compilation timed out after {timeout} seconds"
         log_file_path(project).write_text(log_text, encoding="utf-8")
-        return CompileResult(status=Project.CompileStatus.ERROR, log=log_text)
+        return CompileResult(
+            status=Project.CompileStatus.ERROR,
+            log=log_text,
+            diagnostics=parse_compile_diagnostics(project, log_text),
+            compile_state="failed",
+        )
     except FileNotFoundError:
         log_text = (
             "typst binary not found in PATH" if use_native_typst
             else "Docker is not installed or unavailable in PATH"
         )
         log_file_path(project).write_text(log_text, encoding="utf-8")
-        return CompileResult(status=Project.CompileStatus.ERROR, log=log_text)
+        return CompileResult(
+            status=Project.CompileStatus.ERROR,
+            log=log_text,
+            diagnostics=parse_compile_diagnostics(project, log_text),
+            compile_state="failed",
+        )
     except Exception as exc:  # pragma: no cover
         log_text = f"Unexpected error: {exc}"
         log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
-        return CompileResult(status=Project.CompileStatus.ERROR, log=log_text)
+        logger.exception("Unexpected compile failure", extra={"project_id": project.id})
+        return CompileResult(
+            status=Project.CompileStatus.ERROR,
+            log=log_text,
+            diagnostics=parse_compile_diagnostics(project, log_text),
+            compile_state="failed",
+        )
     finally:
         COMPILE_SEMAPHORE.release()
 

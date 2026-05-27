@@ -142,7 +142,6 @@
 (() => {
   const templateSelect = document.getElementById("template-id");
   const markupSelect = document.getElementById("markup-type");
-  const markupHelp = document.getElementById("markup-help");
   const templateMarkupHint = document.getElementById("template-markup-hint");
 
   function syncMarkupControls() {
@@ -166,6 +165,7 @@
     templateSelect.addEventListener("change", syncMarkupControls);
     syncMarkupControls();
   }
+
 
   const grid = document.getElementById("projects-grid");
   if (!grid) return;

@@ -23,6 +23,7 @@ from .views import (
     api_project_version_rollback,
     api_project_versions,
     api_projects,
+    api_project_typst_import,
 )
 
 urlpatterns = [
@@ -33,6 +34,7 @@ urlpatterns = [
     path("projects/<int:project_id>/read-window/", api_project_read_window),
     path("projects/<int:project_id>/write-window/", api_project_write_window),
     path("projects/<int:project_id>/files/", api_project_assets),
+    path("projects/<int:project_id>/typst-import/", api_project_typst_import),
     re_path(r"^projects/(?P<project_id>\d+)/files/(?P<filename>.+)/content/$", api_project_asset_content),
     re_path(r"^projects/(?P<project_id>\d+)/files/(?P<filename>.+)/rename/$", api_project_asset_rename),
     re_path(r"^projects/(?P<project_id>\d+)/files/(?P<filename>.+)/$", api_project_asset),

@@ -15,6 +15,7 @@ class Project(models.Model):
     title = models.CharField(max_length=255)
     template = models.ForeignKey(Template, null=True, blank=True, on_delete=models.SET_NULL)
     markup_type = models.CharField(max_length=10, choices=MarkupType.choices, default=MarkupType.LATEX)
+    main_file = models.CharField(max_length=255, blank=True, default="")
     last_status = models.CharField(max_length=16, choices=CompileStatus.choices, default=CompileStatus.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -27,6 +28,10 @@ class Project(models.Model):
 
 
 class ProjectVersion(models.Model):
+    class SnapshotKind(models.TextChoices):
+        TEXT = "text", "Text"
+        EVENT = "event", "Event"
+
     class Source(models.TextChoices):
         MCP = "mcp", "MCP"
         WEB = "web", "Web"
@@ -38,6 +43,10 @@ class ProjectVersion(models.Model):
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.API)
     operation = models.CharField(max_length=64)
     target = models.CharField(max_length=255, default="main.tex")
+    target_file = models.CharField(max_length=255, default="", blank=True)
+    snapshot_kind = models.CharField(max_length=12, choices=SnapshotKind.choices, default=SnapshotKind.TEXT)
+    event_payload = models.JSONField(default=dict, blank=True)
+    is_revertible = models.BooleanField(default=True)
     summary = models.CharField(max_length=255)
     before_content = models.TextField()
     after_content = models.TextField()

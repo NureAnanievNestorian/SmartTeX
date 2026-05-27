@@ -69,3 +69,4 @@ build/
 # Docker / local data
 *.pid
 *.pyc
+/.claude/

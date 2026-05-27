@@ -1,16 +1,20 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 
 from SmartTeX.markup import MarkupType
-from projects.models import Project
+from projects.models import Project, ProjectVersion
 from projects.services import (
+    analyze_typst_project_import,
     create_project_text_file,
     list_project_assets,
     main_source_filename,
+    parse_compile_diagnostics,
+    project_git_dir,
     read_source_content,
     source_file_path,
     split_typst_sections,
@@ -48,7 +52,22 @@ class ProjectTypstSupportTests(TestCase):
         self.assertEqual(payload["main_file_name"], "main.typ")
         self.assertEqual(main_source_filename(project), "main.typ")
         self.assertTrue(source_file_path(project).exists())
-        self.assertIn("SmartTeX", read_source_content(project))
+        self.assertEqual(project.project_mode, Project.ProjectMode.TYPST_IDE)
+        self.assertTrue(project_git_dir(project).exists())
+        self.assertIn('#include "chapters/01-introduction.typ"', read_source_content(project))
+        self.assertTrue((source_file_path(project).parent / "chapters" / "01-introduction.typ").exists())
+
+    def test_dashboard_project_creation_succeeds_without_git_on_path(self) -> None:
+        with patch("projects.services.shutil.which", return_value=None):
+            response = self.client.post(
+                "/projects/new/",
+                data={"title": "No Git Available", "markup_type": "latex"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        project = Project.objects.get(title="No Git Available")
+        self.assertFalse(project_git_dir(project).exists())
+        self.assertFalse(ProjectVersion.objects.filter(project=project).exists())
 
     def test_template_markup_type_overrides_explicit_request_markup(self) -> None:
         template = Template.objects.create(
@@ -67,6 +86,7 @@ class ProjectTypstSupportTests(TestCase):
         project = Project.objects.get(pk=response.json()["id"])
         self.assertEqual(project.markup_type, MarkupType.TYPST)
         self.assertEqual(read_source_content(project), "= Template\n")
+        self.assertEqual(project.project_mode, Project.ProjectMode.LEGACY)
 
     def test_create_project_text_file_supports_nested_paths(self) -> None:
         project = Project.objects.create(owner=self.user, title="Nested", markup_type=MarkupType.TYPST)
@@ -76,7 +96,7 @@ class ProjectTypstSupportTests(TestCase):
 
         self.assertEqual(asset["name"], "chapters/intro.typ")
         self.assertTrue((source_file_path(project).parent / "chapters" / "intro.typ").exists())
-        self.assertEqual([item["name"] for item in listed], ["chapters/intro.typ"])
+        self.assertEqual([item["name"] for item in listed], ["chapters", "chapters/intro.typ"])
 
     def test_split_typst_sections_detects_heading_levels(self) -> None:
         chunks = split_typst_sections("Preface\n= Intro\nBody\n== Details\nMore\n")
@@ -89,3 +109,161 @@ class ProjectTypstSupportTests(TestCase):
 
         with self.assertRaisesMessage(ValueError, "Source mapping is not available for Typst projects"):
             synctex_line_to_pdf(project, line=1)
+
+    def test_updating_auxiliary_text_file_creates_git_backed_version(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Git Versioned", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project_id = create_response.json()["id"]
+
+        update_response = self.client.put(
+            f"/api/projects/{project_id}/files/chapters%2F01-introduction.typ/content/",
+            data=json.dumps({"content": "= Introduction\n\nUpdated body.\n"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        versions_response = self.client.get(f"/api/projects/{project_id}/versions/")
+        self.assertEqual(versions_response.status_code, 200)
+        versions = versions_response.json()["versions"]
+        self.assertGreaterEqual(len(versions), 2)
+        latest = versions[0]
+        self.assertEqual(latest["target_file"], "chapters/01-introduction.typ")
+        self.assertEqual(latest["snapshot_kind"], "text")
+        self.assertTrue(latest["event_payload"].get("git_commit"))
+
+    def test_creating_typst_chapter_updates_document_metadata(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Metadata Sync", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project_id = create_response.json()["id"]
+
+        response = self.client.post(
+            f"/api/projects/{project_id}/files/",
+            data=json.dumps({"filename": "chapters/06-extra.typ", "text_content": "= Extra\n\nNotes.\n"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        project = Project.objects.get(pk=project_id)
+        chapter_paths = [row["path"] for row in project.document_metadata.get("chapters", [])]
+        self.assertIn("chapters/06-extra.typ", chapter_paths)
+
+    def test_reordering_typst_chapter_updates_metadata_and_main_file(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Reorder Me", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project_id = create_response.json()["id"]
+
+        response = self.client.post(
+            f"/api/projects/{project_id}/document-order/",
+            data=json.dumps({"kind": "chapters", "path": "chapters/02-theory.typ", "direction": "up"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        project = Project.objects.get(pk=project_id)
+        chapter_paths = [row["path"] for row in project.document_metadata.get("chapters", [])]
+        self.assertEqual(chapter_paths[:2], ["chapters/02-theory.typ", "chapters/01-introduction.typ"])
+        main_text = read_source_content(project)
+        self.assertLess(
+            main_text.index('#include "chapters/02-theory.typ"'),
+            main_text.index('#include "chapters/01-introduction.typ"'),
+        )
+
+    def test_compile_get_returns_structured_diagnostics_payload(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Diagnostics", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project_id = create_response.json()["id"]
+
+        response = self.client.get(f"/api/projects/{project_id}/compile/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("compile_state", payload)
+        self.assertIn("diagnostics", payload)
+        self.assertIsInstance(payload["diagnostics"], list)
+
+    def test_document_metadata_endpoint_updates_typst_scaffold(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Metadata", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project_id = create_response.json()["id"]
+
+        response = self.client.patch(
+            f"/api/projects/{project_id}/document-metadata/",
+            data=json.dumps(
+                {
+                    "document_title": "Applied Title",
+                    "author": "Alice Example",
+                    "institution": "OpenAI University",
+                    "bibliography_path": "refs/sources.bib",
+                    "figure_paths": ["assets/figure-1.png"],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        project = Project.objects.get(pk=project_id)
+        self.assertEqual(project.document_metadata["author"], "Alice Example")
+        self.assertEqual(project.document_metadata["institution"], "OpenAI University")
+        self.assertEqual(project.document_metadata["bibliography"]["path"], "refs/sources.bib")
+        self.assertIn('#let doc-author = "Alice Example"', read_source_content(project))
+        self.assertTrue((source_file_path(project).parent / "refs" / "sources.bib").exists())
+
+    def test_typst_import_analysis_detects_structure_from_existing_files(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Importable", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project_id = create_response.json()["id"]
+        project = Project.objects.get(pk=project_id)
+
+        payload = analyze_typst_project_import(project, use_existing_files=True)
+
+        self.assertGreaterEqual(payload["detected_counts"]["chapters"], 1)
+        self.assertEqual(payload["metadata"]["bibliography"]["path"], "bibliography/references.bib")
+
+    def test_hidden_git_repo_is_not_exposed_as_asset(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Hidden Git", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project_id = create_response.json()["id"]
+
+        response = self.client.get(f"/api/projects/{project_id}/files/")
+
+        self.assertEqual(response.status_code, 200)
+        names = [item["name"] for item in response.json()["files"]]
+        self.assertFalse(any(".smarttex-git" in name for name in names))
+
+    def test_parse_compile_diagnostics_extracts_typst_and_latex_locations(self) -> None:
+        typst_project = Project.objects.create(owner=self.user, title="Typst Parse", markup_type=MarkupType.TYPST)
+        latex_project = Project.objects.create(owner=self.user, title="Latex Parse", markup_type=MarkupType.LATEX)
+
+        typst_diags = parse_compile_diagnostics(
+            typst_project,
+            'error: unexpected token\n --> chapters/01-introduction.typ:12:4\n',
+        )
+        latex_diags = parse_compile_diagnostics(
+            latex_project,
+            '! Undefined control sequence.\nl.42 \\badcommand\n',
+        )
+
+        self.assertEqual(typst_diags[0]["file"], "chapters/01-introduction.typ")
+        self.assertEqual(typst_diags[0]["line"], 12)
+        self.assertEqual(latex_diags[0]["line"], 42)

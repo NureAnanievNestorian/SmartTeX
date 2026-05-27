@@ -144,6 +144,7 @@ LOGOUT_REDIRECT_URL = '/login/'
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 MAX_TEX_FILE_SIZE = 1 * 1024 * 1024
+MAX_PROJECT_TOTAL_SIZE = int(os.getenv('MAX_PROJECT_TOTAL_SIZE', str(64 * 1024 * 1024)))
 LATEX_DOCKER_IMAGE = 'latex-ua:latest'
 LATEX_TIMEOUT_SECONDS = 60
 LATEX_STRICT_ERRORS = os.getenv('LATEX_STRICT_ERRORS', 'False').lower() in {'1', 'true', 'yes'}
@@ -158,6 +159,10 @@ TYPST_USE_NATIVE = os.getenv('TYPST_USE_NATIVE', 'false').lower() in {'1', 'true
 # Override with an absolute path when the binary is not on the server's PATH,
 # e.g. TYPST_BINARY=/opt/homebrew/bin/typst on macOS or /usr/local/bin/typst on Linux.
 TYPST_BINARY = os.getenv('TYPST_BINARY', 'typst').strip() or 'typst'
+# Optional directory of extra fonts (.ttf/.otf) to make available during Typst compilation.
+# For Docker: mounted at /fonts read-only; for native: passed via --font-path.
+# Example: TYPST_FONTS_DIR=/srv/fonts
+TYPST_FONTS_DIR = os.getenv('TYPST_FONTS_DIR', '').strip() or ''
 
 OAUTH_ISSUER_URL = os.getenv('OAUTH_ISSUER_URL', '').strip()
 MCP_SERVER_PUBLIC_URL = os.getenv('MCP_SERVER_PUBLIC_URL', '').strip()

@@ -1,2581 +1,2254 @@
 {% extends "base.html" %}
 {% block title %}{{ project.title }} — SmartTeX{% endblock %}
 {% block head %}
-<style>
-  main.wrap { max-width: none; padding: 0; }
+    <style>
+        main.wrap {
+            max-width: none;
+            padding: 0;
+        }
 
-  :root {
-    --e-bg:      #08101e;
-    --e-surface: #0c1525;
-    --e-raised:  #111e30;
-    --e-soft:    #162437;
-    --e-border:  #1b2b40;
-    --e-text:    #e6eeff;
-    --e-text2:   #b0c4e0;
-    --e-muted:   #566f8a;
-    --e-accent:  #22c55e;
-    --e-blue:    #3b82f6;
-    --e-danger:  #ef4444;
-    --e-warn:    #f59e0b;
-    --editor-gutter-w: 56px;
-    --editor-pad-y: 14px;
-    --editor-pad-x: 18px;
-  }
+        :root {
+            --e-bg: #1e1e1e;
+            --e-surface: #252526;
+            --e-raised: #2d2d30;
+            --e-soft: #37373d;
+            --e-border: #3e3e42;
+            --e-text: #d4d4d4;
+            --e-text2: #9d9d9d;
+            --e-muted: #5a5a5a;
+            --e-accent: #22c55e;
+            --e-blue: #3b82f6;
+            --e-danger: #f44747;
+            --e-warn: #ddb44b;
+            --e-statusbar: #007acc;
+            --e-tab-active: var(--e-bg);
+        }
 
-  .editor-shell {
-    height: calc(100vh - 56px); display: flex; flex-direction: column;
-    overflow: hidden; background: var(--e-bg); color: var(--e-text);
-  }
+        .editor-shell {
+            height: calc(100vh - 56px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--e-bg);
+            color: var(--e-text);
+        }
 
-  /* ── Topbar ─────────────────────────────────────────── */
-  .e-topbar {
-    height: 50px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 16px; gap: 12px;
-    background: #060e1b; border-bottom: 1px solid var(--e-border);
-  }
-  .e-title-side { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .e-title-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .e-proj-name { font-weight: 700; font-size: 16px; }
-  .status-chip {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 3px 9px; border-radius: 999px; font-size: 11px;
-    font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
-    background: rgba(148,163,184,.15); border: 1px solid rgba(148,163,184,.3); color: #94a3b8;
-  }
-  .status-chip.success { color: #4ade80; border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.1); }
-  .status-chip.error   { color: #f87171; border-color: rgba(248,113,113,.4); background: rgba(248,113,113,.1); }
-  .status-chip.pending { color: #fde68a; border-color: rgba(253,230,138,.4); background: rgba(253,230,138,.1); }
-  .e-actions { display: flex; gap: 6px; align-items: center; }
-  .e-btn {
-    display: inline-flex; align-items: center; gap: 5px;
-    border: 1px solid var(--e-border); background: var(--e-raised); color: var(--e-text2);
-    border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
-    transition: border-color .12s, background .12s, color .12s; text-decoration: none;
-    white-space: nowrap;
-  }
-  .e-btn:hover { border-color: #3a5a80; background: var(--e-soft); color: var(--e-text); }
-  .e-btn.primary { background: linear-gradient(120deg,#22c55e,#16a34a); border-color: transparent; color: #062010; }
-  .e-btn.primary:hover { background: linear-gradient(120deg,#16a34a,#0e8a36); }
-  .e-btn.ghost {
-    padding: 5px 10px;
-    font-size: 12px;
-    color: var(--e-muted);
-    background: transparent;
-  }
-  .e-btn.ghost:hover { color: var(--e-text2); }
-  .e-menu-wrap { position: relative; }
-  .e-menu-btn {
-    min-width: 74px;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .e-menu-btn .caret { font-size: 10px; opacity: .85; }
-  .e-menu {
-    display: none;
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    min-width: 180px;
-    background: #0a1425;
-    border: 1px solid #2a3f62;
-    border-radius: 10px;
-    box-shadow: 0 16px 40px rgba(0,0,0,.45);
-    z-index: 80;
-    overflow: hidden;
-  }
-  .e-menu.open { display: block; }
-  .e-menu-item {
-    width: 100%;
-    padding: 9px 12px;
-    border: 0;
-    border-bottom: 1px solid rgba(42,63,98,.5);
-    background: transparent;
-    color: var(--e-text2);
-    text-align: left;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .e-menu-item:last-child { border-bottom: 0; }
-  .e-menu-item:hover { background: #12223a; color: var(--e-text); }
-  .e-menu-item.danger { color: #fca5a5; }
-  .e-menu-item.danger:hover { background: rgba(239,68,68,.12); color: #fecaca; }
+        /* ── Topbar ─────────────────────────────────────────── */
+        .e-topbar {
+            height: 40px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            gap: 10px;
+            background: var(--e-raised);
+            border-bottom: 1px solid var(--e-border);
+        }
 
-  /* ── 5-column grid with resize handles ─────────────── */
-  .e-body {
-    flex: 1; min-height: 0;
-    display: grid;
-    grid-template-columns: var(--left-w, 256px) 4px 1fr 4px var(--right-w, 420px);
-    overflow: hidden;
-  }
-  .e-resize-handle {
-    background: var(--e-border); cursor: col-resize; flex-shrink: 0;
-    transition: background .12s;
-    position: relative; z-index: 10;
-  }
-  .e-resize-handle:hover, .e-resize-handle.dragging { background: var(--e-accent); }
+        .e-title-side {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
 
-  /* ── Left panel ────────────────────────────────────── */
-  .e-left {
-    display: flex; flex-direction: column;
-    border-right: 1px solid var(--e-border);
-    background: #070e1b; overflow: hidden;
-  }
-  .e-tabs {
-    display: grid; grid-template-columns: 1fr 1fr; flex-shrink: 0;
-    border-bottom: 1px solid var(--e-border);
-  }
-  .e-tab {
-    padding: 9px 0; font-size: 11px; font-weight: 700; text-align: center;
-    text-transform: uppercase; letter-spacing: 0.5px; color: var(--e-muted);
-    background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer;
-    transition: color .12s;
-  }
-  .e-tab.active { color: var(--e-text); border-bottom-color: var(--e-accent); }
-  .e-tabpanel { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
-  .e-tabpanel.active { display: flex; }
+        .e-title-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
 
-  .e-sec-head {
-    padding: 7px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.5px; color: var(--e-muted); border-bottom: 1px solid var(--e-border);
-    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
-  }
-  .e-sec-btn {
-    padding: 3px 8px; font-size: 12px; font-weight: 600; border-radius: 6px;
-    border: 1px solid var(--e-border); background: var(--e-raised);
-    color: var(--e-muted); cursor: pointer; line-height: 1;
-  }
-  .e-sec-btn:hover { color: var(--e-text); border-color: #3a5a80; }
-  .e-file-toolbar { display: flex; gap: 3px; align-items: center; }
-  .e-icon-btn {
-    width: 26px; height: 26px; padding: 0; border-radius: 6px;
-    border: 1px solid var(--e-border); background: var(--e-raised);
-    color: var(--e-muted); cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center;
-    flex-shrink: 0; transition: color .12s, border-color .12s;
-    box-sizing: border-box;
-    line-height: 0;
-    font-size: 0;
-    vertical-align: middle;
-  }
-  .e-icon-btn:hover { color: var(--e-text); border-color: #3a5a80; }
-  .e-icon-btn svg {
-    display: block;
-    width: 14px;
-    height: 14px;
-    pointer-events: none;
-    flex-shrink: 0;
-  }
+        .e-proj-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--e-text);
+        }
 
-  /* File list */
-  .e-file-list {
-    list-style: none; margin: 0; padding: 4px; display: grid; gap: 1px;
-    overflow-y: auto; align-content: start;
-  }
-  .e-file-row {
-    display: flex; align-items: center; gap: 6px; min-width: 0;
-  }
-  .e-file-btn {
-    flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: center;
-    gap: 6px; padding: 4px 8px; background: transparent;
-    border: 1px solid transparent; border-radius: 5px; color: var(--e-text2);
-    font-size: 12px; cursor: pointer; text-align: left;
-    transition: background .1s, border-color .1s;
-  }
-  .e-file-btn:hover { background: var(--e-raised); border-color: var(--e-border); }
-  .e-file-btn.active { background: #0d2218; border-color: #1a5436; color: #ceffd8; }
-  .e-file-btn.drag-target {
-    background: #0f2a1f;
-    border-color: #22c55e;
-    color: #d9ffe5;
-  }
-  .e-file-name {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .e-folder-toggle {
-    width: 10px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--e-muted);
-    cursor: pointer;
-    user-select: none;
-    flex-shrink: 0;
-  }
-  .e-file-sz { font-size: 11px; color: var(--e-muted); flex-shrink: 0; }
-  .e-file-actions { display: flex; gap: 4px; flex-shrink: 0; }
-  .e-file-act {
-    width: 22px;
-    height: 22px;
-    padding: 0;
-    border-radius: 5px;
-    border: 1px solid var(--e-border);
-    background: var(--e-raised);
-    color: var(--e-muted);
-    font-size: 12px;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-  }
-  .e-file-act:hover { color: var(--e-text); border-color: #3a5a80; }
-  .e-file-act.danger:hover { color: #fca5a5; border-color: rgba(248,113,113,.5); }
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 7px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            background: rgba(255, 255, 255, .07);
+            border: 1px solid rgba(255, 255, 255, .1);
+            color: var(--e-text2);
+        }
 
-  /* History tab */
-  .e-history { flex: 1; overflow-y: auto; padding: 5px; display: flex; flex-direction: column; gap: 3px; }
-  .e-ver-item {
-    border: 1px solid var(--e-border); border-radius: 8px; background: var(--e-surface);
-    overflow: hidden; transition: border-color .1s; flex-shrink: 0;
-  }
-  .e-ver-item:hover { border-color: #3a5a80; }
-  .e-ver-item.active { border-color: var(--e-accent); }
-  .e-ver-item.is-loading { opacity: .72; }
-  .e-ver-head {
-    padding: 8px 10px; display: flex; justify-content: space-between;
-    align-items: flex-start; gap: 6px; cursor: pointer;
-  }
-  .e-ver-left { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .e-ver-row1 { display: flex; align-items: center; gap: 5px; }
-  .e-ver-num { font-size: 11px; font-weight: 700; color: var(--e-muted); flex-shrink: 0; }
-  .e-ver-op {
-    font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; flex-shrink: 0;
-    background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.25); color: #7ab4f0;
-    max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .e-ver-summary { font-size: 12px; color: var(--e-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .e-ver-date { font-size: 11px; color: var(--e-muted); flex-shrink: 0; white-space: nowrap; }
+        .status-chip.success {
+            color: #4ade80;
+            border-color: rgba(74, 222, 128, .3);
+            background: rgba(74, 222, 128, .08);
+        }
 
-  /* Diff area */
-  .e-diff-scroll {
-    max-height: min(70vh, 680px); overflow-y: auto; overflow-x: auto;
-    padding: 8px 10px;
-    font-family: "JetBrains Mono", ui-monospace, monospace;
-    font-size: 11px; line-height: 1.45;
-  }
-  .diff-empty {
-    color: var(--e-muted);
-    font-style: italic;
-    display: block;
-    padding: 4px 0;
-  }
-  .diff-summary {
-    display: inline-flex;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 8px;
-    color: #8fa8c5;
-    font-size: 11px;
-  }
-  .diff-chip {
-    border: 1px solid var(--e-border);
-    border-radius: 6px;
-    padding: 1px 6px;
-    background: #0b1426;
-  }
-  .diff-chip.add { color: #4ade80; border-color: rgba(34, 197, 94, .35); }
-  .diff-chip.del { color: #f87171; border-color: rgba(248, 113, 113, .35); }
-  .diff-table {
-    border: 1px solid var(--e-border);
-    border-radius: 8px;
-    overflow: hidden;
-    background: #070f1d;
-  }
-  .diff-row {
-    display: grid;
-    grid-template-columns: 18px 44px 44px minmax(0, 1fr);
-    align-items: stretch;
-  }
-  .diff-row + .diff-row { border-top: 1px solid rgba(40, 60, 90, 0.35); }
-  .diff-meta, .diff-hunk {
-    display: block;
-    padding: 3px 8px;
-    color: #7b93af;
-    background: #081326;
-    border-bottom: 1px solid rgba(40, 60, 90, 0.35);
-  }
-  .diff-hunk {
-    color: #5eaabb;
-    font-weight: 700;
-    background: #07192c;
-  }
-  .diff-sign, .diff-ln, .diff-code {
-    display: block;
-    padding: 2px 8px;
-    white-space: pre;
-  }
-  .diff-sign {
-    text-align: center;
-    color: #6882a5;
-    border-right: 1px solid rgba(40, 60, 90, 0.35);
-  }
-  .diff-ln {
-    text-align: right;
-    color: #6882a5;
-    border-right: 1px solid rgba(40, 60, 90, 0.35);
-  }
-  .diff-code {
-    overflow-x: hidden;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    color: #b4c7df;
-  }
-  .diff-row.ctx-empty {
-    background: transparent;
-  }
-  .diff-row.ctx-empty .diff-sign,
-  .diff-row.ctx-empty .diff-ln,
-  .diff-row.ctx-empty .diff-code {
-    color: #415a78;
-  }
-  .diff-row.add { background: rgba(34, 197, 94, .12); }
-  .diff-row.add .diff-sign,
-  .diff-row.add .diff-code { color: #4ade80; }
-  .diff-row.del { background: rgba(248, 113, 113, .12); }
-  .diff-row.del .diff-sign,
-  .diff-row.del .diff-code { color: #f87171; }
-  .diff-row.ctx { background: transparent; }
-  .diff-row.ctx .diff-sign { color: #4f6685; }
-  .e-diff-footer {
-    padding: 8px 10px 10px; display: flex; justify-content: flex-end;
-    border-top: 1px solid var(--e-border);
-  }
-  .e-rollback {
-    padding: 5px 11px; font-size: 12px; font-weight: 600; border-radius: 7px;
-    background: var(--e-raised); border: 1px solid var(--e-border); color: var(--e-text2); cursor: pointer;
-    transition: border-color .1s, color .1s, background .1s;
-  }
-  .e-rollback:hover { border-color: var(--e-danger); color: #f87171; background: rgba(239,68,68,.08); }
-  .e-empty-msg { padding: 20px; color: var(--e-muted); font-size: 12px; text-align: center; }
+        .status-chip.error {
+            color: #f87171;
+            border-color: rgba(248, 113, 113, .3);
+            background: rgba(248, 113, 113, .08);
+        }
 
-  /* Diff modal */
-  .diff-modal-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 9998;
-    background: rgba(0, 0, 0, .72);
-    backdrop-filter: blur(4px);
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  .diff-modal-overlay.open { display: flex; }
-  .diff-modal {
-    width: min(980px, 96vw);
-    max-height: 90vh;
-    display: flex;
-    flex-direction: column;
-    background: #081325;
-    border: 1px solid #244064;
-    border-radius: 14px;
-    box-shadow: 0 30px 80px rgba(0,0,0,.62);
-    overflow: hidden;
-  }
-  .diff-modal-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--e-border);
-    background: #071122;
-  }
-  .diff-modal-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .diff-modal-title strong { font-size: 13px; }
-  .diff-modal-meta { color: var(--e-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .diff-truncate-note {
-    margin: 0 0 8px;
-    padding: 7px 9px;
-    border: 1px solid rgba(59,130,246,.35);
-    background: rgba(59,130,246,.08);
-    color: #9ac3f8;
-    border-radius: 8px;
-    font-size: 11px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .diff-expand-btn {
-    border: 1px solid rgba(59,130,246,.35);
-    background: #0b1b33;
-    color: #b9d7ff;
-    border-radius: 7px;
-    font-size: 11px;
-    padding: 4px 8px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .diff-expand-btn:hover { border-color: rgba(96,165,250,.6); color: #dcecff; }
-  .diff-modal-close {
-    border: 1px solid var(--e-border);
-    background: var(--e-raised);
-    color: var(--e-text2);
-    border-radius: 8px;
-    width: 30px;
-    height: 30px;
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-  }
-  .diff-modal-close:hover { color: #fff; border-color: #3a5a80; }
-  .diff-modal-body { padding: 10px 12px 0; min-height: 0; }
-  .diff-modal-footer {
-    padding: 10px 12px 12px;
-    border-top: 1px solid var(--e-border);
-    display: flex;
-    justify-content: flex-end;
-  }
+        .status-chip.pending {
+            color: #fde68a;
+            border-color: rgba(253, 230, 138, .3);
+            background: rgba(253, 230, 138, .08);
+        }
 
-  /* Outline (bottom of left panel, always visible) */
-  .e-outline-wrap {
-    flex-shrink: 0; border-top: 1px solid var(--e-border);
-  }
-  .e-outline {
-    list-style: none; margin: 0; padding: 4px 6px;
-    max-height: 210px; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 1px;
-  }
-  .e-outline-btn {
-    width: 100%; border: 0; background: transparent;
-    text-align: left; padding: 4px 6px; cursor: pointer;
-    font-size: 12px; line-height: 1.35;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    border-radius: 5px; transition: background .1s;
-    display: block;
-  }
-  .e-outline-btn:hover { background: var(--e-raised); }
-  /* Level styles */
-  .e-ol-0 { color: #e0eaff; font-weight: 700; font-size: 12px; }
-  .e-ol-2 { color: #c8dcf8; font-weight: 600; border-left: 2px solid #3b5a8a; padding-left: 8px; }
-  .e-ol-3 { color: #a8c4e8; padding-left: 18px; border-left: 2px solid #2a4060; }
-  .e-ol-4 { color: #88a8c8; font-size: 11px; padding-left: 28px; border-left: 2px solid #1e3050; }
-  .e-ol-5, .e-ol-6 { color: #6890a8; font-size: 11px; padding-left: 36px; }
+        .e-actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
 
-  /* ── Center panel ───────────────────────────────────── */
-  .e-center { display: flex; flex-direction: column; background: #090f1d; overflow: hidden; position: relative; }
-  .e-editor-bar {
-    height: 38px; flex-shrink: 0;
-    display: flex; align-items: center; gap: 10px; padding: 0 14px;
-    border-bottom: 1px solid var(--e-border); background: #06101d;
-  }
-  .e-file-label { font-weight: 700; font-size: 13px; color: var(--e-text); }
-  .e-save-hint { margin-left: auto; font-size: 11px; color: var(--e-muted); }
-  .e-save-hint.saving { color: var(--e-warn); }
-  .e-save-hint.saved  { color: var(--e-accent); }
-  .e-save-hint.error  { color: var(--e-danger); }
+        .e-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border: 1px solid var(--e-border);
+            background: var(--e-soft);
+            color: var(--e-text2);
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: border-color .12s, background .12s, color .12s;
+            text-decoration: none;
+            white-space: nowrap;
+        }
 
-  /* Syntax highlight overlay */
-  .e-editor-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-  #editor-gutter {
-    position: absolute;
-    inset: 0 auto 0 0;
-    z-index: 2;
-    width: var(--editor-gutter-w);
-    margin: 0;
-    padding: var(--editor-pad-y) 10px var(--editor-pad-y) 0;
-    overflow: hidden;
-    border-right: 1px solid rgba(27, 43, 64, .9);
-    background: #060d19;
-    color: #4f6685;
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
-    font-size: 14px;
-    line-height: 1.65;
-    text-align: right;
-    white-space: pre;
-    pointer-events: none;
-    user-select: none;
-  }
-  #editor-hl {
-    position: absolute; inset: 0; z-index: 0; margin: 0;
-    pointer-events: none; user-select: none;
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
-    font-size: 14px; line-height: 1.65;
-    padding: var(--editor-pad-y) var(--editor-pad-x) var(--editor-pad-y) calc(var(--editor-gutter-w) + var(--editor-pad-x));
-    background: #07101e; border: 0; overflow: hidden;
-    white-space: pre; word-break: normal; overflow-wrap: normal;
-    tab-size: 2; color: transparent;
-  }
-  #editor {
-    position: absolute; inset: 0; z-index: 1;
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
-    font-size: 14px; line-height: 1.65;
-    padding: var(--editor-pad-y) var(--editor-pad-x) var(--editor-pad-y) calc(var(--editor-gutter-w) + var(--editor-pad-x));
-    background: transparent; color: transparent; caret-color: #e6eeff;
-    border: 0; resize: none; outline: none;
-    overflow-y: auto; overflow-x: auto;
-    white-space: pre; tab-size: 2;
-  }
-  #editor::selection { background: rgba(59,130,246,.3); }
-  /* Highlight token colors */
-  .hl-cmd     { color: #c084fc; }
-  .hl-comment { color: #6a94b8; font-style: italic; }
-  .hl-math    { color: #86efac; }
-  .hl-brace   { color: #fbbf24; }
-  .hl-bracket { color: #c89b3c; }
-  .hl-num     { color: #fb923c; }
-  .hl-text    { color: #d0dff4; }
+        .e-btn:hover {
+            border-color: #5a5a5a;
+            background: #45454a;
+            color: var(--e-text);
+        }
 
-  /* Drag & drop overlay */
-  .e-drop-overlay {
-    display: none; position: absolute; inset: 0; z-index: 20;
-    background: rgba(34,197,94,.08);
-    border: 2px dashed var(--e-accent);
-    border-radius: 8px;
-    align-items: center; justify-content: center;
-    font-size: 15px; font-weight: 700; color: var(--e-accent);
-    pointer-events: none;
-  }
-  .e-center.drag-active .e-drop-overlay { display: flex; }
+        .e-btn.primary {
+            background: var(--e-accent);
+            border-color: transparent;
+            color: #052010;
+            font-weight: 600;
+        }
 
-  .e-asset-view { display: none; flex: 1; padding: 12px; overflow: auto; min-height: 0; }
-  .e-asset-box {
-    background: #060e1c; border: 1px solid var(--e-border); border-radius: 8px;
-    padding: 12px; color: #c8deff; height: 100%; overflow: auto; white-space: pre-wrap;
-    font-family: "JetBrains Mono", monospace; font-size: 13px;
-  }
-  .e-asset-img { max-width: 100%; border-radius: 8px; display: block; }
+        .e-btn.primary:hover {
+            background: #16a34a;
+        }
 
-  .e-log-panel { border-top: 1px solid var(--e-border); flex-shrink: 0; }
-  .e-log-toggle {
-    width: 100%; display: flex; justify-content: space-between; align-items: center;
-    padding: 5px 14px; background: #06101d; border: 0; cursor: pointer;
-    color: var(--e-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-  }
-  .e-log-toggle:hover { color: var(--e-text2); }
-  .e-log-toggle .arr { transition: transform .15s; display: inline-block; }
-  .e-log-toggle.open .arr { transform: rotate(180deg); }
-  #log {
-    display: none; max-height: 120px; overflow-y: auto;
-    background: #04090f; color: #8fb4e0; padding: 8px 14px;
-    font-family: "JetBrains Mono", monospace; font-size: 12px; line-height: 1.5;
-    border-top: 1px solid var(--e-border); margin: 0; white-space: pre-wrap;
-  }
-  #log.open { display: block; }
+        .e-kbd {
+            display: inline-flex;
+            align-items: center;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0;
+            background: rgba(5, 32, 16, .35);
+            border: 1px solid rgba(5, 32, 16, .4);
+            color: rgba(5, 32, 16, .65);
+            font-family: inherit;
+            line-height: 1.4;
+            margin-left: 3px;
+        }
 
-  /* ── PDF panel ─────────────────────────────────────── */
-  .e-pdf {
-    display: flex; flex-direction: column;
-    border-left: 1px solid var(--e-border); background: #07101e; overflow: hidden;
-  }
-  .e-pdf-bar {
-    height: 38px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
-    border-bottom: 1px solid var(--e-border); background: #06101d;
-  }
-  .e-pdf-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--e-muted); }
-  .e-pdf-actions { display: flex; gap: 5px; align-items: center; }
-  .e-pdf-wrap { flex: 1; min-height: 0; overflow: hidden; position: relative; }
-  #pdf-canvas-container {
-    width: 100%; height: 100%; overflow-y: auto; overflow-x: auto;
-    background: #555; display: flex; flex-direction: column; align-items: center;
-    gap: 6px; padding: 8px 0;
-    box-sizing: border-box;
-  }
-  .pdf-page-wrap {
-    position: relative; flex-shrink: 0; box-shadow: 0 2px 12px rgba(0,0,0,.5);
-    cursor: crosshair;
-  }
-  .pdf-page-wrap canvas { display: block; }
-  .pdf-synctex-marker {
-    position: absolute; pointer-events: none;
-    width: 14px; height: 14px; border-radius: 50%;
-    background: rgba(34,197,94,.7); border: 2px solid #22c55e;
-    transform: translate(-50%, -50%);
-    box-shadow: 0 0 8px rgba(34,197,94,.8);
-    animation: synctex-pulse 1.5s ease-out forwards;
-  }
-  @keyframes synctex-pulse {
-    0%   { opacity: 1; transform: translate(-50%,-50%) scale(1); }
-    100% { opacity: 0; transform: translate(-50%,-50%) scale(2.5); }
-  }
-  .e-pdf-empty {
-    position: absolute; inset: 0; display: none;
-    flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-    background: repeating-linear-gradient(-45deg, #0c1726, #0c1726 12px, #0f1e30 12px, #0f1e30 24px);
-    color: var(--e-muted); font-size: 13px; font-weight: 600;
-  }
-  .e-pdf-empty svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .5; }
-  .e-pdf-loading {
-    position: absolute; inset: 0; display: none;
-    align-items: center; justify-content: center;
-    background: rgba(7,16,30,.7);
-    color: var(--e-muted); font-size: 12px;
-  }
-  .e-pdf-loading.visible { display: flex; }
+        .e-btn.ghost {
+            padding: 4px 8px;
+            font-size: 12px;
+            color: var(--e-text2);
+            background: transparent;
+            border-color: transparent;
+        }
 
-  /* ── Custom confirm modal ──────────────────────────── */
-  .confirm-overlay {
-    display: none; position: fixed; inset: 0; z-index: 9999;
-    background: rgba(0,0,0,.65); backdrop-filter: blur(5px);
-    align-items: center; justify-content: center; padding: 20px;
-  }
-  .confirm-overlay.open { display: flex; }
-  .confirm-box {
-    background: var(--e-surface); border: 1px solid var(--e-border);
-    border-radius: 14px; padding: 24px; max-width: 340px; width: 100%;
-    box-shadow: 0 24px 60px rgba(0,0,0,.6);
-  }
-  .confirm-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
-  .confirm-msg { font-size: 14px; color: var(--e-text2); line-height: 1.55; margin-bottom: 22px; }
-  .confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
-  .rename-input {
-    width: 100%;
-    margin-bottom: 8px;
-  }
-  .rename-ext {
-    color: var(--e-muted);
-    font-size: 12px;
-    margin-bottom: 14px;
-  }
-  .entry-help {
-    color: var(--e-muted);
-    font-size: 12px;
-    margin-bottom: 14px;
-    line-height: 1.45;
-  }
-</style>
+        .e-btn.ghost:hover {
+            color: var(--e-text);
+            background: var(--e-soft);
+            border-color: transparent;
+        }
+
+        .e-menu-wrap {
+            position: relative;
+        }
+
+        .e-menu-btn {
+            min-width: 74px;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .e-menu-btn .caret {
+            font-size: 10px;
+            opacity: .85;
+        }
+
+        .e-menu {
+            display: none;
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            min-width: 200px;
+            background: var(--e-raised);
+            border: 1px solid var(--e-border);
+            border-radius: 4px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+            z-index: 80;
+            overflow: hidden;
+            padding: 4px 0;
+        }
+
+        .e-menu.open {
+            display: block;
+        }
+
+        .e-menu-item {
+            width: 100%;
+            padding: 7px 14px;
+            border: 0;
+            background: transparent;
+            color: var(--e-text2);
+            text-align: left;
+            font-size: 13px;
+            font-weight: 400;
+            cursor: pointer;
+        }
+
+        .e-menu-item:hover {
+            background: var(--e-soft);
+            color: var(--e-text);
+        }
+
+        .e-menu-item.danger {
+            color: #f87171;
+        }
+
+        .e-menu-item.danger:hover {
+            background: rgba(244, 71, 71, .12);
+            color: #fca5a5;
+        }
+
+        /* ── 5-column grid with resize handles ─────────────── */
+        .e-body {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: var(--left-w, 260px) 1px 1fr 1px var(--right-w, 420px);
+            overflow: hidden;
+        }
+
+        .e-resize-handle {
+            background: var(--e-border);
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background .12s;
+            position: relative;
+            z-index: 10;
+            width: 1px;
+        }
+
+        .e-resize-handle::after {
+            content: '';
+            position: absolute;
+            inset: 0 -3px;
+            cursor: col-resize;
+        }
+
+        .e-resize-handle:hover, .e-resize-handle.dragging {
+            background: var(--e-accent);
+        }
+
+        /* ── Left panel ────────────────────────────────────── */
+        .e-left {
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--e-border);
+            background: var(--e-surface);
+            overflow: hidden;
+        }
+
+        .e-tabs {
+            display: flex;
+            flex-shrink: 0;
+            background: var(--e-raised);
+            border-bottom: 1px solid var(--e-border);
+        }
+
+        .e-tab {
+            flex: 1;
+            padding: 8px 0;
+            font-size: 11px;
+            font-weight: 600;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--e-muted);
+            background: transparent;
+            border: 0;
+            border-bottom: 1px solid transparent;
+            cursor: pointer;
+            transition: color .1s;
+        }
+
+        .e-tab:hover {
+            color: var(--e-text2);
+        }
+
+        .e-tab.active {
+            color: var(--e-text);
+            border-bottom-color: var(--e-accent);
+        }
+
+        .e-tabpanel {
+            display: none;
+            flex: 1 1 0;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        .e-tabpanel.active {
+            display: flex;
+        }
+
+        /* VS Code-style EXPLORER section header */
+        .e-sec-head {
+            padding: 5px 12px 5px 16px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--e-text2);
+            border-bottom: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+            height: 30px;
+            user-select: none;
+        }
+
+        .e-sec-btn {
+            padding: 2px 5px;
+            font-size: 11px;
+            border-radius: 3px;
+            border: 0;
+            background: transparent;
+            color: var(--e-text2);
+            cursor: pointer;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            transition: background .08s, color .08s;
+        }
+
+        .e-sec-btn:hover {
+            color: var(--e-text);
+            background: var(--e-soft);
+        }
+
+        .e-file-toolbar {
+            display: flex;
+            gap: 1px;
+            height: 22px;
+        }
+
+        .e-icon-btn {
+            width: 22px;
+            height: 22px;
+            padding: 0;
+            border-radius: 4px;
+            border: 0;
+            background: transparent;
+            color: var(--e-text2);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: color .08s, background .08s;
+            box-sizing: border-box;
+            line-height: 0;
+            font-size: 0;
+        }
+
+        .e-icon-btn:hover {
+            color: var(--e-text);
+            background: var(--e-soft);
+        }
+
+        .e-icon-btn svg {
+            display: block;
+            width: 15px;
+            height: 15px;
+            pointer-events: none;
+            flex-shrink: 0;
+        }
+
+        /* File list */
+        .e-file-list {
+            list-style: none;
+            margin: 0;
+            padding: 2px 0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            align-content: start;
+        }
+
+        .e-file-row {
+            display: flex;
+            align-items: stretch;
+            min-width: 0;
+            position: relative;
+        }
+
+        .e-file-btn {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            padding: 1px 10px 1px 0;
+            background: transparent;
+            border: 0;
+            color: var(--e-text2);
+            font-size: 13px;
+            cursor: pointer;
+            text-align: left;
+            transition: background .05s;
+            height: 22px;
+        }
+
+        .e-file-btn:hover {
+            background: rgba(255, 255, 255, .05);
+            color: var(--e-text);
+        }
+
+        .e-file-btn.active {
+            background: rgba(34, 197, 94, .12);
+            color: var(--e-text);
+        }
+
+        .e-file-btn.drag-target {
+            background: rgba(34, 197, 94, .15);
+            color: #d4d4d4;
+            outline: 1px solid #22c55e;
+            outline-offset: -1px;
+        }
+
+        .e-file-name {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .e-folder-toggle {
+            width: 16px;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--e-text2);
+            cursor: pointer;
+            user-select: none;
+            transition: transform .1s;
+        }
+
+        .e-folder-toggle svg {
+            width: 10px;
+            height: 10px;
+            transition: transform .12s;
+        }
+
+        .e-file-sz {
+            font-size: 11px;
+            color: var(--e-muted);
+            flex-shrink: 0;
+            margin-left: auto;
+            padding-right: 6px;
+        }
+
+        .e-main-star {
+            font-size: 9px;
+            color: var(--e-accent);
+            margin-left: 3px;
+            flex-shrink: 0;
+            opacity: .8;
+        }
+
+        /* File type colored dot */
+        .e-ftype-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            display: inline-block;
+        }
+
+        .ft-typ {
+            background: #a855f7;
+        }
+
+        .ft-tex {
+            background: #22c55e;
+        }
+
+        .ft-md {
+            background: #60a5fa;
+        }
+
+        .ft-pdf {
+            background: #f87171;
+        }
+
+        .ft-yaml, .ft-json {
+            background: #fb923c;
+        }
+
+        .ft-bib {
+            background: #22d3ee;
+        }
+
+        .ft-csl {
+            background: #c084fc;
+        }
+
+        .ft-img {
+            background: #34d399;
+        }
+
+        .ft-data {
+            background: #818cf8;
+        }
+
+        .ft-txt {
+            background: #94a3b8;
+        }
+
+        .ft-other {
+            background: #6b7280;
+        }
+
+        /* VS Code-style file actions */
+        .e-file-actions {
+            display: flex;
+            gap: 0;
+            flex-shrink: 0;
+            opacity: 0;
+            transition: opacity .08s;
+            align-items: center;
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            background: linear-gradient(to right, transparent 0, rgba(55, 55, 61, .95) 10px);
+            padding-left: 12px;
+            padding-right: 2px;
+        }
+
+        .e-file-row:hover .e-file-actions {
+            opacity: 1;
+        }
+
+        .e-file-row:hover .e-file-btn {
+            padding-right: 68px;
+        }
+
+        .e-file-act {
+            width: 20px;
+            height: 20px;
+            padding: 0;
+            border-radius: 3px;
+            border: 0;
+            background: transparent;
+            color: var(--e-text2);
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background .08s, color .08s;
+        }
+
+        .e-file-act:hover {
+            color: var(--e-text);
+            background: var(--e-soft);
+        }
+
+        .e-file-act.danger:hover {
+            color: #f87171;
+            background: rgba(244, 71, 71, .15);
+        }
+
+        /* History tab — compact single-row list */
+        .e-history {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2px 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .e-ver-item {
+            flex-shrink: 0;
+            border-radius: 2px;
+            cursor: pointer;
+            transition: background .05s;
+        }
+
+        .e-ver-item:hover {
+            background: rgba(255, 255, 255, .05);
+        }
+
+        .e-ver-item.active {
+            background: rgba(34, 197, 94, .08);
+        }
+
+        .e-ver-item.is-loading {
+            opacity: .6;
+        }
+
+        .e-ver-head {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0 10px;
+            height: 26px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        .e-ver-num {
+            font-size: 10px;
+            color: var(--e-muted);
+            flex-shrink: 0;
+            min-width: 26px;
+        }
+
+        .e-ver-op {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 1px 5px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            background: rgba(59, 130, 246, .1);
+            border: 1px solid rgba(59, 130, 246, .18);
+            color: #7ab4f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 90px;
+        }
+
+        .e-ver-file {
+            flex: 1;
+            min-width: 0;
+            font-size: 11px;
+            color: var(--e-text2);
+            font-family: "JetBrains Mono", monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .e-ver-src {
+            font-size: 10px;
+            color: var(--e-muted);
+            flex-shrink: 0;
+        }
+
+        .e-ver-date {
+            font-size: 10px;
+            color: var(--e-muted);
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        .e-ver-filter-btn {
+            font-size: 10px;
+        }
+
+        .e-ver-filter-btn.active {
+            color: var(--e-accent);
+            background: rgba(34, 197, 94, .1);
+        }
+
+        /* Diff area */
+        .e-diff-scroll {
+            max-height: min(70vh, 680px);
+            overflow-y: auto;
+            overflow-x: auto;
+            padding: 8px 10px;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .diff-empty {
+            color: var(--e-muted);
+            font-style: italic;
+            display: block;
+            padding: 4px 0;
+        }
+
+        .diff-summary {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+            color: #8fa8c5;
+            font-size: 11px;
+        }
+
+        .diff-chip {
+            border: 1px solid var(--e-border);
+            border-radius: 6px;
+            padding: 1px 6px;
+            background: var(--e-raised);
+        }
+
+        .diff-chip.add {
+            color: #4ade80;
+            border-color: rgba(34, 197, 94, .35);
+        }
+
+        .diff-chip.del {
+            color: #f87171;
+            border-color: rgba(248, 113, 113, .35);
+        }
+
+        .diff-table {
+            border: 1px solid var(--e-border);
+            border-radius: 8px;
+            overflow: hidden;
+            background: #1a1a1a;
+        }
+
+        .diff-row {
+            display: grid;
+            grid-template-columns: 18px 44px 44px minmax(0, 1fr);
+            align-items: stretch;
+        }
+
+        .diff-row + .diff-row {
+            border-top: 1px solid rgba(40, 60, 90, 0.35);
+        }
+
+        .diff-meta, .diff-hunk {
+            display: block;
+            padding: 3px 8px;
+            color: #7b93af;
+            background: var(--e-surface);
+            border-bottom: 1px solid rgba(40, 60, 90, 0.35);
+        }
+
+        .diff-hunk {
+            color: #5eaabb;
+            font-weight: 700;
+            background: var(--e-raised);
+        }
+
+        .diff-sign, .diff-ln, .diff-code {
+            display: block;
+            padding: 2px 8px;
+            white-space: pre;
+        }
+
+        .diff-sign {
+            text-align: center;
+            color: #6882a5;
+            border-right: 1px solid rgba(40, 60, 90, 0.35);
+        }
+
+        .diff-ln {
+            text-align: right;
+            color: #6882a5;
+            border-right: 1px solid rgba(40, 60, 90, 0.35);
+        }
+
+        .diff-code {
+            overflow-x: hidden;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            color: #b4c7df;
+        }
+
+        .diff-row.ctx-empty {
+            background: transparent;
+        }
+
+        .diff-row.ctx-empty .diff-sign,
+        .diff-row.ctx-empty .diff-ln,
+        .diff-row.ctx-empty .diff-code {
+            color: #415a78;
+        }
+
+        .diff-row.add {
+            background: rgba(34, 197, 94, .12);
+        }
+
+        .diff-row.add .diff-sign,
+        .diff-row.add .diff-code {
+            color: #4ade80;
+        }
+
+        .diff-row.del {
+            background: rgba(248, 113, 113, .12);
+        }
+
+        .diff-row.del .diff-sign,
+        .diff-row.del .diff-code {
+            color: #f87171;
+        }
+
+        .diff-row.ctx {
+            background: transparent;
+        }
+
+        .diff-row.ctx .diff-sign {
+            color: #4f6685;
+        }
+
+        .e-diff-footer {
+            padding: 8px 10px 10px;
+            display: flex;
+            justify-content: flex-end;
+            border-top: 1px solid var(--e-border);
+        }
+
+        .e-rollback {
+            padding: 5px 11px;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 7px;
+            background: var(--e-raised);
+            border: 1px solid var(--e-border);
+            color: var(--e-text2);
+            cursor: pointer;
+            transition: border-color .1s, color .1s, background .1s;
+        }
+
+        .e-rollback:hover {
+            border-color: var(--e-danger);
+            color: #f87171;
+            background: rgba(239, 68, 68, .08);
+        }
+
+        .e-empty-msg {
+            padding: 20px;
+            color: var(--e-muted);
+            font-size: 12px;
+            text-align: center;
+        }
+
+        /* Diff modal */
+        .diff-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 9998;
+            background: rgba(0, 0, 0, .72);
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .diff-modal-overlay.open {
+            display: flex;
+        }
+
+        .diff-modal {
+            width: min(980px, 96vw);
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            background: var(--e-surface);
+            border: 1px solid var(--e-border);
+            border-radius: 14px;
+            box-shadow: 0 30px 80px rgba(0, 0, 0, .62);
+            overflow: hidden;
+        }
+
+        .diff-modal-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--e-border);
+            background: var(--e-surface);
+        }
+
+        .diff-modal-title {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .diff-modal-title strong {
+            font-size: 13px;
+        }
+
+        .diff-modal-meta {
+            color: var(--e-muted);
+            font-size: 11px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .diff-truncate-note {
+            margin: 0 0 8px;
+            padding: 7px 9px;
+            border: 1px solid rgba(59, 130, 246, .35);
+            background: rgba(59, 130, 246, .08);
+            color: #9ac3f8;
+            border-radius: 8px;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .diff-expand-btn {
+            border: 1px solid rgba(59, 130, 246, .35);
+            background: var(--e-raised);
+            color: #b9d7ff;
+            border-radius: 7px;
+            font-size: 11px;
+            padding: 4px 8px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .diff-expand-btn:hover {
+            border-color: rgba(96, 165, 250, .6);
+            color: #dcecff;
+        }
+
+        .diff-modal-close {
+            border: 1px solid var(--e-border);
+            background: var(--e-raised);
+            color: var(--e-text2);
+            border-radius: 8px;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+        }
+
+        .diff-modal-close:hover {
+            color: #fff;
+            border-color: #5a5a5a;
+        }
+
+        .diff-modal-body {
+            padding: 10px 12px 0;
+            min-height: 0;
+        }
+
+        .diff-modal-footer {
+            padding: 10px 12px 12px;
+            border-top: 1px solid var(--e-border);
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        /* Outline (bottom of left panel, always visible) */
+        .e-outline-resize {
+            height: 4px;
+            flex-shrink: 0;
+            cursor: ns-resize;
+            background: transparent;
+            transition: background .1s;
+        }
+
+        .e-outline-resize:hover, .e-outline-resize.dragging {
+            background: var(--e-accent);
+        }
+
+        .e-outline-wrap {
+            flex: 0 0 var(--outline-h, 160px);
+            min-height: 60px;
+            border-top: 1px solid var(--e-border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+            z-index: 1;
+        }
+
+        .e-outline {
+            list-style: none;
+            margin: 0;
+            padding: 2px 0;
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        .e-outline li {
+            display: block;
+            width: 100%;
+        }
+
+        .e-outline-btn {
+            display: block;
+            width: 100%;
+            border: 0;
+            background: transparent;
+            text-align: left;
+            padding: 0 8px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 20px;
+            height: 20px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: background .05s;
+            color: var(--e-text2);
+            pointer-events: auto;
+        }
+
+        .e-outline-btn:hover {
+            background: rgba(255, 255, 255, .05);
+            color: var(--e-text);
+        }
+
+        /* Level styles - VS Code outline */
+        .e-ol-0 {
+            color: var(--e-text);
+            font-weight: 600;
+            padding-left: 8px;
+        }
+
+        .e-ol-2 {
+            padding-left: 20px;
+        }
+
+        .e-ol-3 {
+            padding-left: 32px;
+            font-size: 11px;
+        }
+
+        .e-ol-4 {
+            color: var(--e-muted);
+            padding-left: 44px;
+            font-size: 11px;
+        }
+
+        .e-ol-5, .e-ol-6 {
+            color: var(--e-muted);
+            padding-left: 56px;
+            font-size: 11px;
+        }
+
+        /* ── Center panel ───────────────────────────────────── */
+        .e-center {
+            display: flex;
+            flex-direction: column;
+            background: var(--e-bg);
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* VS Code-style editor tab bar */
+        .e-edtabbar {
+            height: 35px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: stretch;
+            background: var(--e-surface);
+            border-bottom: 1px solid var(--e-border);
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: none;
+        }
+
+        .e-edtabbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .e-edtab {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0 8px 0 10px;
+            min-width: 90px;
+            max-width: 180px;
+            border-right: 1px solid var(--e-border);
+            background: var(--e-surface);
+            color: var(--e-muted);
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+            flex-shrink: 0;
+            position: relative;
+            transition: background .08s;
+        }
+
+        .e-edtab:hover {
+            background: var(--e-raised);
+            color: var(--e-text2);
+        }
+
+        .e-edtab.active {
+            background: var(--e-bg);
+            color: var(--e-text);
+            border-top: 1px solid var(--e-accent);
+        }
+
+        .e-edtab-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .e-edtab-name {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .e-edtab-dirty {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            background: var(--e-text2);
+            opacity: 0;
+            transition: opacity .15s;
+        }
+
+        .e-edtab-dirty.show {
+            opacity: 1;
+        }
+
+        .e-edtab-close {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 0;
+            flex-shrink: 0;
+            background: transparent;
+            color: transparent;
+            cursor: pointer;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: color .1s, background .1s;
+        }
+
+        .e-edtab-close svg {
+            width: 8px;
+            height: 8px;
+            pointer-events: none;
+        }
+
+        .e-edtab:hover .e-edtab-close {
+            color: var(--e-muted);
+        }
+
+        .e-edtab.active .e-edtab-close {
+            color: var(--e-muted);
+        }
+
+        .e-edtab-close:hover {
+            color: var(--e-text) !important;
+            background: rgba(255, 255, 255, .1);
+        }
+
+        /* Breadcrumb bar */
+        .e-editor-bar {
+            height: 22px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            border-bottom: 1px solid rgba(62, 62, 66, .5);
+            background: var(--e-bg);
+            overflow: hidden;
+        }
+
+        .e-file-label {
+            font-size: 12px;
+            color: var(--e-text2);
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            opacity: .7;
+        }
+
+        .e-save-hint {
+            margin-left: auto;
+            font-size: 11px;
+            color: transparent;
+            flex-shrink: 0;
+        }
+
+        .e-save-hint.saving {
+            color: var(--e-warn);
+        }
+
+        .e-save-hint.saved {
+            color: var(--e-accent);
+        }
+
+        .e-save-hint.error {
+            color: var(--e-danger);
+        }
+
+        /* CodeMirror editor container */
+        .e-editor-wrap {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #cm-editor {
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        #cm-editor .cm-editor {
+            height: 100%;
+        }
+
+        #cm-editor .cm-editor.cm-focused {
+            outline: none;
+        }
+
+        /* Drag & drop overlay */
+        .e-drop-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            z-index: 20;
+            background: rgba(34, 197, 94, .08);
+            border: 2px dashed var(--e-accent);
+            border-radius: 8px;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--e-accent);
+            pointer-events: none;
+        }
+
+        .e-center.drag-active .e-drop-overlay {
+            display: flex;
+        }
+
+        .e-asset-view {
+            display: none;
+            flex: 1;
+            padding: 12px;
+            overflow: auto;
+            min-height: 0;
+        }
+
+        .e-asset-box {
+            width: 100%;
+            background: var(--e-surface);
+            border: 1px solid var(--e-border);
+            border-radius: 4px;
+            padding: 12px;
+            color: var(--e-text2);
+            height: 100%;
+            overflow: auto;
+            white-space: pre-wrap;
+            font-family: "JetBrains Mono", monospace;
+            font-size: 13px;
+        }
+
+        .e-asset-img {
+            max-width: 100%;
+            border-radius: 8px;
+            display: block;
+        }
+
+        /* ── Bottom panel (Problems / Log) ────────────────────────── */
+        .e-bottom-panel {
+            border-top: 1px solid var(--e-border);
+            background: var(--e-surface);
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height .2s ease;
+        }
+
+        .e-bottom-panel.open {
+            max-height: 220px;
+        }
+
+        .e-bp-tabbar {
+            display: flex;
+            align-items: stretch;
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--e-border);
+            background: var(--e-raised);
+            height: 30px;
+        }
+
+        .e-bp-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 14px;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            background: transparent;
+            color: var(--e-muted);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .45px;
+            cursor: pointer;
+            white-space: nowrap;
+            outline: none;
+            transition: color .12s, border-color .12s;
+        }
+
+        .e-bp-tab:hover {
+            color: var(--e-text2);
+        }
+
+        .e-bp-tab.active {
+            color: var(--e-text);
+            border-bottom-color: var(--e-accent);
+        }
+
+        .e-bp-tab svg {
+            width: 12px;
+            height: 12px;
+            flex-shrink: 0;
+        }
+
+        .e-bp-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+            background: rgba(239, 68, 68, .2);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, .25);
+        }
+
+        .e-bp-badge.empty {
+            background: rgba(86, 111, 138, .15);
+            color: var(--e-muted);
+            border-color: rgba(86, 111, 138, .2);
+        }
+
+        .e-bp-badge.warn {
+            background: rgba(245, 158, 11, .18);
+            color: #fde68a;
+            border-color: rgba(245, 158, 11, .3);
+        }
+
+        .e-bp-spacer {
+            flex: 1;
+        }
+
+        .e-bp-close {
+            width: 30px;
+            height: 30px;
+            border: 0;
+            background: transparent;
+            color: var(--e-muted);
+            cursor: pointer;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: color .12s;
+        }
+
+        .e-bp-close:hover {
+            color: var(--e-text);
+        }
+
+        .e-bp-body {
+            display: none;
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+        }
+
+        .e-bp-body.active {
+            display: block;
+        }
+
+        /* Problems pane — VS Code compact rows */
+        .e-diag-list {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .e-diag-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 12px;
+            cursor: pointer;
+            width: 100%;
+            background: transparent;
+            border: none;
+            text-align: left;
+            color: var(--e-text2);
+            font-size: 12px;
+            line-height: 20px;
+            min-width: 0;
+            overflow: hidden;
+            transition: background .05s;
+        }
+
+        .e-diag-item:hover {
+            background: rgba(255, 255, 255, .06);
+            color: var(--e-text);
+        }
+
+        .e-diag-icon {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            color: #f87171;
+        }
+
+        .e-diag-icon svg {
+            width: 13px;
+            height: 13px;
+        }
+
+        .e-diag-item.warn .e-diag-icon {
+            color: #fbbf24;
+        }
+
+        .e-diag-msg {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .e-diag-loc {
+            flex-shrink: 0;
+            font-size: 11px;
+            color: var(--e-muted);
+            font-family: "JetBrains Mono", monospace;
+            margin-left: 6px;
+        }
+
+        /* Log pane */
+        #log {
+            display: block;
+            margin: 0;
+            background: transparent;
+            color: #cccccc;
+            padding: 8px 14px;
+            font-family: "JetBrains Mono", monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+
+        /* ── PDF panel ─────────────────────────────────────── */
+        .e-pdf {
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--e-border);
+            background: var(--e-surface);
+            overflow: hidden;
+        }
+
+        .e-pdf-bar {
+            height: 35px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 10px;
+            border-bottom: 1px solid var(--e-border);
+            background: var(--e-surface);
+        }
+
+        .e-pdf-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--e-muted);
+        }
+
+        .e-pdf-actions {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .e-pdf-page-info {
+            font-size: 11px;
+            color: var(--e-muted);
+            white-space: nowrap;
+            padding: 0 4px;
+        }
+
+        .e-pdf-wrap {
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #pdf-canvas-container {
+            width: 100%;
+            height: 100%;
+            overflow-y: auto;
+            overflow-x: auto;
+            background: #3c3c3c;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 0;
+            box-sizing: border-box;
+        }
+
+        .pdf-page-wrap {
+            position: relative;
+            flex-shrink: 0;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, .5);
+            cursor: crosshair;
+        }
+
+        .pdf-page-wrap canvas {
+            display: block;
+        }
+
+        .pdf-synctex-marker {
+            position: absolute;
+            pointer-events: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: rgba(34, 197, 94, .7);
+            border: 2px solid #22c55e;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 8px rgba(34, 197, 94, .8);
+            animation: synctex-pulse 1.5s ease-out forwards;
+        }
+
+        @keyframes synctex-pulse {
+            0% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+            100% {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(2.5);
+            }
+        }
+
+        .e-pdf-empty {
+            position: absolute;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: #3c3c3c;
+            color: #9d9d9d;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .e-pdf-empty svg {
+            width: 28px;
+            height: 28px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.5;
+            opacity: .5;
+        }
+
+        .e-pdf-loading {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(7, 16, 30, .7);
+            color: var(--e-muted);
+            font-size: 12px;
+        }
+
+        .e-pdf-loading.visible {
+            display: flex;
+        }
+
+        /* ── Custom confirm modal ──────────────────────────── */
+        .confirm-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: rgba(0, 0, 0, .6);
+            backdrop-filter: blur(3px);
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .confirm-overlay.open {
+            display: flex;
+        }
+
+        .confirm-box {
+            background: #252526;
+            border: 1px solid var(--e-border);
+            border-radius: 6px;
+            padding: 20px;
+            max-width: 380px;
+            width: 100%;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, .7);
+        }
+
+        .confirm-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--e-text);
+        }
+
+        .confirm-msg {
+            font-size: 13px;
+            color: var(--e-text2);
+            line-height: 1.55;
+            margin-bottom: 20px;
+        }
+
+        .confirm-btns {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .rename-input {
+            width: 100%;
+            margin-bottom: 8px;
+            background: var(--e-raised);
+            border: 1px solid var(--e-border);
+            color: var(--e-text);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font: inherit;
+            box-sizing: border-box;
+            outline: none;
+        }
+
+        .rename-input:focus {
+            border-color: var(--e-accent);
+        }
+
+        .rename-ext {
+            color: var(--e-muted);
+            font-size: 12px;
+            margin-bottom: 14px;
+        }
+
+        .entry-help {
+            color: var(--e-muted);
+            font-size: 12px;
+            margin-bottom: 14px;
+            line-height: 1.45;
+        }
+
+        .status-chip.compiling,
+        .status-chip.pending {
+            color: #fde68a;
+            border-color: rgba(253, 230, 138, .4);
+            background: rgba(253, 230, 138, .1);
+        }
+
+        .status-chip.synced,
+        .status-chip.success {
+            color: #4ade80;
+            border-color: rgba(74, 222, 128, .4);
+            background: rgba(74, 222, 128, .1);
+        }
+
+        .status-chip.failed,
+        .status-chip.error {
+            color: #f87171;
+            border-color: rgba(248, 113, 113, .4);
+            background: rgba(248, 113, 113, .1);
+        }
+
+        .status-chip.out-of-date {
+            color: #93c5fd;
+            border-color: rgba(147, 197, 253, .4);
+            background: rgba(59, 130, 246, .12);
+        }
+
+        .e-state-copy {
+            font-size: 11px;
+            color: var(--e-muted);
+        }
+
+        .e-empty-card {
+            border: 1px dashed rgba(86, 86, 90, .5);
+            border-radius: 4px;
+            padding: 12px 14px;
+            background: rgba(37, 37, 38, .4);
+            color: var(--e-text2);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .e-empty-card strong {
+            display: block;
+            font-size: 13px;
+            color: var(--e-text);
+            margin-bottom: 4px;
+        }
+
+        .e-modal-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .e-form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .e-form-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .e-form-field label {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--e-text2);
+        }
+
+        .e-form-field input,
+        .e-form-field textarea {
+            width: 100%;
+            border-radius: 9px;
+            border: 1px solid var(--e-border);
+            background: var(--e-surface);
+            color: var(--e-text);
+            padding: 9px 10px;
+            font: inherit;
+            box-sizing: border-box;
+        }
+
+        .e-form-field textarea {
+            min-height: 88px;
+            resize: vertical;
+        }
+
+        .e-helper-list {
+            border: 1px solid var(--e-border);
+            border-radius: 4px;
+            background: var(--e-surface);
+            padding: 10px;
+            max-height: 180px;
+            overflow: auto;
+            font-size: 12px;
+            color: var(--e-text2);
+        }
+
+        .e-helper-list div + div {
+            margin-top: 6px;
+        }
+
+        /* ── VS Code status bar ─────────────────────────────── */
+        .e-statusbar {
+            height: 22px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            background: var(--e-statusbar);
+            color: rgba(255, 255, 255, .9);
+            font-size: 12px;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .e-statusbar.error-state {
+            background: #c72e2e;
+        }
+
+        .e-sb-left, .e-sb-right {
+            display: flex;
+            align-items: stretch;
+        }
+
+        .e-sb-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0 10px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background .1s;
+            font-size: 12px;
+            color: rgba(255, 255, 255, .9);
+            text-decoration: none;
+        }
+
+        .e-sb-item:hover {
+            background: rgba(255, 255, 255, .14);
+        }
+
+        .e-sb-item svg {
+            width: 13px;
+            height: 13px;
+            flex-shrink: 0;
+        }
+
+        .e-sb-sep {
+            display: flex;
+            align-items: center;
+            color: rgba(255, 255, 255, .3);
+            font-size: 11px;
+        }
+
+        @media (max-width: 1180px) {
+            .e-body {
+                grid-template-columns: minmax(220px, 270px) 1fr;
+                grid-template-rows: minmax(0, 1fr) minmax(280px, 38vh);
+            }
+
+            #resize-left, #resize-right {
+                display: none;
+            }
+
+            .e-left {
+                grid-column: 1;
+                grid-row: 1 / span 2;
+                border-right: 1px solid var(--e-border);
+            }
+
+            .e-center {
+                grid-column: 2;
+                grid-row: 1;
+            }
+
+            .e-pdf {
+                grid-column: 2;
+                grid-row: 2;
+                border-left: 0;
+                border-top: 1px solid var(--e-border);
+                min-width: 0;
+            }
+        }
+
+        @media (max-width: 860px) {
+            .e-topbar, .e-actions {
+                flex-wrap: wrap;
+            }
+
+            .e-body {
+                grid-template-columns: 1fr;
+                grid-template-rows: minmax(220px, 28vh) minmax(0, 1fr) minmax(240px, 34vh);
+            }
+
+            .e-left, .e-center, .e-pdf {
+                grid-column: 1;
+            }
+
+            .e-left {
+                grid-row: 1;
+                border-right: 0;
+                border-bottom: 1px solid var(--e-border);
+            }
+
+            .e-center {
+                grid-row: 2;
+            }
+
+            .e-pdf {
+                grid-row: 3;
+            }
+
+            .e-form-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
 {% endblock %}
 
 {% block content %}
-<!-- Custom confirm dialog -->
-<div id="confirm-overlay" class="confirm-overlay">
-  <div class="confirm-box">
-    <div class="confirm-title">Підтвердження</div>
-    <div class="confirm-msg" id="confirm-msg"></div>
-    <div class="confirm-btns">
-      <button class="e-btn" id="confirm-cancel" type="button">Скасувати</button>
-      <button class="e-btn" id="confirm-ok" type="button"
-        style="background:var(--e-danger);border-color:transparent;color:#fff;">Підтвердити</button>
-    </div>
-  </div>
-</div>
-
-<div id="rename-overlay" class="confirm-overlay">
-  <div class="confirm-box">
-    <div class="confirm-title">Перейменувати файл</div>
-    <div class="confirm-msg" id="rename-msg" style="margin-bottom: 12px;"></div>
-    <input id="rename-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
-    <div id="rename-ext" class="rename-ext"></div>
-    <div class="confirm-btns">
-      <button class="e-btn" id="rename-cancel" type="button">Скасувати</button>
-      <button class="e-btn" id="rename-ok" type="button">Зберегти</button>
-    </div>
-  </div>
-</div>
-
-<div id="rename-project-overlay" class="confirm-overlay">
-  <div class="confirm-box">
-    <div class="confirm-title">Перейменувати проєкт</div>
-    <div class="confirm-msg" id="rename-project-msg" style="margin-bottom: 12px;"></div>
-    <input id="rename-project-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
-    <div class="confirm-btns">
-      <button class="e-btn" id="rename-project-cancel" type="button">Скасувати</button>
-      <button class="e-btn" id="rename-project-ok" type="button">Зберегти</button>
-    </div>
-  </div>
-</div>
-
-<div id="entry-create-overlay" class="confirm-overlay">
-  <div class="confirm-box">
-    <div id="entry-create-title" class="confirm-title">Створити файл</div>
-    <div id="entry-create-msg" class="confirm-msg" style="margin-bottom: 12px;"></div>
-    <input id="entry-create-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
-    <div id="entry-create-help" class="entry-help"></div>
-    <div class="confirm-btns">
-      <button class="e-btn" id="entry-create-cancel" type="button">Скасувати</button>
-      <button class="e-btn" id="entry-create-ok" type="button">Створити</button>
-    </div>
-  </div>
-</div>
-
-<div id="diff-modal-overlay" class="diff-modal-overlay">
-  <div class="diff-modal" role="dialog" aria-modal="true" aria-labelledby="diff-modal-title">
-    <div class="diff-modal-head">
-      <div class="diff-modal-title">
-        <strong id="diff-modal-title">Diff версії</strong>
-        <span id="diff-modal-meta" class="diff-modal-meta"></span>
-      </div>
-      <button id="diff-modal-close" class="diff-modal-close" type="button" aria-label="Закрити">×</button>
-    </div>
-    <div class="diff-modal-body">
-      <div id="diff-modal-content" class="e-diff-scroll"></div>
-    </div>
-    <div class="diff-modal-footer">
-      <button id="diff-modal-rollback" class="e-rollback" type="button">Відкотити до цієї версії</button>
-    </div>
-  </div>
-</div>
-
-<div class="editor-shell">
-  <!-- Topbar -->
-  <div class="e-topbar">
-    <div class="e-title-side">
-      <div class="e-title-group">
-        <span class="e-proj-name" id="project-title">{{ project.title }}</span>
-        <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
-      </div>
-      <div class="e-menu-wrap">
-        <button id="project-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-expanded="false" aria-haspopup="true">
-          Проєкт <span class="caret">▾</span>
-        </button>
-        <div id="project-menu" class="e-menu" role="menu">
-          <button id="rename-project-btn" class="e-menu-item" type="button" role="menuitem">Перейменувати проєкт</button>
-          <button id="delete-project-btn" class="e-menu-item danger" type="button" role="menuitem">Видалити проєкт</button>
+    <!-- Custom confirm dialog -->
+    <div id="confirm-overlay" class="confirm-overlay">
+        <div class="confirm-box">
+            <div class="confirm-title">Підтвердження</div>
+            <div class="confirm-msg" id="confirm-msg"></div>
+            <div class="confirm-btns">
+                <button class="e-btn" id="confirm-cancel" type="button">Скасувати</button>
+                <button class="e-btn" id="confirm-ok" type="button"
+                        style="background:var(--e-danger);border-color:transparent;color:#fff;">Підтвердити
+                </button>
+            </div>
         </div>
-      </div>
     </div>
-    <div class="e-actions">
-      <button id="compile-btn" class="e-btn primary" type="button">Recompile</button>
-      <a id="download-pdf" class="e-btn" href="/api/projects/{{ project.id }}/pdf/" target="_blank">PDF</a>
+
+    <div id="rename-overlay" class="confirm-overlay">
+        <div class="confirm-box">
+            <div class="confirm-title">Перейменувати файл</div>
+            <div class="confirm-msg" id="rename-msg" style="margin-bottom: 12px;"></div>
+            <input id="rename-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
+            <div id="rename-ext" class="rename-ext"></div>
+            <div class="confirm-btns">
+                <button class="e-btn" id="rename-cancel" type="button">Скасувати</button>
+                <button class="e-btn" id="rename-ok" type="button">Зберегти</button>
+            </div>
+        </div>
     </div>
-  </div>
 
-  <!-- Body -->
-  <div class="e-body" id="e-body">
-
-    <!-- ── Left panel ──────────────────────────── -->
-    <aside class="e-left">
-      <div class="e-tabs">
-        <button class="e-tab active" data-tab="files">Файли</button>
-        <button class="e-tab" data-tab="history">Історія</button>
-      </div>
-
-      <!-- Files tab -->
-      <div id="tab-files" class="e-tabpanel active">
-        <div class="e-sec-head">
-          <span>Файли</span>
-          <div class="e-file-toolbar">
-            <button id="new-folder-btn" class="e-icon-btn" type="button" title="Нова папка">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M1.5 5a1 1 0 011-1h3.4l1.3 1.5H13.5a1 1 0 011 1v5a1 1 0 01-1 1h-11a1 1 0 01-1-1V5z"/>
-                <line x1="7.5" y1="8" x2="7.5" y2="11.5"/><line x1="5.75" y1="9.75" x2="9.25" y2="9.75"/>
-              </svg>
-            </button>
-            <button id="new-text-file-btn" class="e-icon-btn" type="button" title="Новий текстовий файл">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9.5 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6l-3.5-4z"/>
-                <polyline points="9.5 2 9.5 6 13.5 6"/>
-                <line x1="8" y1="9" x2="8" y2="12.5"/><line x1="6.25" y1="10.75" x2="9.75" y2="10.75"/>
-              </svg>
-            </button>
-            <label class="e-icon-btn" title="Завантажити файл(и)">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="4.5 6 8 2.5 11.5 6"/><line x1="8" y1="2.5" x2="8" y2="11"/>
-                <path d="M3 13h10"/>
-              </svg>
-              <input id="file-upload" type="file" multiple accept="image/*,.tex,.typ,.sty,.cls,.bib,.txt,.md,.csv,.json,.yaml,.yml" style="display:none">
-            </label>
-            <label class="e-icon-btn" title="Завантажити ZIP-архів">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="5" width="12" height="9" rx="1"/>
-                <path d="M2 8h12M5 5V3a1 1 0 011-1h4a1 1 0 011 1v2"/>
-                <line x1="8" y1="10.5" x2="8" y2="10.5" stroke-width="2.5" stroke-linecap="round"/>
-              </svg>
-              <input id="zip-upload" type="file" accept=".zip" style="display:none">
-            </label>
-          </div>
+    <div id="rename-project-overlay" class="confirm-overlay">
+        <div class="confirm-box">
+            <div class="confirm-title">Перейменувати проєкт</div>
+            <div class="confirm-msg" id="rename-project-msg" style="margin-bottom: 12px;"></div>
+            <input id="rename-project-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
+            <div class="confirm-btns">
+                <button class="e-btn" id="rename-project-cancel" type="button">Скасувати</button>
+                <button class="e-btn" id="rename-project-ok" type="button">Зберегти</button>
+            </div>
         </div>
-        <ul id="file-list" class="e-file-list"></ul>
-      </div>
+    </div>
 
-      <!-- History tab -->
-      <div id="tab-history" class="e-tabpanel">
-        <div class="e-sec-head">
-          <span>Версії</span>
-          <button id="refresh-versions" class="e-sec-btn" type="button">↻</button>
+    <div id="create-entry-overlay" class="confirm-overlay">
+        <div class="confirm-box">
+            <div id="create-entry-title" class="confirm-title">Створити файл</div>
+            <div id="create-entry-hint" class="confirm-msg" style="margin-bottom: 12px;"></div>
+            <input id="create-entry-input" class="rename-input" type="text" autocomplete="off" spellcheck="false">
+            <div class="confirm-btns">
+                <button class="e-btn" id="create-entry-cancel" type="button">Скасувати</button>
+                <button class="e-btn" id="create-entry-ok" type="button">Створити</button>
+            </div>
         </div>
-        <div id="versions-list" class="e-history"></div>
-      </div>
+    </div>
 
-      <!-- Outline — always visible at bottom -->
-      <div class="e-outline-wrap">
-        <div class="e-sec-head">
-          <span>Outline</span>
-          <button id="refresh-outline" class="e-sec-btn" type="button">↻</button>
+    <div id="diff-modal-overlay" class="diff-modal-overlay">
+        <div class="diff-modal" role="dialog" aria-modal="true" aria-labelledby="diff-modal-title">
+            <div class="diff-modal-head">
+                <div class="diff-modal-title">
+                    <strong id="diff-modal-title">Diff версії</strong>
+                    <span id="diff-modal-meta" class="diff-modal-meta"></span>
+                </div>
+                <button id="diff-modal-close" class="diff-modal-close" type="button" aria-label="Закрити">×</button>
+            </div>
+            <div class="diff-modal-body">
+                <div id="diff-modal-content" class="e-diff-scroll"></div>
+            </div>
+            <div class="diff-modal-footer">
+                <button id="diff-modal-rollback" class="e-rollback" type="button">Відкотити до цієї версії</button>
+            </div>
         </div>
-        <ul id="outline-list" class="e-outline"></ul>
-      </div>
-    </aside>
+    </div>
 
-    <!-- ── Resize handle ─────────────────────── -->
-    <div class="e-resize-handle" id="resize-left" aria-hidden="true"></div>
-
-    <!-- ── Editor ──────────────────────────────── -->
-    <section class="e-center" id="drop-zone">
-      <div class="e-editor-bar">
-        <span id="current-file-label" class="e-file-label">main.tex</span>
-        <span id="save-hint" class="e-save-hint">Автозбереження</span>
-      </div>
-      <div class="e-editor-wrap" id="editor-wrap">
-        <pre id="editor-gutter" aria-hidden="true"></pre>
-        <pre id="editor-hl" aria-hidden="true"></pre>
-        <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off" wrap="off"></textarea>
-        <div class="e-drop-overlay">Перетягніть файли сюди</div>
-      </div>
-      <div class="e-asset-view" id="asset-view">
-        <div class="e-asset-box" id="asset-box">Оберіть файл.</div>
-      </div>
-      <div class="e-log-panel">
-        <button class="e-log-toggle" id="log-toggle" type="button">
-          <span>Лог компіляції</span>
-          <span class="arr">▾</span>
-        </button>
-        <pre id="log"></pre>
-      </div>
-    </section>
-
-    <!-- ── Resize handle ─────────────────────── -->
-    <div class="e-resize-handle" id="resize-right" aria-hidden="true"></div>
-
-    <!-- ── PDF ─────────────────────────────────── -->
-    <section class="e-pdf">
-      <div class="e-pdf-bar">
-        <span class="e-pdf-label">PDF Preview</span>
-        <div class="e-pdf-actions">
-          <span id="pdf-page-info" style="font-size:11px;color:var(--e-muted);white-space:nowrap;"></span>
-          <button id="refresh-pdf" class="e-btn" type="button"
-            style="padding:4px 10px;font-size:12px;">↻</button>
-          <a id="open-pdf" class="e-btn" target="_blank"
-            href="/api/projects/{{ project.id }}/pdf/"
-            style="padding:4px 10px;font-size:12px;">Відкрити</a>
+    <div class="editor-shell">
+        <!-- Topbar -->
+        <div class="e-topbar">
+            <div class="e-title-side">
+                <div class="e-title-group">
+                    <span class="e-proj-name" id="project-title">{{ project.title }}</span>
+                    <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
+                </div>
+                <div class="e-menu-wrap">
+                    <button id="project-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-expanded="false"
+                            aria-haspopup="true">
+                        Проєкт <span class="caret">▾</span>
+                    </button>
+                    <div id="project-menu" class="e-menu" role="menu">
+                        <button id="rename-project-btn" class="e-menu-item" type="button" role="menuitem">Перейменувати
+                            проєкт
+                        </button>
+                        <button id="delete-project-btn" class="e-menu-item danger" type="button" role="menuitem">
+                            Видалити проєкт
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="e-actions">
+                <button id="compile-btn" class="e-btn primary" type="button">Recompile <kbd class="e-kbd">⌘↵</kbd>
+                </button>
+                <a id="download-pdf" class="e-btn" href="/api/projects/{{ project.id }}/pdf/" target="_blank">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                         stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+                        <path d="M9.5 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6l-3.5-4z"/>
+                        <polyline points="9.5 2 9.5 6 13.5 6"/>
+                        <line x1="5.5" y1="9" x2="10.5" y2="9"/>
+                        <line x1="5.5" y1="11.5" x2="8.5" y2="11.5"/>
+                    </svg>
+                    PDF
+                </a>
+            </div>
         </div>
-      </div>
-      <div class="e-pdf-wrap">
-        <div id="pdf-canvas-container"></div>
-        <div id="pdf-empty" class="e-pdf-empty">
-          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          PDF ще не згенеровано
-        </div>
-        <div id="pdf-loading" class="e-pdf-loading">Завантаження PDF…</div>
-      </div>
-    </section>
 
-  </div>
-</div>
+        <!-- Body -->
+        <div class="e-body" id="e-body">
+
+            <!-- ── Left panel ──────────────────────────── -->
+            <aside class="e-left">
+                <div class="e-tabs">
+                    <button class="e-tab active" data-tab="files">Файли</button>
+                    <button class="e-tab" data-tab="history">Історія</button>
+                </div>
+
+                <!-- Files tab -->
+                <div id="tab-files" class="e-tabpanel active">
+                    <div class="e-sec-head">
+                        <span>Файли</span>
+                        <div class="e-file-toolbar">
+                            <button id="new-folder-btn" class="e-icon-btn" type="button" title="Нова папка">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                                     stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M1.5 5a1 1 0 011-1h3.4l1.3 1.5H13.5a1 1 0 011 1v5a1 1 0 01-1 1h-11a1 1 0 01-1-1V5z"/>
+                                    <line x1="7.5" y1="8" x2="7.5" y2="11.5"/>
+                                    <line x1="5.75" y1="9.75" x2="9.25" y2="9.75"/>
+                                </svg>
+                            </button>
+                            <button id="new-text-file-btn" class="e-icon-btn" type="button"
+                                    title="Новий текстовий файл">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                                     stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M9.5 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6l-3.5-4z"/>
+                                    <polyline points="9.5 2 9.5 6 13.5 6"/>
+                                    <line x1="8" y1="9" x2="8" y2="12.5"/>
+                                    <line x1="6.25" y1="10.75" x2="9.75" y2="10.75"/>
+                                </svg>
+                            </button>
+                            <label class="e-icon-btn" title="Завантажити файл(и)">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                                     stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="4.5 6 8 2.5 11.5 6"/>
+                                    <line x1="8" y1="2.5" x2="8" y2="11"/>
+                                    <path d="M3 13h10"/>
+                                </svg>
+                                <input id="file-upload" type="file" multiple
+                                       accept="image/*,.pdf,.tex,.typ,.sty,.cls,.bib,.txt,.md,.csv,.json,.yaml,.yml,.csl"
+                                       style="display:none">
+                            </label>
+                            <label class="e-icon-btn" title="Завантажити ZIP-архів">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                                     stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="2" y="5" width="12" height="9" rx="1"/>
+                                    <path d="M2 8h12M5 5V3a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                                    <line x1="8" y1="10.5" x2="8" y2="10.5" stroke-width="2.5" stroke-linecap="round"/>
+                                </svg>
+                                <input id="zip-upload" type="file" accept=".zip" style="display:none">
+                            </label>
+                        </div>
+                    </div>
+                    <ul id="file-list" class="e-file-list"></ul>
+                </div>
+
+                <!-- History tab -->
+                <div id="tab-history" class="e-tabpanel">
+                    <div class="e-sec-head">
+                        <span>Версії</span>
+                        <div style="display:flex;gap:4px;align-items:center">
+                            <button id="history-file-filter-btn" class="e-sec-btn e-ver-filter-btn" type="button"
+                                    title="Filter to current file only">Цей файл
+                            </button>
+                            <button id="refresh-versions" class="e-sec-btn" type="button">↻</button>
+                        </div>
+                    </div>
+                    <div id="versions-list" class="e-history"></div>
+                </div>
+
+                <!-- Outline — always visible at bottom -->
+                <div class="e-outline-resize" id="resize-outline" aria-hidden="true"></div>
+                <div class="e-outline-wrap">
+                    <div class="e-sec-head">
+                        <span>Outline</span>
+                        <button id="refresh-outline" class="e-sec-btn" type="button">↻</button>
+                    </div>
+                    <ul id="outline-list" class="e-outline"></ul>
+                </div>
+            </aside>
+
+            <!-- ── Resize handle ─────────────────────── -->
+            <div class="e-resize-handle" id="resize-left" aria-hidden="true"></div>
+
+            <!-- ── Editor ──────────────────────────────── -->
+            <section class="e-center" id="drop-zone">
+                <!-- VS Code-style file tab bar (rendered dynamically) -->
+                <div class="e-edtabbar" id="editor-tabbar"></div>
+                <!-- Breadcrumb bar -->
+                <div class="e-editor-bar">
+                    <span id="current-file-label" class="e-file-label">main.tex</span>
+                    <span id="save-hint" class="e-save-hint">Автозбереження</span>
+                </div>
+                <div class="e-editor-wrap" id="editor-wrap">
+                    <div id="cm-editor"></div>
+                    <div class="e-drop-overlay">Перетягніть файли сюди</div>
+                </div>
+                <div class="e-asset-view" id="asset-view">
+                    <div class="e-asset-box" id="asset-box">
+                        <div class="e-empty-card"><strong>Select a file</strong>Choose a text asset, support PDF, or
+                            image from the workspace to inspect it here.
+                        </div>
+                    </div>
+                </div>
+                <!-- ── Bottom panel ────────────────────────── -->
+                <div class="e-bottom-panel" id="bottom-panel">
+                    <div class="e-bp-tabbar">
+                        <button class="e-bp-tab active" id="tab-problems-btn" type="button">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                                 stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="8" cy="8" r="6"/>
+                                <line x1="8" y1="5" x2="8" y2="8.5"/>
+                                <line x1="8" y1="11" x2="8" y2="11"/>
+                            </svg>
+                            ПРОБЛЕМИ
+                            <span class="e-bp-badge empty" id="diag-count">0</span>
+                        </button>
+                        <button class="e-bp-tab" id="log-toggle" type="button">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                                 stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+                                <line x1="5" y1="7" x2="11" y2="7"/>
+                                <line x1="5" y1="10" x2="9" y2="10"/>
+                            </svg>
+                            ЛОГ
+                        </button>
+                        <div class="e-bp-spacer"></div>
+                        <button class="e-bp-close" id="bottom-close-btn" type="button" title="Закрити панель"
+                                aria-label="Close panel">
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+                                 stroke-width="1.8" stroke-linecap="round">
+                                <line x1="1" y1="1" x2="11" y2="11"/>
+                                <line x1="11" y1="1" x2="1" y2="11"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="diag-panel" class="e-bp-body active">
+                        <div class="e-diag-list" id="diag-list">
+                            <div class="e-empty-card"><strong>Compile diagnostics</strong>Run Typst or LaTeX to populate
+                                structured errors, warnings, and clickable file locations.
+                            </div>
+                        </div>
+                    </div>
+                    <div id="log-panel-body" class="e-bp-body">
+                        <pre id="log"></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── Resize handle ─────────────────────── -->
+            <div class="e-resize-handle" id="resize-right" aria-hidden="true"></div>
+
+            <!-- ── PDF ─────────────────────────────────── -->
+            <section class="e-pdf">
+                <div class="e-pdf-bar">
+                    <span class="e-pdf-label">PDF Preview</span>
+                    <div class="e-pdf-actions">
+                        <span id="pdf-page-info" class="e-pdf-page-info"></span>
+                        <button id="refresh-pdf" class="e-icon-btn" type="button" title="Оновити PDF">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                                 stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5"/>
+                                <polyline points="10.5 2.5 13.5 2.5 13.5 5.5"/>
+                            </svg>
+                        </button>
+                        <a id="open-pdf" class="e-icon-btn" target="_blank" href="/api/projects/{{ project.id }}/pdf/"
+                           title="Відкрити PDF">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                                 stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M10 2h4v4"/>
+                                <line x1="14" y1="2" x2="8" y2="8"/>
+                                <path d="M12 10v4H2V4h4"/>
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+                <div class="e-pdf-wrap">
+                    <div id="pdf-canvas-container"></div>
+                    <div id="pdf-empty" class="e-pdf-empty">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <div>
+                            <strong style="display:block;color:var(--e-text);margin-bottom:6px;">Preview not synced
+                                yet</strong>
+                            <span class="e-state-copy">Compile the project to generate or refresh the preview.</span>
+                        </div>
+                    </div>
+                    <div id="pdf-loading" class="e-pdf-loading">Завантаження PDF…</div>
+                </div>
+            </section>
+
+        </div>
+
+        <!-- ── Status bar ──────────────────────────────────── -->
+        <div class="e-statusbar" id="statusbar">
+            <div class="e-sb-left">
+      <span class="e-sb-item" id="sb-compile">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+             stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><polyline points="6 8 7.5 9.5 10.5 6.5"/></svg>
+        Synced
+      </span>
+            </div>
+            <div class="e-sb-right">
+                <span class="e-sb-item" id="sb-linecol">Ln 1, Col 1</span>
+                <span class="e-sb-sep">│</span>
+                <span class="e-sb-item" id="sb-lang">Typst</span>
+            </div>
+        </div>
+    </div>
 {% endblock %}
 
 {% block scripts %}
-<script type="module">
-  import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
-
-  const projectId  = {{ project.id }};
-  const csrfToken  = "{{ csrf_token }}";
-
-  const statusEl      = document.getElementById("status");
-  const projectTitleEl= document.getElementById("project-title");
-  const saveHintEl    = document.getElementById("save-hint");
-  const editor        = document.getElementById("editor");
-  const editorGutter  = document.getElementById("editor-gutter");
-  const editorHl      = document.getElementById("editor-hl");
-  const logEl         = document.getElementById("log");
-  const logToggleBtn  = document.getElementById("log-toggle");
-  const fileListEl    = document.getElementById("file-list");
-  const outlineEl     = document.getElementById("outline-list");
-  const currentFileLbl= document.getElementById("current-file-label");
-  const assetView     = document.getElementById("asset-view");
-  const assetBox      = document.getElementById("asset-box");
-  const uploadInput   = document.getElementById("file-upload");
-  const pdfCanvasContainer = document.getElementById("pdf-canvas-container");
-  const pdfEmpty      = document.getElementById("pdf-empty");
-  const pdfLoadingEl  = document.getElementById("pdf-loading");
-  const openPdfLink   = document.getElementById("open-pdf");
-  const pdfPageInfo   = document.getElementById("pdf-page-info");
-  const versionsListEl= document.getElementById("versions-list");
-  const dropZone      = document.getElementById("drop-zone");
-  const diffModalOverlay = document.getElementById("diff-modal-overlay");
-  const diffModalTitle = document.getElementById("diff-modal-title");
-  const diffModalMeta = document.getElementById("diff-modal-meta");
-  const diffModalContent = document.getElementById("diff-modal-content");
-  const diffModalRollbackBtn = document.getElementById("diff-modal-rollback");
-  const diffModalCloseBtn = document.getElementById("diff-modal-close");
-  const projectMenuBtn = document.getElementById("project-menu-btn");
-  const projectMenuEl = document.getElementById("project-menu");
-  const newFolderBtn = document.getElementById("new-folder-btn");
-  const newTextFileBtn = document.getElementById("new-text-file-btn");
-
-  let saveTimer      = null;
-  let saving         = false;
-  let projectMeta    = null;
-  let mainFileName   = "main.tex";
-  let supportsSynctex = true;
-  let selectedFile   = {name:mainFileName, type:"main", is_text:true};
-  let compileInFlight = false;
-  let queuedCompileMode = null;
-  let typstCompileTimer = null;
-  let projectFiles   = [];
-  let sections       = [];
-  let versions       = [];
-  let versionsHasMore = true;
-  let versionsCursor = null;
-  let versionsLoading = false;
-  let activeDiffVersionId = null;
-  let activeDiffRenderFull = false;
-  let lastPdfVersion = null;
-  let statusPollTimer= null;
-  let _confirmResolve= null;
-  let _renameResolve = null;
-  let _renameProjectResolve = null;
-  let _createEntryResolve = null;
-  let draggedFilePath = null;
-  const collapsedFolders = new Set();
-  let hasUnsavedChanges = false;
-  let mainFileContent = "";
-  let projectWs = null;
-  let projectWsReconnectTimer = null;
-  let lastSeenMcpVersionId = 0;
-
-  function isMainSourceFile(name) {
-    return String(name || "") === mainFileName;
-  }
-
-  function isEditableTextSelection(file = selectedFile) {
-    if (!file) return false;
-    if (isMainSourceFile(file.name)) return true;
-    return Boolean(file.is_text);
-  }
-
-  function projectMarkupType() {
-    return String(projectMeta?.markup_type || "latex").toLowerCase();
-  }
-
-  function isTypstProject() {
-    return projectMarkupType() === "typst";
-  }
-
-  function queueCompile(mode = "manual") {
-    if (mode === "manual") {
-      queuedCompileMode = "manual";
-      return;
-    }
-    if (!queuedCompileMode) {
-      queuedCompileMode = mode;
-    }
-  }
-
-  function shouldOpenCompileLog(mode = "manual") {
-    return mode === "manual";
-  }
-
-  function closeProjectMenu() {
-    projectMenuEl.classList.remove("open");
-    projectMenuBtn.setAttribute("aria-expanded", "false");
-  }
-
-  projectMenuBtn.addEventListener("click", e => {
-    e.stopPropagation();
-    const open = !projectMenuEl.classList.contains("open");
-    if (open) {
-      projectMenuEl.classList.add("open");
-      projectMenuBtn.setAttribute("aria-expanded", "true");
-      return;
-    }
-    closeProjectMenu();
-  });
-
-  document.addEventListener("click", e => {
-    if (!projectMenuEl.contains(e.target) && !projectMenuBtn.contains(e.target)) {
-      closeProjectMenu();
-    }
-  });
-  document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeProjectMenu();
-  });
-  let externalReloadScheduled = false;
-
-  // PDF.js state
-  let pdfDoc = null;
-  let pdfRendering = false;
-  let pdfCurrentUrl = null;
-  let pdfViewports = [];
-
-
-  (function() {
-    const body = document.getElementById("e-body");
-    const MIN_W = 160, MAX_FRAC = 0.45;
-
-    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-    function applyWidths(lw, rw) {
-      body.style.setProperty("--left-w", lw + "px");
-      body.style.setProperty("--right-w", rw + "px");
-    }
-
-    function loadSaved() {
-      const lw = parseInt(localStorage.getItem("st_left_w") || "256");
-      const rw = parseInt(localStorage.getItem("st_right_w") || "420");
-      applyWidths(lw, rw);
-    }
-    loadSaved();
-
-    function makeDragger(handleId, side) {
-      const handle = document.getElementById(handleId);
-      handle.addEventListener("mousedown", e => {
-        e.preventDefault();
-        handle.classList.add("dragging");
-        const startX = e.clientX;
-        const bodyW = body.clientWidth;
-        const startLW = parseInt(getComputedStyle(body).getPropertyValue("--left-w")) || 256;
-        const startRW = parseInt(getComputedStyle(body).getPropertyValue("--right-w")) || 420;
-
-        function onMove(me) {
-          const dx = me.clientX - startX;
-          const maxW = Math.floor(bodyW * MAX_FRAC);
-          if (side === "left") {
-            const nw = clamp(startLW + dx, MIN_W, maxW);
-            applyWidths(nw, startRW);
-            localStorage.setItem("st_left_w", nw);
-          } else {
-            const nw = clamp(startRW - dx, MIN_W, maxW);
-            applyWidths(startLW, nw);
-            localStorage.setItem("st_right_w", nw);
-          }
-
-          if (side === "right" && pdfDoc) renderPdfPages(true);
-        }
-        function onUp() {
-          handle.classList.remove("dragging");
-          document.removeEventListener("mousemove", onMove);
-          document.removeEventListener("mouseup", onUp);
-        }
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
-      });
-    }
-    makeDragger("resize-left", "left");
-    makeDragger("resize-right", "right");
-  })();
-
-
-  async function renderPdfPages(sizeOnly = false) {
-    if (!pdfDoc || pdfRendering) return;
-    pdfRendering = true;
-    const dpr = window.devicePixelRatio || 1;
-    const containerW = pdfCanvasContainer.clientWidth - 16;
-    const savedScroll = pdfCanvasContainer.scrollTop;
-    pdfViewports = [];
-
-    if (sizeOnly) {
-      for (let i = 1; i <= pdfDoc.numPages; i++) {
-        const page = await pdfDoc.getPage(i);
-        const base = page.getViewport({ scale: 1 });
-        const scale = Math.max(0.5, containerW / base.width);
-        const vp   = page.getViewport({ scale });
-        const vpHD = page.getViewport({ scale: scale * dpr });
-        pdfViewports.push(vp);
-        const wrap = pdfCanvasContainer.children[i - 1];
-        if (!wrap) break;
-        const canvas = wrap.querySelector("canvas");
-        if (!canvas) break;
-        wrap.dataset.scale = scale;
-        wrap.dataset.baseH = base.height;
-        canvas.width  = Math.round(vpHD.width);
-        canvas.height = Math.round(vpHD.height);
-        canvas.style.width  = Math.round(vp.width)  + "px";
-        canvas.style.height = Math.round(vp.height) + "px";
-        wrap.style.width  = Math.round(vp.width)  + "px";
-        wrap.style.height = Math.round(vp.height) + "px";
-        await page.render({ canvasContext: canvas.getContext("2d"), viewport: vpHD }).promise;
-      }
-      pdfRendering = false;
-      return;
-    }
-
-    // Render all pages off-DOM into a fragment — old pages stay visible until swap.
-    const fragment = document.createDocumentFragment();
-    for (let i = 1; i <= pdfDoc.numPages; i++) {
-      const page = await pdfDoc.getPage(i);
-      const base = page.getViewport({ scale: 1 });
-      const scale = Math.max(0.5, containerW / base.width);
-      const vp   = page.getViewport({ scale });
-      const vpHD = page.getViewport({ scale: scale * dpr });
-      pdfViewports.push(vp);
-
-      const wrap = document.createElement("div");
-      wrap.className = "pdf-page-wrap";
-      wrap.dataset.page = i;
-      wrap.dataset.scale = scale;
-      wrap.dataset.baseH = base.height;
-      wrap.style.width  = Math.round(vp.width)  + "px";
-      wrap.style.height = Math.round(vp.height) + "px";
-
-      const canvas = document.createElement("canvas");
-      canvas.width  = Math.round(vpHD.width);
-      canvas.height = Math.round(vpHD.height);
-      canvas.style.width  = Math.round(vp.width)  + "px";
-      canvas.style.height = Math.round(vp.height) + "px";
-      wrap.appendChild(canvas);
-
-      canvas.addEventListener("click", async (e) => {
-        if (!supportsSynctex) return;
-        const curScale = parseFloat(wrap.dataset.scale);
-        const curBaseH = parseFloat(wrap.dataset.baseH);
-        const rect = canvas.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const clickY = e.clientY - rect.top;
-        const pdfX = clickX / curScale;
-        const pdfY = curBaseH - (clickY / curScale);
-        try {
-          const r = await api(`/api/projects/${projectId}/synctex/pdf/?page=${i}&x=${pdfX.toFixed(4)}&y=${pdfY.toFixed(4)}`);
-          if (r.line) {
-            jumpToLine(r.line);
-            const marker = document.createElement("div");
-            marker.className = "pdf-synctex-marker";
-            marker.style.left = clickX + "px";
-            marker.style.top = clickY + "px";
-            wrap.appendChild(marker);
-            setTimeout(() => marker.remove(), 1500);
-          }
-        } catch (_) {}
-      });
-
-      await page.render({ canvasContext: canvas.getContext("2d"), viewport: vpHD }).promise;
-      fragment.appendChild(wrap);
-    }
-
-    // Single atomic DOM swap — no blank frame between old and new content.
-    pdfCanvasContainer.replaceChildren(fragment);
-    pdfCanvasContainer.scrollTop = savedScroll;
-    pdfRendering = false;
-  }
-
-  async function loadPdfViewer(url) {
-    const savedScroll = pdfCanvasContainer.scrollTop;
-    const isFirstLoad = pdfDoc === null;
-    if (isFirstLoad) pdfLoadingEl.classList.add("visible");
-    try {
-      const loadingTask = pdfjsLib.getDocument(url);
-      pdfDoc = await loadingTask.promise;
-      pdfCurrentUrl = url;
-      pdfEmpty.style.display = "none";
-      pdfPageInfo.textContent = `${pdfDoc.numPages} стор.`;
-      pdfRendering = false;
-      await renderPdfPages(false);
-      pdfCanvasContainer.scrollTop = savedScroll;
-    } catch(err) {
-      console.error("PDF load error", err);
-    } finally {
-      pdfLoadingEl.classList.remove("visible");
-    }
-  }
-
-
-  pdfCanvasContainer.addEventListener("scroll", () => {
-    if (!pdfDoc) return;
-    const pages = pdfCanvasContainer.querySelectorAll(".pdf-page-wrap");
-    for (const wrap of pages) {
-      const rect = wrap.getBoundingClientRect();
-      const containerRect = pdfCanvasContainer.getBoundingClientRect();
-      if (rect.top <= containerRect.top + containerRect.height / 2 && rect.bottom > containerRect.top) {
-        pdfPageInfo.textContent = `${wrap.dataset.page} / ${pdfDoc.numPages}`;
-        break;
-      }
-    }
-  });
-
-
-  document.getElementById("confirm-ok").addEventListener("click", () => {
-    document.getElementById("confirm-overlay").classList.remove("open");
-    if (_confirmResolve) { _confirmResolve(true); _confirmResolve = null; }
-  });
-  document.getElementById("confirm-cancel").addEventListener("click", () => {
-    document.getElementById("confirm-overlay").classList.remove("open");
-    if (_confirmResolve) { _confirmResolve(false); _confirmResolve = null; }
-  });
-  function showConfirm(msg) {
-    return new Promise(resolve => {
-      document.getElementById("confirm-msg").textContent = msg;
-      document.getElementById("confirm-overlay").classList.add("open");
-      _confirmResolve = resolve;
-    });
-  }
-  document.getElementById("rename-ok").addEventListener("click", () => {
-    const input = document.getElementById("rename-input");
-    const val = String(input?.value || "").trim();
-    document.getElementById("rename-overlay").classList.remove("open");
-    if (_renameResolve) { _renameResolve(val || null); _renameResolve = null; }
-  });
-  document.getElementById("rename-cancel").addEventListener("click", () => {
-    document.getElementById("rename-overlay").classList.remove("open");
-    if (_renameResolve) { _renameResolve(null); _renameResolve = null; }
-  });
-  document.getElementById("rename-input").addEventListener("keydown", e => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      document.getElementById("rename-ok").click();
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      document.getElementById("rename-cancel").click();
-    }
-  });
-  document.getElementById("rename-project-ok").addEventListener("click", () => {
-    const input = document.getElementById("rename-project-input");
-    const val = String(input?.value || "").trim();
-    document.getElementById("rename-project-overlay").classList.remove("open");
-    if (_renameProjectResolve) { _renameProjectResolve(val || null); _renameProjectResolve = null; }
-  });
-  document.getElementById("rename-project-cancel").addEventListener("click", () => {
-    document.getElementById("rename-project-overlay").classList.remove("open");
-    if (_renameProjectResolve) { _renameProjectResolve(null); _renameProjectResolve = null; }
-  });
-  document.getElementById("rename-project-input").addEventListener("keydown", e => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      document.getElementById("rename-project-ok").click();
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      document.getElementById("rename-project-cancel").click();
-    }
-  });
-  function showRenameDialog(fileName) {
-    const name = String(fileName || "").trim();
-    const dot = name.lastIndexOf(".");
-    const ext = dot > 0 ? name.slice(dot) : "";
-    const base = dot > 0 ? name.slice(0, dot) : name;
-    return new Promise(resolve => {
-      const input = document.getElementById("rename-input");
-      const msg = document.getElementById("rename-msg");
-      const extEl = document.getElementById("rename-ext");
-      msg.textContent = "Введіть нову назву файлу (без розширення).";
-      extEl.textContent = ext ? `Розширення зафіксоване: ${ext}` : "Розширення відсутнє.";
-      input.value = base;
-      document.getElementById("rename-overlay").classList.add("open");
-      _renameResolve = value => {
-        if (value === null) { resolve(null); return; }
-        resolve(ext ? `${value}${ext}` : value);
-      };
-      setTimeout(() => {
-        input.focus();
-        input.select();
-      }, 0);
-    });
-  }
-  function showProjectRenameDialog(currentTitle) {
-    return new Promise(resolve => {
-      const input = document.getElementById("rename-project-input");
-      const msg = document.getElementById("rename-project-msg");
-      msg.textContent = "Введіть нову назву проєкту.";
-      input.value = String(currentTitle || "").trim();
-      document.getElementById("rename-project-overlay").classList.add("open");
-      _renameProjectResolve = value => resolve(value);
-      setTimeout(() => {
-        input.focus();
-        input.select();
-      }, 0);
-    });
-  }
-
-  document.getElementById("entry-create-ok").addEventListener("click", () => {
-    const input = document.getElementById("entry-create-input");
-    const val = String(input?.value || "").trim();
-    document.getElementById("entry-create-overlay").classList.remove("open");
-    if (_createEntryResolve) { _createEntryResolve(val || null); _createEntryResolve = null; }
-  });
-  document.getElementById("entry-create-cancel").addEventListener("click", () => {
-    document.getElementById("entry-create-overlay").classList.remove("open");
-    if (_createEntryResolve) { _createEntryResolve(null); _createEntryResolve = null; }
-  });
-  document.getElementById("entry-create-input").addEventListener("keydown", e => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      document.getElementById("entry-create-ok").click();
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      document.getElementById("entry-create-cancel").click();
-    }
-  });
-  function showCreateEntryDialog(kind) {
-    return new Promise(resolve => {
-      const isFolder = kind === "directory";
-      const input = document.getElementById("entry-create-input");
-      document.getElementById("entry-create-title").textContent = isFolder ? "Створити папку" : "Створити текстовий файл";
-      document.getElementById("entry-create-msg").textContent = isFolder
-        ? "Вкажіть відносний шлях папки всередині проєкту."
-        : "Вкажіть відносний шлях нового порожнього текстового файлу.";
-      document.getElementById("entry-create-help").textContent = isFolder
-        ? "Приклади: chapters, sections/results, assets/plots"
-        : "Приклади: chapters/intro.typ, styles/custom.sty, refs/library.bib";
-      input.value = "";
-      input.placeholder = isFolder ? "chapters/intro" : "chapters/intro.typ";
-      document.getElementById("entry-create-overlay").classList.add("open");
-      _createEntryResolve = value => resolve(value);
-      setTimeout(() => input.focus(), 0);
-    });
-  }
-
-  function closeDiffModal() {
-    activeDiffVersionId = null;
-    diffModalOverlay.classList.remove("open");
-  }
-
-  function scheduleExternalReload(reason = "Проєкт оновлено через MCP. Оновлюємо…") {
-    if (externalReloadScheduled) return;
-    externalReloadScheduled = true;
-    setSaveHint(reason, "saving");
-    setTimeout(() => {
-      window.location.reload();
-    }, 250);
-  }
-
-  async function pollUntilCompileDone(maxMs = 45000, stepMs = 600) {
-    const deadline = Date.now() + maxMs;
-    while (Date.now() < deadline) {
-      const d = await api(`/api/projects/${projectId}/compile/`, {method: "GET"});
-      setStatus(d.status);
-      if (d.log) logEl.textContent = d.log;
-      if (d.pdf_url && d.pdf_version && d.pdf_version !== lastPdfVersion) {
-        lastPdfVersion = d.pdf_version;
-        const url = `${d.pdf_url}?t=${lastPdfVersion}`;
-        openPdfLink.href = d.pdf_url;
-        await loadPdfViewer(url);
-      }
-      if (!d.pdf_url) pdfEmpty.style.display = "flex";
-      if (d.status !== "pending") {
-        if (d.status === "success") setSaveHint("MCP: PDF оновлено", "saved");
-        else setSaveHint("MCP: помилка компіляції", "error");
-        return;
-      }
-      await new Promise(res => setTimeout(res, stepMs));
-    }
-    setSaveHint("MCP: компіляція не завершена (таймаут)", "error");
-  }
-
-  async function handleMcpUpdate() {
-    setSaveHint("Проєкт оновлено через MCP. Оновлюємо…", "saving");
-    try {
-      await loadMainFile();
-      // If a non-main text file is open, refresh its content too
-      if (selectedFile?.is_text && !selectedFile?.is_dir && !isMainSourceFile(selectedFile.name)) {
-        try {
-          const params = new URLSearchParams({include_text: "1"});
-          const fd = await api(`/api/projects/${projectId}/files/${encodeURIComponent(selectedFile.name)}/content/?${params}`);
-          editor.value = fd.text_content || "";
-          hasUnsavedChanges = false;
-          syncHighlight();
-        } catch (_) {}
-      }
-      await Promise.all([loadFiles(), loadVersions(true)]);
-      await pollUntilCompileDone();
-    } catch (err) {
-      setSaveHint(`MCP: помилка оновлення: ${err.message}`, "error");
-    }
-  }
-
-  function connectProjectUpdatesWebSocket() {
-    const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = `${wsProto}://${window.location.host}/ws/projects/${projectId}/updates/`;
-
-    const cleanupReconnect = () => {
-      if (projectWsReconnectTimer) {
-        clearTimeout(projectWsReconnectTimer);
-        projectWsReconnectTimer = null;
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (externalReloadScheduled || projectWsReconnectTimer) return;
-      projectWsReconnectTimer = setTimeout(() => {
-        projectWsReconnectTimer = null;
-        connectProjectUpdatesWebSocket();
-      }, 1500);
-    };
-
-    try {
-      projectWs = new WebSocket(wsUrl);
-    } catch (_) {
-      scheduleReconnect();
-      return;
-    }
-
-    projectWs.addEventListener("open", cleanupReconnect);
-    projectWs.addEventListener("message", ev => {
-      let data = null;
-      try { data = JSON.parse(ev.data || "{}"); } catch (_) { return; }
-      if (!data || typeof data !== "object") return;
-      if (data.type === "connected") {
-        lastSeenMcpVersionId = Number(data.latest_mcp_version_id || 0);
-        return;
-      }
-      if (data.type !== "project_updated" || data.source !== "mcp") return;
-      const incoming = Number(data.version_id || 0);
-      if (!incoming || incoming <= lastSeenMcpVersionId) return;
-      lastSeenMcpVersionId = incoming;
-
-      if (hasUnsavedChanges) {
-        setSaveHint("Проєкт змінено через MCP. Спершу збережіть локальні правки або перезавантажте сторінку.", "error");
-        return;
-      }
-      handleMcpUpdate().catch(() => {});
-    });
-    projectWs.addEventListener("close", scheduleReconnect);
-    projectWs.addEventListener("error", () => {
-      try { projectWs.close(); } catch (_) {}
-    });
-  }
-
-  diffModalCloseBtn.addEventListener("click", closeDiffModal);
-  diffModalOverlay.addEventListener("click", e => {
-    if (e.target === diffModalOverlay) closeDiffModal();
-  });
-  document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && diffModalOverlay.classList.contains("open")) closeDiffModal();
-  });
-
-
-  function escHtml(s) {
-    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  }
-  function renderLineNumbers(src) {
-    const lineCount = Math.max(1, String(src || "").split("\n").length);
-    const lines = new Array(lineCount);
-    for (let i = 0; i < lineCount; i += 1) lines[i] = String(i + 1);
-    editorGutter.textContent = lines.join("\n");
-  }
-  function hlLaTeX(src) {
-    let out = "", i = 0, n = src.length;
-    while (i < n) {
-      const ch = src[i];
-
-      if (ch === "%" && (i === 0 || src[i-1] !== "\\")) {
-        let j = i; while (j < n && src[j] !== "\n") j++;
-        out += `<span class="hl-comment">${escHtml(src.slice(i, j))}</span>`;
-        i = j; continue;
-      }
-
-      if (ch === "\\") {
-        let j = i + 1;
-        if (j < n) {
-          while (j < n && /[a-zA-Z@*]/.test(src[j])) j++;
-          if (j === i + 1) j++;
-          out += `<span class="hl-cmd">${escHtml(src.slice(i, j))}</span>`;
-          i = j; continue;
-        }
-        out += escHtml("\\");
-        i++;
-        continue;
-      }
-
-      if (ch === "$") {
-        if (i+1 < n && src[i+1] === "$") {
-          const e = src.indexOf("$$", i+2);
-          if (e !== -1) { out += `<span class="hl-math">${escHtml(src.slice(i, e+2))}</span>`; i = e+2; continue; }
-        } else {
-          const lineEnd = src.indexOf("\n", i + 1);
-          const searchEnd = lineEnd === -1 ? n : lineEnd;
-          const e = src.indexOf("$", i+1);
-          if (e !== -1 && e < searchEnd) { out += `<span class="hl-math">${escHtml(src.slice(i, e+1))}</span>`; i = e+1; continue; }
-        }
-        out += escHtml("$");
-        i++;
-        continue;
-      }
-
-      if (ch === "{" || ch === "}") { out += `<span class="hl-brace">${escHtml(ch)}</span>`; i++; continue; }
-      if (ch === "[" || ch === "]") { out += `<span class="hl-bracket">${escHtml(ch)}</span>`; i++; continue; }
-
-      let j = i;
-      while (j < n) {
-        const c = src[j];
-        if (c === "%" || c === "\\" || c === "$" || c === "{" || c === "}" || c === "[" || c === "]") break;
-        j++;
-      }
-      if (j === i) {
-        out += `<span class="hl-text">${escHtml(ch)}</span>`;
-        i++;
-        continue;
-      }
-      out += `<span class="hl-text">${escHtml(src.slice(i, j))}</span>`;
-      i = j;
-    }
-    return out;
-  }
-  function syncHighlight() {
-    editorHl.innerHTML = hlLaTeX(editor.value);
-    renderLineNumbers(editor.value);
-    editorGutter.scrollTop = editor.scrollTop;
-    editorHl.scrollTop  = editor.scrollTop;
-    editorHl.scrollLeft = editor.scrollLeft;
-  }
-  editor.addEventListener("scroll", () => {
-    editorGutter.scrollTop = editor.scrollTop;
-    editorHl.scrollTop  = editor.scrollTop;
-    editorHl.scrollLeft = editor.scrollLeft;
-  });
-
-
-  logToggleBtn.addEventListener("click", () => {
-    const open = logEl.classList.toggle("open");
-    logToggleBtn.classList.toggle("open", open);
-  });
-  function openLog() { logEl.classList.add("open"); logToggleBtn.classList.add("open"); }
-
-
-  function setStatus(v) { statusEl.textContent = v; statusEl.className = `status-chip ${v}`; }
-  function setSaveHint(t, type="") { saveHintEl.textContent = t; saveHintEl.className = `e-save-hint${type ? " "+type : ""}`; }
-
-
-  async function api(url, opts={}) {
-    const h = {"X-CSRFToken": csrfToken};
-    if (!(opts.body instanceof FormData)) h["Content-Type"] = "application/json";
-    const r = await fetch(url, {credentials:"same-origin", headers:h, ...opts});
-    if (!r.ok) { const t = await r.text(); throw new Error(t || `HTTP ${r.status}`); }
-    const ct = r.headers.get("content-type") || "";
-    return ct.includes("application/json") ? r.json() : r.text();
-  }
-  function fmtBytes(n) { if (n<1024) return `${n} B`; if (n<1048576) return `${(n/1024).toFixed(1)} KB`; return `${(n/1048576).toFixed(1)} MB`; }
-  function utf8ByteSize(text) {
-    try {
-      return new TextEncoder().encode(String(text || "")).length;
-    } catch (_) {
-      return String(text || "").length;
-    }
-  }
-  function displaySizeForEntry(file) {
-    if (!file || file.is_dir) return null;
-    if (isMainSourceFile(file.name)) {
-      return utf8ByteSize(mainFileContent);
-    }
-    if (selectedFile?.name === file.name && selectedFile?.is_text && !selectedFile?.is_dir) {
-      return utf8ByteSize(editor.value);
-    }
-    const parsed = Number(file.size);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  function splitPath(path) {
-    return String(path || "").split("/").filter(Boolean);
-  }
-  function pathBaseName(path) {
-    const parts = splitPath(path);
-    return parts.length ? parts[parts.length - 1] : "";
-  }
-  function pathDirName(path) {
-    const parts = splitPath(path);
-    if (parts.length <= 1) return "";
-    return parts.slice(0, -1).join("/");
-  }
-  function compareTreeNodes(a, b) {
-    if (a.is_dir && !b.is_dir) return -1;
-    if (!a.is_dir && b.is_dir) return 1;
-    return a.name.localeCompare(b.name, "uk");
-  }
-  function buildProjectTree(entries) {
-    const root = { key: "", name: "", is_dir: true, children: [], file: null, parent_key: null, depth: 0 };
-    const nodes = new Map([["", root]]);
-
-    function ensureDir(dirPath) {
-      const normalized = String(dirPath || "").replace(/^\/+|\/+$/g, "");
-      if (!normalized) return root;
-      if (nodes.has(normalized)) {
-        return nodes.get(normalized);
-      }
-      const parentKey = pathDirName(normalized);
-      const parentNode = ensureDir(parentKey);
-      const node = {
-        key: normalized,
-        name: pathBaseName(normalized),
-        is_dir: true,
-        children: [],
-        file: null,
-        parent_key: parentKey,
-        depth: parentNode.depth + 1,
-      };
-      nodes.set(normalized, node);
-      parentNode.children.push(node);
-      return node;
-    }
-
-    for (const raw of entries || []) {
-      if (!raw || typeof raw !== "object") continue;
-      const fullPath = String(raw.name || "").replace(/^\/+|\/+$/g, "");
-      if (!fullPath) continue;
-      if (raw.is_dir) {
-        const dirNode = ensureDir(fullPath);
-        dirNode.file = {...raw, name: fullPath};
-        continue;
-      }
-      const parent = ensureDir(pathDirName(fullPath));
-      const fileNode = {
-        key: fullPath,
-        name: pathBaseName(fullPath),
-        is_dir: false,
-        children: [],
-        file: {...raw, name: fullPath},
-        parent_key: parent.key,
-        depth: parent.depth + 1,
-      };
-      nodes.set(fullPath, fileNode);
-      parent.children.push(fileNode);
-    }
-
-    return root;
-  }
-  async function moveFileToFolder(sourcePath, targetFolderPath) {
-    const src = String(sourcePath || "").trim();
-    if (!src || isMainSourceFile(src)) return;
-    const file = projectFiles.find(x => x.name === src);
-    if (!file || file.is_dir) return;
-
-    const folder = String(targetFolderPath || "").replace(/^\/+|\/+$/g, "");
-    const newPath = folder ? `${folder}/${pathBaseName(src)}` : pathBaseName(src);
-    if (newPath === src) return;
-
-    await api(`/api/projects/${projectId}/files/${encodeURIComponent(src)}/rename/`, {
-      method: "POST",
-      body: JSON.stringify({new_filename: newPath}),
-    });
-
-    if (selectedFile?.name === src) {
-      selectedFile = {...selectedFile, name: newPath};
-      currentFileLbl.textContent = newPath;
-    }
-
-    await Promise.all([loadFiles(), loadVersions(true)]);
-    setSaveHint(`Файл переміщено: ${src} → ${newPath}`, "saved");
-  }
-  function fmtDate(iso) {
-    if (!iso) return "—";
-    const d = new Date(iso); if (isNaN(d)) return iso;
-    return d.toLocaleString("uk-UA",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
-  }
-  function isImageFile(file) {
-    const name = String(file?.name || "").toLowerCase();
-    const mime = String(file?.type || "").toLowerCase();
-    const byExt = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"].some(ext => name.endsWith(ext));
-    return byExt || mime.startsWith("image/");
-  }
-  function isTextFile(file) {
-    const name = String(file?.name || "").toLowerCase();
-    const mime = String(file?.type || "").toLowerCase();
-    const byExt = [".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml"].some(
-      ext => name.endsWith(ext)
-    );
-    return byExt || mime.startsWith("text/");
-  }
-  function isUploadableProjectFile(file) {
-    return isImageFile(file) || isTextFile(file);
-  }
-
-
-  document.querySelectorAll(".e-tab").forEach(tab => {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".e-tab").forEach(t => t.classList.remove("active"));
-      document.querySelectorAll(".e-tabpanel").forEach(p => p.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById(`tab-${tab.dataset.tab}`).classList.add("active");
-    });
-  });
-
-
-  function renderFileList() {
-    fileListEl.innerHTML = "";
-    const mainEntry = {name: mainFileName, is_text: true, type: "main", is_dir: false};
-    const treeRoot = buildProjectTree(projectFiles);
-
-    function renderEntry(file, depth = 0, labelOverride = null) {
-      const li  = document.createElement("li");
-      const row = document.createElement("div");
-      row.className = "e-file-row";
-      const btn = document.createElement("button");
-      btn.className = `e-file-btn${selectedFile.name===file.name ? " active" : ""}`;
-      btn.style.paddingLeft = `${8 + depth * 14}px`;
-      btn.dataset.path = file.name;
-      btn.dataset.isDir = file.is_dir ? "1" : "0";
-      if (file.is_dir) btn.dataset.folderPath = file.name;
-
-      const icon = file.is_dir ? "📁 " : "";
-      const collapsed = file.is_dir && collapsedFolders.has(file.name);
-      const folderToggle = file.is_dir
-        ? `<span class="e-folder-toggle" data-folder-toggle="1">${collapsed ? "▸" : "▾"}</span>`
-        : "";
-      const size = displaySizeForEntry(file);
-      const label = labelOverride || pathBaseName(file.name) || file.name;
-      btn.innerHTML = `<span class="e-file-name">${folderToggle}${icon}${label}</span><span class="e-file-sz">${size == null ? "" : fmtBytes(size)}</span>`;
-      btn.addEventListener("click", () => selectFile(file));
-
-      if (!file.is_dir && !isMainSourceFile(file.name)) {
-        btn.draggable = true;
-        btn.addEventListener("dragstart", e => {
-          draggedFilePath = file.name;
-          try {
-            e.dataTransfer?.setData("text/plain", file.name);
-            if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-          } catch (_) {}
-        });
-        btn.addEventListener("dragend", () => {
-          draggedFilePath = null;
-          fileListEl.querySelectorAll(".e-file-btn.drag-target").forEach(node => node.classList.remove("drag-target"));
-        });
-      }
-
-      if (file.is_dir) {
-        const toggleEl = btn.querySelector("[data-folder-toggle='1']");
-        if (toggleEl) {
-          toggleEl.addEventListener("click", e => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (collapsedFolders.has(file.name)) collapsedFolders.delete(file.name);
-            else collapsedFolders.add(file.name);
-            renderFileList();
-          });
-        }
-      }
-
-      if (file.is_dir) {
-        btn.addEventListener("dragover", e => {
-          if (!draggedFilePath) return;
-          if (draggedFilePath.startsWith(`${file.name}/`)) return;
-          e.preventDefault();
-          btn.classList.add("drag-target");
-        });
-        btn.addEventListener("dragleave", () => btn.classList.remove("drag-target"));
-        btn.addEventListener("drop", e => {
-          e.preventDefault();
-          e.stopPropagation();
-          btn.classList.remove("drag-target");
-          const sourcePath = draggedFilePath || e.dataTransfer?.getData("text/plain") || "";
-          if (!sourcePath) return;
-          moveFileToFolder(sourcePath, file.name).catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
-        });
-      }
-
-      row.appendChild(btn);
-
-      if (!isMainSourceFile(file.name)) {
-        const actions = document.createElement("div");
-        actions.className = "e-file-actions";
-        const entryLabel = file.is_dir ? "folder" : "file";
-        const renameBtn = document.createElement("button");
-        renameBtn.type = "button";
-        renameBtn.className = "e-file-act";
-        renameBtn.textContent = "✎";
-        renameBtn.title = "Rename";
-        renameBtn.setAttribute("aria-label", `Rename ${entryLabel}`);
-        renameBtn.addEventListener("click", async e => {
-          e.preventDefault(); e.stopPropagation();
-          await renameFile(file);
-        });
-        const deleteBtn = document.createElement("button");
-        deleteBtn.type = "button";
-        deleteBtn.className = "e-file-act danger";
-        deleteBtn.textContent = "✕";
-        deleteBtn.title = "Delete";
-        deleteBtn.setAttribute("aria-label", `Delete ${entryLabel}`);
-        deleteBtn.addEventListener("click", async e => {
-          e.preventDefault(); e.stopPropagation();
-          await deleteFile(file);
-        });
-        actions.appendChild(renameBtn);
-        actions.appendChild(deleteBtn);
-        row.appendChild(actions);
-      }
-
-      li.appendChild(row);
-      fileListEl.appendChild(li);
-    }
-
-    function renderNode(node) {
-      if (node.key) {
-        const file = node.file || {name: node.key, is_dir: true, is_text: false, is_image: false, type: "asset"};
-        renderEntry(file, node.depth, node.name);
-        if (collapsedFolders.has(node.key)) return;
-      }
-      const sorted = [...node.children].sort(compareTreeNodes);
-      for (const child of sorted) renderNode(child);
-    }
-
-    renderEntry(mainEntry, 0, mainFileName);
-    const rootChildren = [...treeRoot.children].sort(compareTreeNodes);
-    for (const child of rootChildren) renderNode(child);
-  }
-
-
-  const OL_CLASS = {0:"e-ol-0", 1:"e-ol-2", 2:"e-ol-2", 3:"e-ol-3", 4:"e-ol-4", 5:"e-ol-5", 6:"e-ol-6"};
-  function renderOutline() {
-    outlineEl.innerHTML = "";
-    sections.forEach(s => {
-      const lvl = Math.min(s.level, 6);
-      const li  = document.createElement("li");
-      const btn = document.createElement("button");
-      btn.className = `e-outline-btn ${OL_CLASS[lvl] || "e-ol-3"}`;
-      btn.textContent = s.title;
-      btn.title = `${s.command} · Рядки ${s.start_line}–${s.end_line}`;
-      btn.addEventListener("click", () => jumpToLine(s.start_line));
-      li.appendChild(btn); outlineEl.appendChild(li);
-    });
-  }
-  function getEditorLineHeightPx() {
-    const raw = window.getComputedStyle(editor).lineHeight;
-    const parsed = Number.parseFloat(raw || "");
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-    const fontSize = Number.parseFloat(window.getComputedStyle(editor).fontSize || "14");
-    return Math.max(14, fontSize * 1.65);
-  }
-  function jumpToLine(n) {
-    if (!isMainSourceFile(selectedFile.name)) return;
-    const lines = editor.value.split("\n");
-    let pos = 0;
-    for (let i=0; i<Math.max(0,n-1) && i<lines.length; i++) pos += lines[i].length + 1;
-    editor.focus(); editor.setSelectionRange(pos, pos);
-    const lineH = getEditorLineHeightPx();
-    editor.scrollTop = Math.max(0, (n - 5) * lineH);
-  }
-
-
-  function parseHunkStart(line) {
-    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (!m) return null;
-    return { oldLine: Number(m[1]), newLine: Number(m[2]) };
-  }
-  function renderDiff(raw, opts={}) {
-    if (!raw || raw === "(no changes)") return { html: `<span class="diff-empty">Без змін</span>`, truncated: false };
-    const maxRows = Number.isFinite(opts.maxRows) ? opts.maxRows : Infinity;
-    const lines = raw.split("\n");
-    let oldLine = 0;
-    let newLine = 0;
-    let addCount = 0;
-    let delCount = 0;
-    const chunks = [];
-    let pendingEmptyCtx = 0;
-    const EMPTY_CONTEXT_COLLAPSE_THRESHOLD = 4;
-    let renderedRows = 0;
-    let truncated = false;
-
-    function canAppend(rows = 1) {
-      if (renderedRows + rows <= maxRows) return true;
-      truncated = true;
-      return false;
-    }
-
-    function appendContextRow(text, oldNo, newNo) {
-      if (!canAppend(1)) return;
-      chunks.push(
-        `<div class="diff-row ctx">` +
-        `<span class="diff-sign"> </span>` +
-        `<span class="diff-ln">${oldNo}</span>` +
-        `<span class="diff-ln">${newNo}</span>` +
-        `<span class="diff-code">${escHtml(text)}</span>` +
-        `</div>`
-      );
-      renderedRows += 1;
-    }
-
-    function flushEmptyContext() {
-      if (!pendingEmptyCtx) return;
-      if (pendingEmptyCtx < EMPTY_CONTEXT_COLLAPSE_THRESHOLD) {
-        const fromOld = oldLine - pendingEmptyCtx;
-        const fromNew = newLine - pendingEmptyCtx;
-        for (let i = 0; i < pendingEmptyCtx; i += 1) {
-          appendContextRow("", fromOld + i, fromNew + i);
-          if (truncated) break;
-        }
-        pendingEmptyCtx = 0;
-        return;
-      }
-      if (!canAppend(1)) { pendingEmptyCtx = 0; return; }
-      chunks.push(
-        `<div class="diff-row ctx-empty">` +
-        `<span class="diff-sign">…</span>` +
-        `<span class="diff-ln"></span>` +
-        `<span class="diff-ln"></span>` +
-        `<span class="diff-code">пропущено порожніх рядків: ${pendingEmptyCtx}</span>` +
-        `</div>`
-      );
-      renderedRows += 1;
-      pendingEmptyCtx = 0;
-    }
-
-    for (let li = 0; li < lines.length; li += 1) {
-      if (truncated) break;
-      const line = lines[li];
-      const e = escHtml(line);
-
-      if (line.startsWith("---") || line.startsWith("+++")) {
-        flushEmptyContext();
-        if (truncated) break;
-        if (!canAppend(1)) break;
-        chunks.push(`<span class="diff-meta">${e}</span>`);
-        renderedRows += 1;
-        continue;
-      }
-
-      if (line.startsWith("@@")) {
-        flushEmptyContext();
-        if (truncated) break;
-        const start = parseHunkStart(line);
-        if (start) { oldLine = start.oldLine; newLine = start.newLine; }
-        if (!canAppend(1)) break;
-        chunks.push(`<span class="diff-hunk">${e}</span>`);
-        renderedRows += 1;
-        continue;
-      }
-
-      if (line.startsWith("+")) {
-        flushEmptyContext();
-        if (truncated) break;
-        addCount += 1;
-        if (!canAppend(1)) break;
-        chunks.push(
-          `<div class="diff-row add">` +
-          `<span class="diff-sign">+</span>` +
-          `<span class="diff-ln"></span>` +
-          `<span class="diff-ln">${newLine++}</span>` +
-          `<span class="diff-code">${escHtml(line.slice(1))}</span>` +
-          `</div>`
-        );
-        renderedRows += 1;
-        continue;
-      }
-
-      if (line.startsWith("-")) {
-        flushEmptyContext();
-        if (truncated) break;
-        delCount += 1;
-        if (!canAppend(1)) break;
-        chunks.push(
-          `<div class="diff-row del">` +
-          `<span class="diff-sign">-</span>` +
-          `<span class="diff-ln">${oldLine++}</span>` +
-          `<span class="diff-ln"></span>` +
-          `<span class="diff-code">${escHtml(line.slice(1))}</span>` +
-          `</div>`
-        );
-        renderedRows += 1;
-        continue;
-      }
-
-      const ctx = line.startsWith(" ") ? line.slice(1) : line;
-      if (!ctx.trim()) {
-        pendingEmptyCtx += 1;
-        oldLine += 1;
-        newLine += 1;
-        continue;
-      }
-      flushEmptyContext();
-      if (truncated) break;
-      appendContextRow(ctx, oldLine++, newLine++);
-    }
-    flushEmptyContext();
-
-    const previewNote = truncated ? (
-      `<div class="diff-truncate-note">` +
-      `<span>Показано лише частину diff для швидкості.</span>` +
-      `<button type="button" class="diff-expand-btn" data-expand-diff="1">Показати весь diff</button>` +
-      `</div>`
-    ) : "";
-
-    return { html: (
-      previewNote +
-      `<div class="diff-summary">` +
-      `<span class="diff-chip add">+${addCount}</span>` +
-      `<span class="diff-chip del">-${delCount}</span>` +
-      `</div>` +
-      `<div class="diff-table">${chunks.join("")}</div>`
-    ), truncated };
-  }
-
-
-  function renderVersions() {
-    versionsListEl.innerHTML = "";
-    if (!versions.length) {
-      const d = document.createElement("div"); d.className = "e-empty-msg";
-      d.textContent = versionsLoading ? "Завантаження версій…" : "Версій ще немає.";
-      versionsListEl.appendChild(d);
-      return;
-    }
-    versions.forEach(v => {
-      const wrap = document.createElement("div");
-      wrap.className = `e-ver-item${v._loading ? " is-loading" : ""}`;
-
-      const head = document.createElement("div");
-      head.className = "e-ver-head";
-      head.innerHTML = `
-        <div class="e-ver-left">
-          <div class="e-ver-row1">
-            <span class="e-ver-num">#${v.number ?? v.id}</span>
-            <span class="e-ver-op">${v.operation}</span>
-          </div>
-          <span class="e-ver-summary">${v.summary || "(без опису)"}</span>
-        </div>
-        <span class="e-ver-date">${fmtDate(v.created_at)}</span>`;
-      head.addEventListener("click", () => openDiffModal(v.id));
-      wrap.appendChild(head);
-      versionsListEl.appendChild(wrap);
-    });
-    if (versionsLoading || versionsHasMore) {
-      const d = document.createElement("div");
-      d.className = "e-empty-msg";
-      d.style.padding = "10px";
-      d.style.fontSize = "11px";
-      d.textContent = versionsLoading ? "Завантаження…" : "Прокрутіть нижче для підвантаження";
-      versionsListEl.appendChild(d);
-    }
-  }
-
-  async function openDiffModal(vid) {
-    activeDiffVersionId = vid;
-    activeDiffRenderFull = false;
-    const v = versions.find(x => x.id === vid);
-    if (!v) return;
-
-    diffModalTitle.textContent = `Diff версії #${v.number ?? v.id}`;
-    diffModalMeta.textContent = `${v.operation || "change"} · ${fmtDate(v.created_at)} · ${v.summary || "(без опису)"}`;
-    diffModalContent.innerHTML = `<span class="diff-empty">Завантаження…</span>`;
-    diffModalRollbackBtn.onclick = () => rollbackVersion(v.id);
-    diffModalOverlay.classList.add("open");
-
-    if (v._diff === undefined) {
-      v._loading = true; renderVersions();
-      try { const d = await api(`/api/projects/${projectId}/versions/${vid}/`,{method:"GET"}); v._diff = d.diff || "(no changes)"; }
-      catch (err) { v._diff = `Помилка: ${err.message}`; }
-      v._loading = false;
-      renderVersions();
-    }
-    if (activeDiffVersionId !== vid) return;
-    const render = renderDiff(v._diff || "", { maxRows: activeDiffRenderFull ? Infinity : 900 });
-    diffModalContent.innerHTML = render.html;
-    const expandBtn = diffModalContent.querySelector("[data-expand-diff='1']");
-    if (expandBtn) {
-      expandBtn.addEventListener("click", () => {
-        activeDiffRenderFull = true;
-        const full = renderDiff(v._diff || "", { maxRows: Infinity });
-        diffModalContent.innerHTML = full.html;
-      });
-    }
-  }
-
-  async function rollbackVersion(vid) {
-    const v = versions.find(x => x.id === vid);
-    const vnum = v?.number ?? vid;
-    const ok = await showConfirm(`Відкотити проєкт до стану версії #${vnum}? Поточні зміни будуть замінені.`);
-    if (!ok) return;
-    try {
-      await api(`/api/projects/${projectId}/versions/${vid}/rollback/`,
-        {method:"POST", body:JSON.stringify({summary:`Rollback to version ${vnum}`})});
-      closeDiffModal();
-      await loadMainFile();
-      await Promise.all([loadSections(), loadVersions(true)]);
-      setSaveHint(`Відкотили до версії #${vnum}`, "saved");
-      setStatus("pending");
-    } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
-  }
-
-  async function loadProjectMeta() {
-    const data = await api(`/api/projects/${projectId}/`, {method:"GET"});
-    projectMeta = data || {};
-    const prevMainFileName = mainFileName;
-    const nextMainFileName = String(projectMeta.main_file_name || projectMeta.file_name || "main.tex");
-    mainFileName = nextMainFileName;
-    supportsSynctex = Boolean(projectMeta.supports_synctex);
-    currentFileLbl.textContent = mainFileName;
-    const selectedName = String(selectedFile?.name || "");
-    if (
-      !selectedName
-      || selectedFile?.type === "main"
-      || selectedName === prevMainFileName
-      || selectedName === "main.tex"
-      || selectedName === "main.typ"
-    ) {
-      selectedFile = {name: mainFileName, type: "main", is_text: true};
-    }
-  }
-
-
-  async function loadMainFile() {
-    const data = await api(`/api/projects/${projectId}/file/`, {method:"GET"});
-    const prevMainFileName = mainFileName;
-    if (data.file_name) {
-      mainFileName = String(data.file_name);
-    }
-    if (
-      selectedFile?.type === "main"
-      || selectedFile?.name === prevMainFileName
-      || selectedFile?.name === "main.tex"
-      || selectedFile?.name === "main.typ"
-    ) {
-      selectedFile = {name: mainFileName, type: "main", is_text: true};
-    }
-    currentFileLbl.textContent = selectedFile.name;
-    editor.value = data.content || "";
-    mainFileContent = data.content || "";
-    hasUnsavedChanges = false;
-    syncHighlight();
-    setSaveHint("Завантажено", "saved");
-  }
-  async function loadFiles() {
-    const p = await api(`/api/projects/${projectId}/files/`, {method:"GET"});
-    projectFiles = p.files || []; renderFileList();
-  }
-  async function loadSections() {
-    const p = await api(`/api/projects/${projectId}/sections/`, {method:"GET"});
-    sections = p.sections || []; renderOutline();
-  }
-  async function loadVersions(reset=false) {
-    if (versionsLoading) return;
-    if (reset) {
-      versions = [];
-      versionsHasMore = true;
-      versionsCursor = null;
-    } else if (!versionsHasMore) {
-      return;
-    }
-    versionsLoading = true;
-    renderVersions();
-    try {
-      const q = new URLSearchParams({limit: "30"});
-      if (versionsCursor) q.set("before_id", String(versionsCursor));
-      const p = await api(`/api/projects/${projectId}/versions/?${q.toString()}`, {method:"GET"});
-      const seen = new Set(versions.map(v => v.id));
-      const incoming = (p.versions||[]).map(v => ({...v, _diff:undefined, _loading:false}));
-      incoming.forEach(v => { if (!seen.has(v.id)) versions.push(v); });
-      versionsHasMore = Boolean(p.has_more);
-      versionsCursor = p.next_before_id ?? null;
-    } finally {
-      versionsLoading = false;
-      renderVersions();
-    }
-  }
-
-
-  async function saveCurrentFile() {
-    if (saving || !selectedFile.is_text || selectedFile.is_dir) return;
-    saving = true;
-    setSaveHint("Збереження…", "saving");
-    try {
-      if (isMainSourceFile(selectedFile.name)) {
-        await api(`/api/projects/${projectId}/file/`, {
-          method: "PUT",
-          body: JSON.stringify({content: editor.value}),
-        });
-        mainFileContent = editor.value;
-      } else {
-        await api(`/api/projects/${projectId}/files/${encodeURIComponent(selectedFile.name)}/content/`, {
-          method: "PUT",
-          body: JSON.stringify({
-            content: editor.value,
-          }),
-        });
-        const savedSize = utf8ByteSize(editor.value);
-        selectedFile = {...selectedFile, size: savedSize};
-        projectFiles = projectFiles.map(item => (
-          item.name === selectedFile.name ? {...item, size: savedSize} : item
-        ));
-      }
-      hasUnsavedChanges = false;
-      setSaveHint("Збережено", "saved");
-      setStatus("pending");
-      renderFileList();
-      loadVersions(true).catch(() => {});
-    } catch (err) {
-      setSaveHint(`Помилка: ${err.message}`, "error");
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function waitUntilSaveIdle(maxWaitMs = 4000) {
-    const startedAt = Date.now();
-    while (saving && Date.now() - startedAt < maxWaitMs) {
-      await new Promise(resolve => setTimeout(resolve, 60));
-    }
-  }
-
-
-  async function runCompile(mode = "manual") {
-    if (compileInFlight) {
-      queueCompile(mode);
-      return;
-    }
-    compileInFlight = true;
-    if (shouldOpenCompileLog(mode)) {
-      logEl.textContent = "Компіляція…";
-      openLog();
-    } else {
-      setSaveHint("Typst: автокомпіляція…", "saving");
-    }
-    try {
-      await waitUntilSaveIdle();
-      await saveCurrentFile();
-      const data = await api(`/api/projects/${projectId}/compile/`, {method:"POST"});
-      setStatus(data.status); logEl.textContent = data.log || "";
-      if (data.pdf_url) {
-        lastPdfVersion = data.pdf_version ?? Date.now();
-        const url = `${data.pdf_url}?t=${lastPdfVersion}`;
-        openPdfLink.href = data.pdf_url;
-        await loadPdfViewer(url);
-      } else { pdfEmpty.style.display = "flex"; }
-      if (!shouldOpenCompileLog(mode) && data.status === "success") {
-        setSaveHint("Typst: PDF оновлено", "saved");
-      }
-    } catch (err) {
-      setStatus("error");
-      logEl.textContent = `Помилка: ${err.message}`;
-      if (!shouldOpenCompileLog(mode)) {
-        setSaveHint(`Typst: помилка компіляції`, "error");
-      }
-    } finally {
-      compileInFlight = false;
-      if (queuedCompileMode) {
-        const nextMode = queuedCompileMode;
-        queuedCompileMode = null;
-        runCompile(nextMode).catch(()=>{});
-      }
-    }
-  }
-
-  async function compileProject() {
-    await runCompile("manual");
-  }
-
-  async function deleteCurrentProject() {
-    const ok = await showConfirm("Видалити цей проєкт? Дію не можна скасувати.");
-    if (!ok) return;
-    try {
-      const r = await fetch(`/api/projects/${projectId}/`, {method: "DELETE", credentials: "same-origin"});
-      if (!r.ok) throw new Error("Не вдалося видалити проєкт");
-      window.location.href = "/";
-    } catch (err) {
-      setSaveHint(`Помилка: ${err.message}`, "error");
-    }
-  }
-
-  async function renameCurrentProject() {
-    const currentTitle = String(projectTitleEl?.textContent || "").trim();
-    const newTitle = await showProjectRenameDialog(currentTitle);
-    if (!newTitle) return;
-    const trimmed = String(newTitle).trim();
-    if (!trimmed || trimmed === currentTitle) return;
-    try {
-      const payload = await api(`/api/projects/${projectId}/`, {
-        method: "PATCH",
-        body: JSON.stringify({title: trimmed}),
-      });
-      const title = String(payload?.title || trimmed);
-      projectTitleEl.textContent = title;
-      document.title = `${title} — SmartTeX`;
-      setSaveHint("Назву проєкту оновлено", "saved");
-    } catch (err) {
-      setSaveHint(`Помилка: ${err.message}`, "error");
-    }
-  }
-
-
-  async function selectFile(file) {
-    // Save current file before switching away
-    if (hasUnsavedChanges && selectedFile.is_text && !selectedFile.is_dir) {
-      clearTimeout(saveTimer);
-      await saveCurrentFile();
-    }
-
-    selectedFile = {name: file.name, type: file.type || "asset", ...file};
-    currentFileLbl.textContent = file.name;
-    renderFileList();
-
-    if (isMainSourceFile(file.name)) {
-      document.getElementById("editor-wrap").style.display = "";
-      assetView.style.display = "none";
-      editor.value = mainFileContent;
-      hasUnsavedChanges = false;
-      syncHighlight();
-      setSaveHint("", "");
-      return;
-    }
-
-    if (file.is_text && !file.is_dir) {
-      document.getElementById("editor-wrap").style.display = "";
-      assetView.style.display = "none";
-      setSaveHint("Завантаження…", "saving");
-      try {
-        const params = new URLSearchParams({include_text: "1"});
-        const data = await api(`/api/projects/${projectId}/files/${encodeURIComponent(file.name)}/content/?${params}`);
-        editor.value = data.text_content || "";
-        hasUnsavedChanges = false;
-        syncHighlight();
-        setSaveHint("Завантажено", "saved");
-      } catch (err) {
-        setSaveHint(`Помилка: ${err.message}`, "error");
-        selectedFile = {name: mainFileName, type: "main", is_text: true};
-        currentFileLbl.textContent = mainFileName;
-        editor.value = mainFileContent;
-        hasUnsavedChanges = false;
-        syncHighlight();
-        renderFileList();
-      }
-      return;
-    }
-
-    document.getElementById("editor-wrap").style.display = "none";
-    assetView.style.display = "flex";
-    if (file.is_dir) {
-      assetBox.innerHTML = `Папка: <strong>${file.name}</strong><br><br>Тут можна зберігати вкладені текстові файли та зображення.`;
-      return;
-    }
-    const url = `/api/projects/${projectId}/files/${encodeURIComponent(file.name)}/`;
-    if (file.is_image) { assetBox.innerHTML = `<img class="e-asset-img" src="${url}?t=${Date.now()}" alt="${file.name}">`; return; }
-    assetBox.innerHTML = `Бінарний файл: <strong>${file.name}</strong><br><br><a class="e-btn" href="${url}" target="_blank">Завантажити</a>`;
-  }
-
-  async function createFolder() {
-    const folderName = await showCreateEntryDialog("directory");
-    if (!folderName) return;
-    await api(`/api/projects/${projectId}/files/`, {
-      method: "POST",
-      body: JSON.stringify({filename: folderName, entry_kind: "directory"}),
-    });
-    await Promise.all([loadFiles(), loadVersions(true)]);
-    const created = projectFiles.find(x => x.name === folderName.replace(/[\\/]+$/, ""));
-    if (created) await selectFile(created);
-    setSaveHint(`Папку створено: ${folderName}`, "saved");
-  }
-
-  async function createEmptyTextFile() {
-    const fileName = await showCreateEntryDialog("file");
-    if (!fileName) return;
-    await api(`/api/projects/${projectId}/files/`, {
-      method: "POST",
-      body: JSON.stringify({filename: fileName, text_content: ""}),
-    });
-    await Promise.all([loadFiles(), loadVersions(true)]);
-    const created = projectFiles.find(x => x.name === fileName);
-    if (created) await selectFile(created);
-    setSaveHint(`Файл створено: ${fileName}`, "saved");
-  }
-
-  async function uploadFile(file) {
-    if (!isUploadableProjectFile(file)) {
-      throw new Error("Дозволено завантажувати лише зображення та текстові файли");
-    }
-    const fd = new FormData(); fd.append("file", file);
-    await api(`/api/projects/${projectId}/files/`, {method:"POST", body:fd});
-    await Promise.all([loadFiles(), loadVersions(true)]);
-    setSaveHint(`Завантажено: ${file.name}`, "saved");
-  }
-
-  async function uploadZip(file) {
-    const fd = new FormData(); fd.append("file", file);
-    const result = await api(`/api/projects/${projectId}/files/`, {method:"POST", body:fd});
-    await Promise.all([loadFiles(), loadVersions(true)]);
-    const n = (result.files || []).length;
-    const label = n === 1 ? "файл" : n < 5 ? "файли" : "файлів";
-    setSaveHint(`ZIP: розпаковано ${n} ${label}`, "saved");
-  }
-
-  async function renameFile(file) {
-    const currentName = String(file?.name || "");
-    if (!currentName || isMainSourceFile(currentName)) return;
-    const newName = await showRenameDialog(currentName);
-    if (!newName) return;
-    const trimmed = String(newName).trim();
-    if (!trimmed || trimmed === currentName) return;
-    await api(`/api/projects/${projectId}/files/${encodeURIComponent(currentName)}/rename/`, {
-      method: "POST",
-      body: JSON.stringify({new_filename: trimmed}),
-    });
-    if (selectedFile.name === currentName) {
-      selectedFile = {...file, name: trimmed, type: file.type || "asset"};
-      currentFileLbl.textContent = trimmed;
-    }
-    await Promise.all([loadFiles(), loadVersions(true)]);
-    if (!isMainSourceFile(selectedFile.name)) {
-      const next = projectFiles.find(x => x.name === selectedFile.name);
-      if (next) await selectFile(next);
-    }
-    setSaveHint(`${file?.is_dir ? "Папку" : "Файл"} перейменовано: ${currentName} → ${trimmed}`, "saved");
-  }
-
-  async function deleteFile(file) {
-    const currentName = String(file?.name || "");
-    if (!currentName || isMainSourceFile(currentName)) return;
-    const ok = await showConfirm(`Видалити ${file?.is_dir ? "папку" : "файл"} "${currentName}"?`);
-    if (!ok) return;
-    await api(`/api/projects/${projectId}/files/${encodeURIComponent(currentName)}/`, {method: "DELETE"});
-    const wasSelected = selectedFile.name === currentName;
-    await Promise.all([loadFiles(), loadVersions(true)]);
-    if (wasSelected) {
-      await selectFile({name: mainFileName, type: "main", is_text: true});
-    }
-    setSaveHint(`${file?.is_dir ? "Папку" : "Файл"} видалено: ${currentName}`, "saved");
-  }
-
-  function normalizeClipboardFile(file, idx = 0) {
-    if (file.name && file.name.trim()) return file;
-    const mime = String(file.type || "").toLowerCase();
-    const extMap = {
-      "image/png": "png",
-      "image/jpeg": "jpg",
-      "image/webp": "webp",
-      "image/gif": "gif",
-      "image/svg+xml": "svg",
-      "image/bmp": "bmp",
-    };
-    const ext = extMap[mime] || "bin";
-    const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-    const name = `clipboard-${stamp}-${idx + 1}.${ext}`;
-    try {
-      return new File([file], name, {type: file.type || "application/octet-stream", lastModified: Date.now()});
-    } catch (_) {
-      return file;
-    }
-  }
-
-
-  let dragCounter = 0;
-  dropZone.addEventListener("dragenter", e => { e.preventDefault(); dragCounter++; dropZone.classList.add("drag-active"); });
-  dropZone.addEventListener("dragleave", () => { if (--dragCounter <= 0) { dragCounter=0; dropZone.classList.remove("drag-active"); } });
-  dropZone.addEventListener("dragover",  e => e.preventDefault());
-  dropZone.addEventListener("drop", async e => {
-    e.preventDefault(); dragCounter=0; dropZone.classList.remove("drag-active");
-    for (const f of [...(e.dataTransfer.files||[])]) {
-      if (f.name.toLowerCase().endsWith(".zip")) {
-        try { await uploadZip(f); }
-        catch (err) { setSaveHint(`Помилка ZIP: ${err.message}`, "error"); }
-      } else {
-        try { await uploadFile(f); }
-        catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
-      }
-    }
-  });
-
-  document.addEventListener("paste", async e => {
-    const files = [...(e.clipboardData?.files || [])].filter(f => f && f.size > 0);
-    if (!files.length) return;
-    e.preventDefault();
-    for (let i = 0; i < files.length; i++) {
-      const file = normalizeClipboardFile(files[i], i);
-      try { await uploadFile(file); }
-      catch (err) { setSaveHint(`Помилка upload: ${err.message}`, "error"); }
-    }
-  });
-
-
-  async function pollCompileStatus() {
-    try {
-      const d = await api(`/api/projects/${projectId}/compile/`, {method:"GET"});
-      setStatus(d.status);
-      if (d.pdf_url && d.pdf_version && d.pdf_version !== lastPdfVersion) {
-        lastPdfVersion = d.pdf_version;
-        const url = `${d.pdf_url}?t=${lastPdfVersion}`;
-        openPdfLink.href = d.pdf_url;
-        await loadPdfViewer(url);
-      }
-      if (!d.pdf_url) pdfEmpty.style.display = "flex";
-    } catch(_) {}
-  }
-
-
-  document.getElementById("compile-btn").addEventListener("click", compileProject);
-  document.getElementById("rename-project-btn").addEventListener("click", () => {
-    closeProjectMenu();
-    renameCurrentProject();
-  });
-  document.getElementById("delete-project-btn").addEventListener("click", () => {
-    closeProjectMenu();
-    deleteCurrentProject();
-  });
-  document.getElementById("refresh-pdf").addEventListener("click", () => {
-    if (pdfCurrentUrl) {
-      const base = pdfCurrentUrl.split("?")[0];
-      loadPdfViewer(`${base}?t=${Date.now()}`);
-    }
-  });
-  document.getElementById("refresh-outline").addEventListener("click", loadSections);
-  document.getElementById("refresh-versions").addEventListener("click", () => loadVersions(true).catch(()=>{}));
-  versionsListEl.addEventListener("scroll", () => {
-    const nearBottom = versionsListEl.scrollTop + versionsListEl.clientHeight >= versionsListEl.scrollHeight - 120;
-    if (nearBottom) loadVersions(false).catch(()=>{});
-  });
-  uploadInput.addEventListener("change", async e => {
-    for (const f of [...(e.target.files || [])]) {
-      try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
-    }
-    uploadInput.value = "";
-  });
-  document.getElementById("zip-upload").addEventListener("change", async e => {
-    const f = e.target.files?.[0]; if (!f) return;
-    try { await uploadZip(f); } catch (err) { setSaveHint(`Помилка ZIP: ${err.message}`, "error"); }
-    finally { e.target.value = ""; }
-  });
-  newFolderBtn.addEventListener("click", () => {
-    createFolder().catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
-  });
-  newTextFileBtn.addEventListener("click", () => {
-    createEmptyTextFile().catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
-  });
-  fileListEl.addEventListener("dragover", e => {
-    if (!draggedFilePath) return;
-    e.preventDefault();
-  });
-  fileListEl.addEventListener("drop", e => {
-    if (!draggedFilePath) return;
-    const folderBtn = e.target.closest(".e-file-btn[data-is-dir='1']");
-    if (folderBtn) return;
-    e.preventDefault();
-    const sourcePath = draggedFilePath || e.dataTransfer?.getData("text/plain") || "";
-    if (!sourcePath) return;
-    moveFileToFolder(sourcePath, "").catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
-  });
-
-
-  editor.addEventListener("input", () => {
-    syncHighlight();
-    if (!selectedFile.is_text || selectedFile.is_dir) return;
-    hasUnsavedChanges = true;
-    setSaveHint("Є незбережені зміни…", "saving");
-    clearTimeout(saveTimer);
-    clearTimeout(typstCompileTimer);
-    const savedName = selectedFile.name;
-    const isTypstTextFile = isTypstProject() && String(savedName || "").toLowerCase().endsWith(".typ");
-    saveTimer = setTimeout(() => {
-      saveCurrentFile()
-        .then(() => {
-          if (isTypstTextFile) runCompile("realtime").catch(() => {});
-          if (!isMainSourceFile(savedName)) return;
-          loadSections().catch(() => {});
-        })
-        .catch(() => {});
-    }, isTypstTextFile ? 200 : 1200);
-  });
-
-
-  async function init() {
-    await loadProjectMeta();
-    await loadMainFile();
-    await Promise.all([loadFiles(), loadSections(), loadVersions(true)]);
-    const cd = await api(`/api/projects/${projectId}/compile/`, {method:"GET"});
-    setStatus(cd.status);
-    if (cd.log) { logEl.textContent = cd.log; openLog(); }
-    if (cd.pdf_url) {
-      lastPdfVersion = cd.pdf_version ?? Date.now();
-      const url = `${cd.pdf_url}?t=${lastPdfVersion}`;
-      openPdfLink.href = cd.pdf_url;
-      await loadPdfViewer(url);
-    } else { pdfEmpty.style.display = "flex"; }
-    renderFileList();
-    connectProjectUpdatesWebSocket();
-    statusPollTimer = setInterval(pollCompileStatus, 5000);
-  }
-
-  init().catch(err => setSaveHint(`Помилка ініціалізації: ${err.message}`, "error"));
-  window.addEventListener("beforeunload", () => {
-    if (statusPollTimer) clearInterval(statusPollTimer);
-    if (typstCompileTimer) clearTimeout(typstCompileTimer);
-    if (projectWsReconnectTimer) clearTimeout(projectWsReconnectTimer);
-    if (projectWs) {
-      try { projectWs.close(); } catch (_) {}
-      projectWs = null;
-    }
-  });
-</script>
+    {% load static %}
+    <script>
+        window.EDITOR_CONFIG = {
+            projectId: {{ project.id }},
+            csrfToken: "{{ csrf_token }}",
+        };
+    </script>
+    <script type="module" src="{% static 'projects/js/editor/main.js' %}"></script>
 {% endblock %}
