@@ -6,6 +6,13 @@ from urllib.parse import urlencode
 
 from django.core.management.base import BaseCommand, CommandError
 
+from mcp.apps_ui import (
+    SMARTTEX_WIDGET_URI,
+    build_project_overview_result,
+    project_overview_tool_descriptor,
+    widget_resource_contents,
+)
+
 
 @dataclass
 class APIClient:
@@ -49,6 +56,21 @@ class APIClient:
 
     def list_templates(self):
         return self._call("GET", "/api/templates/")
+
+    def list_project_files(self, project_id: int):
+        return self._call("GET", f"/api/projects/{project_id}/files/")
+
+    def project_overview(self, project_id: int):
+        project = self.get_project(project_id)
+        try:
+            files = self.list_project_files(project_id)
+        except Exception:
+            files = {"files": []}
+        try:
+            compile_payload = self.get_compile_log(project_id)
+        except Exception:
+            compile_payload = {}
+        return build_project_overview_result(project, files, compile_payload, base_url=self.base_url)
 
     def search_project_content(
         self,
@@ -119,8 +141,14 @@ class Command(BaseCommand):
                         "list_templates",
                         "search_project_content",
                         "read_project_window",
+                        "show_project_overview",
                     ],
                     "input_format": {"tool": "name", "args": {}},
+                    "apps": {
+                        "resources": [SMARTTEX_WIDGET_URI],
+                        "tools": [project_overview_tool_descriptor()],
+                        "resource_mime_type": "text/html;profile=mcp-app",
+                    },
                 },
                 ensure_ascii=False,
             )
@@ -137,6 +165,10 @@ class Command(BaseCommand):
 
             try:
                 payload = json.loads(line)
+                if payload.get("resource") == SMARTTEX_WIDGET_URI:
+                    self.stdout.write(json.dumps({"ok": True, "result": widget_resource_contents(client.base_url)}, ensure_ascii=False))
+                    continue
+
                 tool = payload.get("tool")
                 args = payload.get("args", {})
 
@@ -164,6 +196,8 @@ class Command(BaseCommand):
                         bool(args.get("include_main", True)),
                         bool(args.get("include_assets", True)),
                     )
+                elif tool == "show_project_overview":
+                    result = client.project_overview(int(args["project_id"]))
                 elif tool == "read_project_window":
                     result = client.read_project_window(
                         int(args["project_id"]),
