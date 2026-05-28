@@ -446,6 +446,8 @@ class LongdocPackage3Tests(TestCase):
             input_tokens_estimate=120,
             output_tokens_estimate=24,
             latency_ms=180,
+            input_prompt="[system]\nReview diff",
+            output_text='{"recommendation":"allow"}',
         )
         SmallModelUsageLog.objects.create(
             user=self.user,
@@ -467,6 +469,8 @@ class LongdocPackage3Tests(TestCase):
         self.assertEqual(payload["summary"]["total_requests"], 2)
         self.assertEqual(payload["summary"]["total_input_tokens"], 200)
         self.assertEqual(len(payload["items"]), 2)
+        self.assertIn("input_prompt", payload["items"][0])
+        self.assertIn("output_text", payload["items"][0])
         self.assertEqual(payload["items"][0]["project_id"] if "project_id" in payload["items"][0] else None, None)
 
 

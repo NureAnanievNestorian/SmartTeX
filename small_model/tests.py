@@ -16,6 +16,7 @@ from longdoc.session_service import SessionWriteError
 from longdoc.proposal_service import serialize_change_proposal
 
 from .models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelFeatureGrant, UserSmallModelQuota
+from .gemini_provider import GeminiProvider
 from .provider import SmallModelResponse
 from .services.circuit_breaker import CircuitBreakerService
 from .services.compile_log_triage import CompileLogTriageService
@@ -51,6 +52,13 @@ class SmallModelControlLayerTests(TestCase):
         self.assertEqual(review_input.diff_stats["lines_removed"], 500)
         self.assertGreater(len(review_input.deleted_labels_or_refs), 0)
         self.assertLessEqual(len(review_input.unified_diff), 1600)
+
+    def test_gemini_provider_repairs_truncated_json_object(self) -> None:
+        provider = GeminiProvider(api_key="test-key", model_name="gemini-test")
+
+        parsed = provider._try_repair_json_object('{"allowed_ops":["replace"],"clarification_reason":null,')
+
+        self.assertEqual(parsed, {"allowed_ops": ["replace"], "clarification_reason": None})
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=False)
     def test_policy_skips_diff_budget_when_smcl_disabled(self) -> None:

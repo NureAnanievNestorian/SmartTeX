@@ -69,11 +69,20 @@ class GeminiProvider(SmallModelProvider):
                     .get("parts", [{}])[0]
                     .get("text", "")
                 )
+                usage = data.get("usageMetadata") or {}
                 try:
                     parsed = json.loads(raw_text)
                 except json.JSONDecodeError:
-                    return self._error("INVALID_JSON", "Provider returned non-JSON text.", started, raw_text=raw_text)
-                usage = data.get("usageMetadata") or {}
+                    parsed = self._try_repair_json_object(raw_text)
+                    if parsed is None:
+                        return self._error(
+                            "INVALID_JSON",
+                            "Provider returned non-JSON text.",
+                            started,
+                            raw_text=raw_text,
+                            input_tokens=int(usage.get("promptTokenCount") or estimate_tokens(input_payload)),
+                            output_tokens=int(usage.get("candidatesTokenCount") or estimate_tokens(raw_text, source_like=False)),
+                        )
                 return SmallModelResponse(
                     success=True,
                     parsed_json=parsed,
@@ -102,15 +111,79 @@ class GeminiProvider(SmallModelProvider):
     def _latency(self, started: float) -> int:
         return int((time.monotonic() - started) * 1000)
 
-    def _error(self, code: str, message: str, started: float, *, raw_text: str | None = None) -> SmallModelResponse:
+    def _error(
+        self,
+        code: str,
+        message: str,
+        started: float,
+        *,
+        raw_text: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> SmallModelResponse:
         return SmallModelResponse(
             success=False,
             raw_text=raw_text,
             provider_name=self.provider_name,
             model_name=self.model_name,
-            input_tokens_estimate=0,
-            output_tokens_estimate=0,
+            input_tokens_estimate=max(0, int(input_tokens or 0)),
+            output_tokens_estimate=max(0, int(output_tokens or 0)),
             latency_ms=self._latency(started),
             error_code=code,
             error_message=message[:500],
         )
+
+    def _try_repair_json_object(self, raw_text: str) -> dict[str, Any] | None:
+        text = str(raw_text or "").strip()
+        if not text.startswith("{"):
+            return None
+        fixed = self._close_truncated_json(text)
+        if fixed is None:
+            return None
+        try:
+            parsed = json.loads(fixed)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _close_truncated_json(self, text: str) -> str | None:
+        closers: list[str] = []
+        in_string = False
+        escape = False
+        last_structural = -1
+        for idx, ch in enumerate(text):
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == "{":
+                closers.append("}")
+                last_structural = idx
+            elif ch == "[":
+                closers.append("]")
+                last_structural = idx
+            elif ch in "}]":
+                if not closers or closers[-1] != ch:
+                    return None
+                closers.pop()
+                last_structural = idx
+            elif ch == ",":
+                last_structural = idx - 1
+        trimmed = text.rstrip()
+        if in_string:
+            trimmed += '"'
+        trimmed = trimmed.rstrip()
+        if trimmed.endswith(","):
+            trimmed = trimmed[:-1].rstrip()
+        elif last_structural >= 0 and last_structural < len(trimmed) - 1:
+            suffix = trimmed[last_structural + 1:].strip()
+            if suffix == ",":
+                trimmed = trimmed[:last_structural + 1].rstrip()
+        return trimmed + "".join(reversed(closers))

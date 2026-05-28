@@ -204,6 +204,8 @@ def api_project_ai_request_log(request: HttpRequest, project_id: int) -> JsonRes
             "output_tokens_estimate",
             "latency_ms",
             "error_code",
+            "input_prompt",
+            "output_text",
         )
     )
     summary = {

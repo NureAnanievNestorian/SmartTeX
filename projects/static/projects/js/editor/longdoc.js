@@ -166,20 +166,17 @@ function fmtLogDate(iso) {
 }
 
 function renderAiLogDetails(item) {
-  const total = Number(item.input_tokens_estimate || 0) + Number(item.output_tokens_estimate || 0);
+  const prompt = String(item.input_prompt || "").trim();
+  const output = String(item.output_text || "").trim();
   return `
     <div class="ai-log-detail">
       <div class="ai-log-detail-block">
-        <strong>Token details</strong>
-        <div>Total: ${escHtml(String(total))}</div>
-        <div>Input: ${escHtml(String(item.input_tokens_estimate || 0))}</div>
-        <div>Output: ${escHtml(String(item.output_tokens_estimate || 0))}</div>
+        <strong>Input prompt</strong>
+        <div>${prompt ? `<pre class="ai-log-pre">${escHtml(prompt)}</pre>` : "Prompt logging disabled or empty."}</div>
       </div>
       <div class="ai-log-detail-block">
-        <strong>Request</strong>
-        <div>Task: ${escHtml(aiTaskLabel(item.task_type))}</div>
-        <div>Status: ${escHtml(aiStatusLabel(item.status))}</div>
-        <div>Latency: ${escHtml(String(item.latency_ms || 0))} ms</div>
+        <strong>Result</strong>
+        <div>${output ? `<pre class="ai-log-pre">${escHtml(output)}</pre>` : "Result logging disabled or empty."}</div>
       </div>
       <div class="ai-log-detail-block">
         <strong>Provider</strong>
@@ -187,8 +184,11 @@ function renderAiLogDetails(item) {
         <div>${escHtml(item.model_name || "—")}</div>
       </div>
       <div class="ai-log-detail-block">
-        <strong>Error</strong>
-        <div>${escHtml(item.error_code || "None")}</div>
+        <strong>Request metadata</strong>
+        <div>Task: ${escHtml(aiTaskLabel(item.task_type))}</div>
+        <div>Status: ${escHtml(aiStatusLabel(item.status))}</div>
+        <div>Latency: ${escHtml(String(item.latency_ms || 0))} ms</div>
+        <div>Error: ${escHtml(item.error_code || "None")}</div>
       </div>
     </div>
   `;
@@ -1445,7 +1445,7 @@ async function acceptSession() {
     renderSessionBanner();
     closeSessionDiffModal();
     await loadLongdocData();
-    import("./main.js?v=20260529-ui2").then(m => m.loadVersions?.(true)).catch(() => {});
+    import("./main.js?v=20260529-ui3").then(m => m.loadVersions?.(true)).catch(() => {});
   } catch (err) {
     alert(`Не вдалося прийняти зміни: ${err.message}`);
   }

@@ -3320,6 +3320,16 @@
             overflow-wrap: anywhere;
         }
 
+        .ai-log-pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: "JetBrains Mono", monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            color: var(--e-text);
+        }
+
         .ai-log-empty {
             padding: 28px 16px;
             text-align: center;
@@ -3864,5 +3874,5 @@
             sessionReview: {% if session_review %}true{% else %}false{% endif %},
         };
     </script>
-    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui2"></script>
+    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui3"></script>
 {% endblock %}
