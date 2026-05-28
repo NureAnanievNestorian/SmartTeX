@@ -441,6 +441,19 @@ def _project_controlled_mode_enabled(project_id: int) -> bool:
     return bool(longdoc.get("enabled") and longdoc.get("mcp_controlled_access"))
 
 
+def _controlled_source_write_rejection(project_id: int, filename: str | None = None) -> dict[str, Any] | None:
+    if not _project_controlled_mode_enabled(project_id):
+        return None
+    name = filename or _project_main_file_name(project_id)
+    if Path(name).suffix.lower() not in SOURCE_EXTENSIONS:
+        return None
+    return _rejection(
+        "USE_PROPOSAL_WORKFLOW",
+        f"Direct writes to source files are disabled in controlled MCP mode.",
+        "Use propose_document_change to submit the change for user review.",
+    )
+
+
 def _project_longdoc_feature_enabled(project_id: int, feature_name: str) -> bool:
     longdoc = _project_longdoc_meta(project_id)
     return bool(longdoc.get("enabled") and longdoc.get(feature_name))
@@ -1228,14 +1241,9 @@ async def update_project_file(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Replace the whole main source file (`main.tex` or `main.typ`)."""
-    if _project_controlled_mode_enabled(project_id):
-        main_file_name = _project_main_file_name(project_id)
-        if Path(main_file_name).suffix.lower() in SOURCE_EXTENSIONS:
-            return _rejection(
-                "USE_PATCH_TOOLS",
-                f"Full-file overwrite of {main_file_name} is disabled in controlled MCP mode.",
-                "Use update_project_section to rewrite a specific section, patch_file_lines for a line-range edit, or append_to_file for additive changes.",
-            )
+    rejection = _controlled_source_write_rejection(project_id)
+    if rejection:
+        return rejection
     summary = _require_summary(change_summary)
     payload = _call(
         "PUT",
@@ -1328,6 +1336,9 @@ async def create_project_text_file(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Create a new text file (supports nested paths like `chapters/intro.typ`)."""
+    rejection = _controlled_source_write_rejection(project_id, filename)
+    if rejection:
+        return rejection
     summary = _require_summary(change_summary)
     payload = _call(
         "POST",
@@ -1477,6 +1488,9 @@ async def delete_project_file(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Delete a project file or folder."""
+    rejection = _controlled_source_write_rejection(project_id, asset_filename)
+    if rejection:
+        return rejection
     return await delete_project_image_asset(
         project_id=project_id,
         asset_filename=asset_filename,
@@ -1597,6 +1611,9 @@ async def update_project_section(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Replace one section in the main source file."""
+    rejection = _controlled_source_write_rejection(project_id)
+    if rejection:
+        return rejection
     summary = _require_summary(change_summary)
     before_payload = _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
     before_content = str(before_payload.get("content") or "") if isinstance(before_payload, dict) else ""
@@ -1655,6 +1672,9 @@ async def insert_text_at_position(
     """Insert text into the main source file using absolute char `position` or 1-based `line`/`column`."""
     summary = _require_summary(change_summary)
     resolved_file_name = file_name or _project_main_file_name(project_id)
+    rejection = _controlled_source_write_rejection(project_id, resolved_file_name)
+    if rejection:
+        return rejection
     controlled = _project_controlled_mode_enabled(project_id)
     if controlled and not str(anchor_text or "").strip():
         return _rejection(
@@ -1736,6 +1756,9 @@ async def replace_in_project_file(
         dry_run: bool = True,
 ) -> dict[str, Any]:
     """Pattern replace in the main source file; use `dry_run=True` first."""
+    rejection = _controlled_source_write_rejection(project_id)
+    if rejection:
+        return rejection
     main_file_name = _project_main_file_name(project_id)
     file_payload = read_project_file(project_id=project_id, file_name=main_file_name)
     if isinstance(file_payload, dict) and file_payload.get("error"):
@@ -1897,6 +1920,9 @@ async def rewrite_project_window(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Rewrite a line/char window in a target text file (`file_name` defaults to main source)."""
+    rejection = _controlled_source_write_rejection(project_id, file_name)
+    if rejection:
+        return rejection
     summary = _require_summary(change_summary)
     payload = {
         "file_name": file_name or _project_main_file_name(project_id),
@@ -1940,6 +1966,9 @@ async def patch_file_lines(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Replace an inclusive line range with optional anchor verification."""
+    rejection = _controlled_source_write_rejection(project_id, filename)
+    if rejection:
+        return rejection
     summary = _require_summary(change_summary)
     info = _file_line_info(project_id, filename)
     if not info["is_text"]:
@@ -2037,6 +2066,9 @@ async def append_to_file(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Append content at EOF or immediately after a named section."""
+    rejection = _controlled_source_write_rejection(project_id, filename)
+    if rejection:
+        return rejection
     summary = _require_summary(change_summary)
     info = _file_line_info(project_id, filename)
     if not info["is_text"]:
