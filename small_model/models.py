@@ -102,6 +102,8 @@ class SmallModelUsageLog(models.Model):
     output_tokens_estimate = models.PositiveIntegerField(default=0)
     latency_ms = models.PositiveIntegerField(default=0)
     error_code = models.CharField(max_length=80, blank=True)
+    input_prompt = models.TextField(blank=True)
+    output_text = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

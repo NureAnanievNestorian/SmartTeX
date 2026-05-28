@@ -6,6 +6,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+_RETRY_DELAYS = (2.0, 8.0)  # seconds to wait before 1st and 2nd retry on 429
+
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
@@ -56,41 +58,46 @@ class GeminiProvider(SmallModelProvider):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="replace")
-            data = json.loads(body)
-            raw_text = (
-                data.get("candidates", [{}])[0]
-                .get("content", {})
-                .get("parts", [{}])[0]
-                .get("text", "")
-            )
+        for attempt, delay in enumerate((*_RETRY_DELAYS, None)):
             try:
-                parsed = json.loads(raw_text)
+                with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                    body = response.read().decode("utf-8", errors="replace")
+                data = json.loads(body)
+                raw_text = (
+                    data.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", "")
+                )
+                try:
+                    parsed = json.loads(raw_text)
+                except json.JSONDecodeError:
+                    return self._error("INVALID_JSON", "Provider returned non-JSON text.", started, raw_text=raw_text)
+                usage = data.get("usageMetadata") or {}
+                return SmallModelResponse(
+                    success=True,
+                    parsed_json=parsed,
+                    raw_text=raw_text,
+                    provider_name=self.provider_name,
+                    model_name=self.model_name,
+                    input_tokens_estimate=int(usage.get("promptTokenCount") or estimate_tokens(input_payload)),
+                    output_tokens_estimate=int(usage.get("candidatesTokenCount") or estimate_tokens(raw_text, source_like=False)),
+                    latency_ms=self._latency(started),
+                )
+            except TimeoutError:
+                return self._error("TIMEOUT", "Provider request timed out.", started)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429 and delay is not None:
+                    time.sleep(delay)
+                    continue
+                if exc.code == 429:
+                    return self._error("PROVIDER_RATE_LIMITED", "Provider rate limit exceeded.", started)
+                return self._error("PROVIDER_ERROR", f"Provider HTTP error {exc.code}.", started)
             except json.JSONDecodeError:
-                return self._error("INVALID_JSON", "Provider returned non-JSON text.", started, raw_text=raw_text)
-            usage = data.get("usageMetadata") or {}
-            return SmallModelResponse(
-                success=True,
-                parsed_json=parsed,
-                raw_text=raw_text,
-                provider_name=self.provider_name,
-                model_name=self.model_name,
-                input_tokens_estimate=int(usage.get("promptTokenCount") or estimate_tokens(input_payload)),
-                output_tokens_estimate=int(usage.get("candidatesTokenCount") or estimate_tokens(raw_text, source_like=False)),
-                latency_ms=self._latency(started),
-            )
-        except TimeoutError:
-            return self._error("TIMEOUT", "Provider request timed out.", started)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                return self._error("PROVIDER_RATE_LIMITED", "Provider rate limit exceeded.", started)
-            return self._error("PROVIDER_ERROR", f"Provider HTTP error {exc.code}.", started)
-        except json.JSONDecodeError:
-            return self._error("INVALID_JSON", "Provider envelope was not JSON.", started)
-        except Exception as exc:
-            return self._error("PROVIDER_ERROR", str(exc), started)
+                return self._error("INVALID_JSON", "Provider envelope was not JSON.", started)
+            except Exception as exc:
+                return self._error("PROVIDER_ERROR", str(exc), started)
+        return self._error("PROVIDER_RATE_LIMITED", "Provider rate limit exceeded after retries.", started)
 
     def _latency(self, started: float) -> int:
         return int((time.monotonic() - started) * 1000)

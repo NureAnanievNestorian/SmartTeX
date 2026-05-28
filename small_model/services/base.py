@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from django.conf import settings
@@ -10,6 +11,8 @@ from small_model.registry import get_provider
 
 from .quota_service import SmallModelQuotaService
 from .usage_logger import SmallModelUsageLogger
+
+_MAX_LOG_CHARS = 32_000  # cap stored prompt/output to avoid very large rows
 
 
 class SmallModelCallMixin:
@@ -53,6 +56,7 @@ class SmallModelCallMixin:
                 error_code="QUOTA_EXCEEDED",
                 error_message="quota reservation failed",
             )
+        log_prompts = bool(getattr(settings, "SMALL_MODEL_LOG_PROMPTS", False))
         response: SmallModelResponse | None = None
         try:
             try:
@@ -87,4 +91,18 @@ class SmallModelCallMixin:
                     response.input_tokens_estimate,
                     response.output_tokens_estimate,
                 )
-                SmallModelUsageLogger.log(user, project, self.task_type, response)
+                if log_prompts:
+                    try:
+                        raw_input = f"[system]\n{system_instruction}\n\n[user]\n{json.dumps(input_payload, ensure_ascii=False)}"
+                    except Exception:
+                        raw_input = system_instruction
+                    logged_input = raw_input[:_MAX_LOG_CHARS]
+                    logged_output = (response.raw_text or "")[:_MAX_LOG_CHARS]
+                else:
+                    logged_input = ""
+                    logged_output = ""
+                SmallModelUsageLogger.log(
+                    user, project, self.task_type, response,
+                    input_prompt=logged_input,
+                    output_text=logged_output,
+                )

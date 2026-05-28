@@ -1148,7 +1148,12 @@ export function renderSessionBanner() {
   if (editorWrapEl) editorWrapEl.classList.toggle("project-locked", Boolean(isActive));
   if (pdfTabbarEl) pdfTabbarEl.classList.toggle("visible", Boolean(isActive && cfg.sessionReview));
 
-  if (!isActive) return;
+  if (!isActive) {
+    if (cfg.sessionReview) {
+      window.location.href = `/projects/${cfg.projectId}/`;
+    }
+    return;
+  }
 
   if (sessionBannerGoalEl) sessionBannerGoalEl.textContent = session.goal || "";
 

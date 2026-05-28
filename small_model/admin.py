@@ -43,10 +43,18 @@ class UserSmallModelQuotaAdmin(admin.ModelAdmin):
 
 @admin.register(SmallModelUsageLog)
 class SmallModelUsageLogAdmin(admin.ModelAdmin):
-    list_display = ("user", "project", "provider", "model_name", "task_type", "status", "created_at")
+    list_display = ("user", "project", "provider", "model_name", "task_type", "status", "latency_ms", "created_at")
     list_filter = ("provider", "task_type", "status", "created_at")
     search_fields = ("user__username", "user__email", "project__title", "error_code")
     readonly_fields = [field.name for field in SmallModelUsageLog._meta.fields]
+    fieldsets = (
+        (None, {"fields": ("user", "project", "provider", "model_name", "task_type", "status", "error_code", "created_at")}),
+        ("Tokens & Latency", {"fields": ("input_tokens_estimate", "output_tokens_estimate", "latency_ms")}),
+        ("Prompts (logged only when SMALL_MODEL_LOG_PROMPTS=True)", {
+            "classes": ("collapse",),
+            "fields": ("input_prompt", "output_text"),
+        }),
+    )
 
     def has_add_permission(self, request):
         return False

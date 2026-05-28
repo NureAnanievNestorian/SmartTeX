@@ -10,7 +10,15 @@ logger = logging.getLogger(__name__)
 
 class SmallModelUsageLogger:
     @staticmethod
-    def log(user, project, task_type: str, response: SmallModelResponse) -> None:
+    def log(
+        user,
+        project,
+        task_type: str,
+        response: SmallModelResponse,
+        *,
+        input_prompt: str = "",
+        output_text: str = "",
+    ) -> None:
         try:
             status = SmallModelUsageLog.Status.SUCCESS
             if not response.success:
@@ -31,6 +39,8 @@ class SmallModelUsageLogger:
                 output_tokens_estimate=response.output_tokens_estimate,
                 latency_ms=response.latency_ms,
                 error_code=response.error_code or "",
+                input_prompt=input_prompt,
+                output_text=output_text,
             )
         except Exception:
             logger.exception("Failed to write small model usage log")
