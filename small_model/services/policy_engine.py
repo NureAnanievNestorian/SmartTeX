@@ -44,7 +44,8 @@ class ProposalPolicyEngine:
                 smcl_used=bool(compressor or classifier),
                 metadata=metadata,
             )
-        return PolicyResult(action="allow", smcl_used=bool(compressor or classifier), fallback_used=not bool(classifier), metadata=metadata)
+        sanitize_fallback = bool(combined.get("smcl_fallback_used"))
+        return PolicyResult(action="allow", smcl_used=bool(compressor or classifier), fallback_used=not bool(classifier) or sanitize_fallback, metadata=metadata)
 
     @staticmethod
     def post_patch_check(user, project, proposal, diff: str) -> PolicyResult:

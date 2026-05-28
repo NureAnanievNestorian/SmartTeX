@@ -1,9 +1,9 @@
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
 import {
-  initCodeMirror, setContent, switchLanguage,
+  initCodeMirror, switchLanguage,
   focusEditor, jumpToLine, view,
-  saveTabState, hasTabState, activateTab, dropTabState,
+  saveTabState, hasTabState, activateTab, dropTabState, replaceTabContent,
 } from "./cm.js";
 import { loadPdfViewer, pdfEmpty } from "./pdfviewer.js";
 import {
@@ -22,8 +22,8 @@ import {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
-} from "./compile.js?v=20260529-ui5";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui5";
+} from "./compile.js?v=20260529-ui6";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui6";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
@@ -189,7 +189,7 @@ export async function loadMainFile() {
   }
   if (currentFileLbl) currentFileLbl.textContent = s.selectedFile.name;
   s.mainFileContent   = data.content || "";
-  activateTab(s.mainFileName, s.mainFileContent, s.mainFileName);
+  replaceTabContent(s.mainFileName, s.mainFileContent, s.mainFileName);
   s.hasUnsavedChanges = false;
   setSaveHint("Завантажено", "saved");
 }

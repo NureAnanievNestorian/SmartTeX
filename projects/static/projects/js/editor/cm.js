@@ -192,15 +192,17 @@ export function hasTabState(name) {
 
 // Restores cached state if available, otherwise creates fresh state with content.
 // Returns true when cached state was restored (no content fetch needed).
-export function activateTab(name, content, filename) {
+export function activateTab(name, content, filename, forceFresh = false) {
   if (!view) return false;
-  const saved = _tabStates.get(name);
-  if (saved) {
+  const saved = forceFresh ? null : _tabStates.get(name);
+  if (saved && !forceFresh) {
     view.setState(saved);
     return true;
   }
   _settingContent = true;
-  view.setState(EditorState.create({ doc: content || "", extensions: makeExtensions(filename) }));
+  const nextState = EditorState.create({ doc: content || "", extensions: makeExtensions(filename) });
+  _tabStates.set(name, nextState);
+  view.setState(nextState);
   _settingContent = false;
   return false;
 }
@@ -231,7 +233,13 @@ export function setContent(text) {
   if (!view) return;
   _settingContent = true;
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+  if (s.activeTabName) _tabStates.set(s.activeTabName, view.state);
   _settingContent = false;
+}
+
+export function replaceTabContent(name, text, filename) {
+  if (!view || !name) return;
+  activateTab(name, text, filename || name, true);
 }
 
 export function jumpToLine(n, column = 1) {

@@ -1429,7 +1429,7 @@ function switchPdfTab(tab) {
   if (_stagingPdfMode) {
     import("./pdfviewer.js").then(m => m.loadPdfViewer(stagingUrl)).catch(() => {});
   } else {
-    import("./main.js?v=20260529-ui5").then(m => m.refreshLivePdfPreview?.()).catch(() => {});
+    import("./main.js?v=20260529-ui6").then(m => m.refreshLivePdfPreview?.()).catch(() => {});
   }
 }
 
@@ -1444,7 +1444,7 @@ async function acceptSession() {
     s.longdoc.activeSession = null;
     renderSessionBanner();
     closeSessionDiffModal();
-    const main = await import("./main.js?v=20260529-ui5");
+    const main = await import("./main.js?v=20260529-ui6");
     await Promise.all([
       loadLongdocData(),
       main.loadProjectMeta?.(),

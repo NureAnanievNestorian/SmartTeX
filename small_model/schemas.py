@@ -1,3 +1,33 @@
+VALID_EDIT_MODES = frozenset({
+    "micro_edit", "paragraph_edit", "section_edit", "new_section", "compile_fix", "review_only",
+})
+
+VALID_READ_STRATEGIES = frozenset({
+    "file_map_only", "summary_only", "range_only", "target_file_if_under_cap",
+})
+
+VALID_ALLOWED_OPS = frozenset({
+    "find_project_files", "file_line_count", "grep_file", "read_file_lines",
+    "replace_exact", "patch_file_lines", "insert_after_anchor", "insert_before_anchor",
+    "replace_between_anchors", "append_to_file", "propose_document_change",
+    # legacy internal names kept for backward compat
+    "replace_in_project_file", "update_project_section",
+})
+
+VALID_FORBIDDEN_OPS = frozenset({
+    "read_project_file", "update_project_file", "update_project_section",
+    "create_new_file", "delete_file", "rename_file",
+    "rewrite_section", "full_file_overwrite", "arbitrary_shell",
+})
+
+VALID_READ_PLAN_TOOLS = frozenset({
+    "find_project_files", "file_line_count", "grep_file", "read_file_lines",
+})
+
+MAX_CANDIDATE_FILES = 5
+MAX_READ_PLAN_STEPS = 8
+MAX_READ_LINES_CAP = 200
+
 PRE_PROPOSAL_SCHEMA = {
     "type": "object",
     "properties": {
@@ -18,6 +48,32 @@ PRE_PROPOSAL_SCHEMA = {
         "compile_required": {"type": "boolean"},
         "requires_user_clarification": {"type": "boolean"},
         "clarification_reason": {"type": "string", "nullable": True},
+        "candidate_files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+        "read_plan": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string"},
+                    "target_file": {"type": "string", "nullable": True},
+                    "pattern": {"type": "string", "nullable": True},
+                    "context_lines": {"type": "integer", "nullable": True},
+                    "max_lines": {"type": "integer", "nullable": True},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+        "forbidden_reads": {"type": "array", "items": {"type": "string"}},
     },
 }
 

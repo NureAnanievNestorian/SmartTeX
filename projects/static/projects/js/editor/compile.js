@@ -1,6 +1,6 @@
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
-import { getContent } from "./cm.js";
+import { getContent, saveTabState, replaceTabContent } from "./cm.js";
 import { utf8ByteSize } from "./files.js";
 import {
   setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics,
@@ -80,6 +80,7 @@ export async function saveCurrentFile() {
         item.name === s.selectedFile.name ? { ...item, size: savedSize } : item
       );
     }
+    saveTabState(s.selectedFile.name);
     s.hasUnsavedChanges = false;
     setSaveHint("Збережено", "saved");
     setCompileState("out_of_date", "pending");
@@ -204,8 +205,7 @@ async function handleMcpUpdate() {
       try {
         const params = new URLSearchParams({ include_text: "1" });
         const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
-        const { setContent } = await import("./cm.js");
-        setContent(fd.text_content || "");
+        replaceTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
         s.hasUnsavedChanges = false;
       } catch (_) {}
     }
@@ -220,15 +220,14 @@ async function handleProjectUpdate(source = "web") {
   const label = source === "mcp" ? "MCP" : "Проєкт";
   setSaveHint(`${label}: оновлюємо стан…`, "saving");
   try {
-    const main = await import("./main.js?v=20260529-ui5");
+    const main = await import("./main.js?v=20260529-ui6");
     await main.loadProjectMeta();
     await main.loadMainFile();
     if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
       try {
         const params = new URLSearchParams({ include_text: "1" });
         const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
-        const { setContent } = await import("./cm.js");
-        setContent(fd.text_content || "");
+        replaceTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
         s.hasUnsavedChanges = false;
       } catch (_) {}
     }
@@ -236,7 +235,7 @@ async function handleProjectUpdate(source = "web") {
       main.loadFiles(),
       main.loadSections(),
       main.loadVersions(true),
-      import("./longdoc.js?v=20260529-ui5").then(m => m.loadLongdocData()),
+      import("./longdoc.js?v=20260529-ui6").then(m => m.loadLongdocData()),
     ]);
     if (source === "mcp") {
       await pollUntilCompileDone();
@@ -273,8 +272,8 @@ export function connectProjectUpdatesSse() {
       return;
     }
     if (data.type === "proposal_updated") {
-      import("./longdoc.js?v=20260529-ui5").then(m => m.loadLongdocData?.()).catch(() => {});
-      import("./main.js?v=20260529-ui5").then(m => m.loadProjectMeta?.()).catch(() => {});
+      import("./longdoc.js?v=20260529-ui6").then(m => m.loadLongdocData?.()).catch(() => {});
+      import("./main.js?v=20260529-ui6").then(m => m.loadProjectMeta?.()).catch(() => {});
       return;
     }
     if (data.type !== "project_updated") return;

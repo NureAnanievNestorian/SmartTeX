@@ -21,14 +21,16 @@ from .models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallMo
 from .gemini_provider import GeminiProvider
 from .provider import SmallModelResponse
 from .registry import get_provider
+from . import schemas
 from .services.circuit_breaker import CircuitBreakerService
 from .services.compile_log_triage import CompileLogTriageService
 from .services.diff_utils import build_diff_review_input
 from .services.do_not_touch import validate_do_not_touch
+from .services.edit_intent_classifier import sanitize_smcl_edit_intent, CONSERVATIVE_PARAGRAPH
 from .services.policy_engine import ProposalPolicyEngine
-from .services.pre_proposal import PreProposalAnalysisService
+from .services.pre_proposal import PreProposalAnalysisService, _is_safe_path, _sanitize_candidate_files, _sanitize_read_plan
 from .services.quota_service import SmallModelQuotaService
-from .task_types import FEATURE_DIFF_SAFETY_REVIEWER
+from .task_types import FEATURE_DIFF_SAFETY_REVIEWER, FEATURE_EDIT_INTENT_CLASSIFIER
 
 
 class SmallModelControlLayerTests(TestCase):
@@ -380,6 +382,301 @@ class SmallModelControlLayerTests(TestCase):
 
         self.assertEqual(result.action, "allow")
         self.assertEqual(result.risk_level, "medium")
+
+
+class SmclEnumValidationTests(TestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(username="enum-user", password="secret")
+        self.template = Template.objects.create(title="Enum", content="")
+        self.project = Project.objects.create(owner=self.user, title="Enum Project", template=self.template, main_file="main.tex")
+
+    # --- edit_mode ---
+
+    def test_invalid_edit_mode_triggers_fallback(self) -> None:
+        result, fallback_used = sanitize_smcl_edit_intent({"edit_mode": "patch", "read_strategy": "range_only"})
+
+        self.assertTrue(fallback_used)
+        self.assertEqual(result["edit_mode"], CONSERVATIVE_PARAGRAPH["edit_mode"])
+
+    def test_valid_edit_mode_is_accepted(self) -> None:
+        _, fallback_used = sanitize_smcl_edit_intent({"edit_mode": "compile_fix", "read_strategy": "range_only"})
+
+        self.assertFalse(fallback_used)
+
+    def test_all_valid_edit_modes_accepted(self) -> None:
+        for mode in schemas.VALID_EDIT_MODES:
+            _, fallback_used = sanitize_smcl_edit_intent({"edit_mode": mode, "read_strategy": "range_only"})
+            self.assertFalse(fallback_used, msg=f"edit_mode={mode!r} should not trigger fallback")
+
+    # --- read_strategy ---
+
+    def test_full_read_strategy_replaced_with_range_only(self) -> None:
+        result, fallback_used = sanitize_smcl_edit_intent(
+            {"edit_mode": "paragraph_edit", "read_strategy": "full", "recommended_read_strategy": "full_file"}
+        )
+
+        self.assertTrue(fallback_used)
+        self.assertEqual(result["read_strategy"], "range_only")
+        self.assertEqual(result["recommended_read_strategy"], "range_only")
+
+    def test_valid_read_strategies_accepted(self) -> None:
+        for strategy in schemas.VALID_READ_STRATEGIES:
+            result, fallback_used = sanitize_smcl_edit_intent(
+                {"edit_mode": "paragraph_edit", "read_strategy": strategy}
+            )
+            self.assertEqual(result["read_strategy"], strategy, msg=f"strategy={strategy!r} should be preserved")
+
+    def test_target_file_if_under_cap_accepted(self) -> None:
+        result, _ = sanitize_smcl_edit_intent(
+            {"edit_mode": "paragraph_edit", "read_strategy": "target_file_if_under_cap"}
+        )
+
+        self.assertEqual(result["read_strategy"], "target_file_if_under_cap")
+
+    # --- allowed_ops ---
+
+    def test_generic_allowed_ops_stripped(self) -> None:
+        result, fallback_used = sanitize_smcl_edit_intent(
+            {"edit_mode": "paragraph_edit", "read_strategy": "range_only", "allowed_ops": ["edit", "read", "write"]}
+        )
+
+        self.assertTrue(fallback_used)
+        self.assertNotIn("edit", result["allowed_ops"])
+        self.assertNotIn("read", result["allowed_ops"])
+        self.assertNotIn("write", result["allowed_ops"])
+
+    def test_all_generic_allowed_ops_triggers_fallback_ops(self) -> None:
+        result, fallback_used = sanitize_smcl_edit_intent(
+            {"edit_mode": "paragraph_edit", "read_strategy": "range_only", "allowed_ops": ["edit", "delete", "create"]}
+        )
+
+        self.assertTrue(fallback_used)
+        self.assertIn("patch_file_lines", result["allowed_ops"])
+
+    def test_valid_allowed_ops_preserved(self) -> None:
+        valid = ["grep_file", "read_file_lines", "patch_file_lines"]
+        result, fallback_used = sanitize_smcl_edit_intent(
+            {"edit_mode": "paragraph_edit", "read_strategy": "range_only", "allowed_ops": valid}
+        )
+
+        self.assertFalse(fallback_used)
+        self.assertEqual(result["allowed_ops"], valid)
+
+    # --- forbidden_ops ---
+
+    def test_generic_forbidden_ops_stripped(self) -> None:
+        result, fallback_used = sanitize_smcl_edit_intent(
+            {"edit_mode": "paragraph_edit", "read_strategy": "range_only", "forbidden_ops": ["delete", "create"]}
+        )
+
+        self.assertTrue(fallback_used)
+        self.assertNotIn("delete", result["forbidden_ops"])
+
+    # --- budget caps ---
+
+    def test_max_changed_lines_capped_to_budget(self) -> None:
+        result, _ = sanitize_smcl_edit_intent(
+            {"edit_mode": "micro_edit", "read_strategy": "range_only", "max_changed_lines": 999}
+        )
+
+        self.assertEqual(result["max_changed_lines"], 5)
+
+    def test_max_read_lines_capped_to_global_cap(self) -> None:
+        result, _ = sanitize_smcl_edit_intent(
+            {"edit_mode": "paragraph_edit", "read_strategy": "range_only", "max_read_lines": 9999}
+        )
+
+        self.assertLessEqual(result["max_read_lines"], schemas.MAX_READ_LINES_CAP)
+
+    # --- candidate_files ---
+
+    def test_unsafe_path_removed_from_candidate_files(self) -> None:
+        raw = [
+            {"path": "../etc/passwd", "confidence": "high", "reason": "evil"},
+            {"path": "src/lib.typ", "confidence": "high", "reason": "ok"},
+        ]
+        result = _sanitize_candidate_files(raw)
+
+        paths = [f["path"] for f in result]
+        self.assertNotIn("../etc/passwd", paths)
+        self.assertIn("src/lib.typ", paths)
+
+    def test_candidate_files_confidence_normalised(self) -> None:
+        raw = [{"path": "src/lib.typ", "confidence": "SUPER_HIGH", "reason": "x"}]
+        result = _sanitize_candidate_files(raw)
+
+        self.assertEqual(result[0]["confidence"], "low")
+
+    def test_candidate_files_capped_at_max(self) -> None:
+        raw = [{"path": f"file{i}.typ", "confidence": "low", "reason": ""} for i in range(20)]
+        result = _sanitize_candidate_files(raw)
+
+        self.assertLessEqual(len(result), schemas.MAX_CANDIDATE_FILES)
+
+    # --- read_plan ---
+
+    def test_unsafe_tool_removed_from_read_plan(self) -> None:
+        raw = [
+            {"tool": "read_project_file", "target_file": "main.typ", "reason": "bad"},
+            {"tool": "grep_file", "target_file": "src/lib.typ", "pattern": "bibliography(", "reason": "good"},
+        ]
+        result = _sanitize_read_plan(raw)
+
+        tools = [s["tool"] for s in result]
+        self.assertNotIn("read_project_file", tools)
+        self.assertIn("grep_file", tools)
+
+    def test_unsafe_target_file_in_read_plan_nulled(self) -> None:
+        raw = [{"tool": "read_file_lines", "target_file": "../../etc/passwd", "reason": "bad path"}]
+        result = _sanitize_read_plan(raw)
+
+        self.assertIsNone(result[0]["target_file"])
+
+    def test_read_plan_capped_at_max(self) -> None:
+        raw = [{"tool": "grep_file", "target_file": f"file{i}.typ", "pattern": "x", "reason": ""} for i in range(20)]
+        result = _sanitize_read_plan(raw)
+
+        self.assertLessEqual(len(result), schemas.MAX_READ_PLAN_STEPS)
+
+    # --- path safety ---
+
+    def test_is_safe_path_rejects_traversal(self) -> None:
+        self.assertFalse(_is_safe_path("../secret"))
+        self.assertFalse(_is_safe_path("/etc/passwd"))
+        self.assertFalse(_is_safe_path(""))
+
+    def test_is_safe_path_accepts_normal_paths(self) -> None:
+        self.assertTrue(_is_safe_path("src/lib.typ"))
+        self.assertTrue(_is_safe_path("sources.yml"))
+        self.assertTrue(_is_safe_path("csl/dstu-8302-2015.csl"))
+
+    # --- provider fallback ---
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_provider_returning_invalid_json_uses_fallback(self) -> None:
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
+        UserSmallModelFeatureGrant.objects.create(access=access, feature_key=FEATURE_EDIT_INTENT_CLASSIFIER)
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            edit_intent_classifier_enabled=True,
+        )
+        bad_response = SmallModelResponse(success=False, error_code="PROVIDER_ERROR")
+
+        with mock.patch("small_model.services.base.get_provider") as gp:
+            gp.return_value.generate_json.return_value = bad_response
+            result = ProposalPolicyEngine.pre_proposal_check(self.user, self.project, "Fix bibliography error in compile.")
+
+        self.assertEqual(result.action, "allow")
+        self.assertTrue(result.fallback_used)
+        self.assertIn("edit_intent", result.metadata)
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_provider_returning_invalid_edit_mode_uses_fallback(self) -> None:
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
+        UserSmallModelFeatureGrant.objects.create(access=access, feature_key=FEATURE_EDIT_INTENT_CLASSIFIER)
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            edit_intent_classifier_enabled=True,
+        )
+        provider = mock.Mock()
+        provider.provider_name = "mock"
+        provider.model_name = "mock"
+        provider.generate_json.return_value = SmallModelResponse(
+            success=True,
+            parsed_json={"edit_mode": "patch", "read_strategy": "full", "allowed_ops": ["edit", "read"]},
+            provider_name="mock",
+            model_name="mock",
+            input_tokens_estimate=5,
+            output_tokens_estimate=5,
+        )
+
+        with mock.patch("small_model.services.base.get_provider", return_value=provider):
+            result = ProposalPolicyEngine.pre_proposal_check(self.user, self.project, "Change the title.")
+
+        self.assertEqual(result.action, "allow")
+        self.assertTrue(result.fallback_used)
+        edit_intent = result.metadata.get("edit_intent", {})
+        self.assertIn(edit_intent.get("edit_mode"), schemas.VALID_EDIT_MODES)
+        self.assertIn(edit_intent.get("read_strategy"), schemas.VALID_READ_STRATEGIES)
+
+    # --- deterministic compile fast path ---
+
+    def test_compile_request_uses_compile_fix_fast_path(self) -> None:
+        result = PreProposalAnalysisService()._deterministic_fast_path(
+            "Fix the bibliography compile error — sources.yml path is wrong."
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["edit_intent"]["edit_mode"], "compile_fix")
+        self.assertTrue(result["edit_intent"]["compile_required"])
+
+    def test_smcl_fallback_used_false_on_deterministic_fast_path(self) -> None:
+        result = PreProposalAnalysisService()._deterministic_fast_path(
+            "Замінити формулювання «інформаційна система» на «вебзастосунок»."
+        )
+
+        self.assertIsNotNone(result)
+        self.assertFalse(result["smcl_fallback_used"])
+
+    # --- context_compressor includes candidate_files and read_plan ---
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_pre_proposal_returns_candidate_files_and_read_plan(self) -> None:
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
+        UserSmallModelFeatureGrant.objects.create(access=access, feature_key=FEATURE_EDIT_INTENT_CLASSIFIER)
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            edit_intent_classifier_enabled=True,
+        )
+        provider = mock.Mock()
+        provider.provider_name = "mock"
+        provider.model_name = "mock"
+        provider.generate_json.return_value = SmallModelResponse(
+            success=True,
+            parsed_json={
+                "task_brief": "Fix bib path",
+                "edit_mode": "compile_fix",
+                "read_strategy": "range_only",
+                "recommended_read_strategy": "range_only",
+                "max_read_lines": 120,
+                "max_changed_lines": 20,
+                "max_files": 2,
+                "allowed_ops": ["grep_file", "read_file_lines", "patch_file_lines"],
+                "forbidden_ops": ["read_project_file", "update_project_file"],
+                "compile_required": True,
+                "requires_user_clarification": False,
+                "candidate_files": [
+                    {"path": "src/lib.typ", "confidence": "high", "reason": "Contains bibliography() call"},
+                    {"path": "../evil", "confidence": "high", "reason": "evil path"},
+                ],
+                "read_plan": [
+                    {"tool": "grep_file", "target_file": "src/lib.typ", "pattern": "bibliography(", "context_lines": 5, "reason": "Find bib call"},
+                    {"tool": "read_project_file", "target_file": "main.typ", "reason": "bad tool"},
+                ],
+                "forbidden_reads": ["read_project_file", "full_project_read"],
+            },
+            provider_name="mock",
+            model_name="mock",
+            input_tokens_estimate=10,
+            output_tokens_estimate=20,
+        )
+
+        with mock.patch("small_model.services.base.get_provider", return_value=provider):
+            result = ProposalPolicyEngine.pre_proposal_check(self.user, self.project, "Fix bibliography path.")
+
+        compressor = result.metadata.get("context_compressor", {})
+        candidate_paths = [f["path"] for f in compressor.get("candidate_files", [])]
+        self.assertIn("src/lib.typ", candidate_paths)
+        self.assertNotIn("../evil", candidate_paths)
+        read_plan_tools = [s["tool"] for s in compressor.get("read_plan", [])]
+        self.assertIn("grep_file", read_plan_tools)
+        self.assertNotIn("read_project_file", read_plan_tools)
 
 
 class FakeHTTPResponse:
