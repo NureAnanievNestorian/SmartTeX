@@ -39,6 +39,7 @@ from .services import (
     update_context_file,
     update_longdoc_settings,
     update_note_section,
+    update_small_model_settings,
     update_outline_item,
     update_requirement,
     update_section_summary,
@@ -145,8 +146,21 @@ def api_longdoc_settings(request: HttpRequest, project_id: int) -> JsonResponse:
     ):
         if key in body:
             changes[key] = bool(body[key])
+    smcl_changes = {}
+    for key in (
+        "small_model_control_enabled",
+        "context_compressor_enabled",
+        "edit_intent_classifier_enabled",
+        "diff_safety_reviewer_enabled",
+        "compile_log_triage_enabled",
+        "circuit_breaker_enabled",
+    ):
+        if key in body:
+            smcl_changes[key] = bool(body[key])
     try:
         update_longdoc_settings(project, **changes)
+        if smcl_changes:
+            update_small_model_settings(project, **smcl_changes)
     except Exception as exc:
         return _error_response(exc)
     return JsonResponse(_serialize_settings_for_project(project))
@@ -607,7 +621,14 @@ def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonRespo
     proposal = get_active_change_proposal(project)
     if proposal is None:
         return JsonResponse({"error": "NO_ACTIVE_PROPOSAL", "message": "No active suggested change."}, status=404)
-    return JsonResponse({"diff_text": proposal.diff_summary, "proposal_id": proposal.id})
+    return JsonResponse(
+        {
+            "diff_text": proposal.diff_summary,
+            "proposal_id": proposal.id,
+            "smcl_risk_level": proposal.smcl_risk_level or "low",
+            "smcl_warnings": proposal.smcl_warnings or [],
+        }
+    )
 
 
 @csrf_exempt

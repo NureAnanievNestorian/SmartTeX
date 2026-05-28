@@ -271,6 +271,31 @@ def update_longdoc_settings(project, **changes) -> ProjectLongDocSettings:
     return settings_obj
 
 
+def update_small_model_settings(project, **changes):
+    from small_model.models import ProjectSmallModelSettings
+
+    settings_obj, _ = ProjectSmallModelSettings.objects.get_or_create(project=project)
+    mutable_fields = {
+        "small_model_control_enabled",
+        "context_compressor_enabled",
+        "edit_intent_classifier_enabled",
+        "diff_safety_reviewer_enabled",
+        "compile_log_triage_enabled",
+        "circuit_breaker_enabled",
+    }
+    dirty_fields: list[str] = []
+    for field_name, value in changes.items():
+        if field_name not in mutable_fields:
+            raise AttributeError(f"Unknown small model setting: {field_name}")
+        normalized = bool(value)
+        if getattr(settings_obj, field_name) != normalized:
+            setattr(settings_obj, field_name, normalized)
+            dirty_fields.append(field_name)
+    if dirty_fields:
+        settings_obj.save(update_fields=[*dirty_fields, "updated_at"])
+    return settings_obj
+
+
 def serialize_settings(
     settings_obj: ProjectLongDocSettings,
     *,
@@ -278,6 +303,9 @@ def serialize_settings(
     locking_session_id: int | None = None,
     locking_proposal_id: int | None = None,
 ) -> dict[str, Any]:
+    from small_model.models import ProjectSmallModelSettings
+
+    smcl = ProjectSmallModelSettings.objects.filter(project=settings_obj.project).first()
     return {
         "enabled": settings_obj.enabled,
         "context_enabled": settings_obj.context_enabled,
@@ -292,6 +320,14 @@ def serialize_settings(
         "locked": bool(locked),
         "locking_session_id": locking_session_id,
         "locking_proposal_id": locking_proposal_id,
+        "small_model": {
+            "small_model_control_enabled": bool(smcl and smcl.small_model_control_enabled),
+            "context_compressor_enabled": bool(smcl and smcl.context_compressor_enabled),
+            "edit_intent_classifier_enabled": bool(smcl and smcl.edit_intent_classifier_enabled),
+            "diff_safety_reviewer_enabled": bool(smcl and smcl.diff_safety_reviewer_enabled),
+            "compile_log_triage_enabled": bool(smcl and smcl.compile_log_triage_enabled),
+            "circuit_breaker_enabled": bool(smcl and smcl.circuit_breaker_enabled),
+        },
         "updated_at": settings_obj.updated_at.isoformat(),
     }
 

@@ -313,6 +313,7 @@ function renderFeatureOffPanel(root, featureLabel) {
 function renderSettingsPanel() {
   if (!settingsPanelEl) return;
   const settings = s.longdoc.settings || {};
+  const smcl = settings.small_model || {};
   const locked = Boolean(settings.locked);
   const lockText = locked
     ? `Заблоковано запропонованою зміною #${settings.locking_proposal_id || "?"}. Запис заблоковано до завершення перегляду.`
@@ -333,6 +334,14 @@ function renderSettingsPanel() {
       ["ai_sessions_enabled", "Запропоновані зміни", "Підготовка змін у контрольованому перегляді."],
       ["mcp_controlled_access", "Контрольований MCP-доступ", "Обмежити MCP доступом через контрольовані інструменти."],
       ["mcp_write_context", "MCP може писати контекст", "Дозволити MCP створювати та оновлювати контекст."],
+    ]],
+    ["AI Safety Layer", [
+      ["small_model_control_enabled", "Увімкнути safety layer", "Опційна перевірка читання й запропонованих змін."],
+      ["context_compressor_enabled", "Context Compressor", "Стискає контекст перед роботою моделі."],
+      ["edit_intent_classifier_enabled", "Edit Intent Classifier", "Обмежує розмір зміни за наміром."],
+      ["diff_safety_reviewer_enabled", "Diff Safety Reviewer", "Перевіряє diff перед переглядом."],
+      ["compile_log_triage_enabled", "Compile Log Triage", "Класифікує помилки компіляції."],
+      ["circuit_breaker_enabled", "Circuit Breaker", "Зупиняє повторні невдалі спроби."],
     ]],
   ];
   settingsPanelEl.innerHTML = `
@@ -357,7 +366,7 @@ function renderSettingsPanel() {
                   <strong>${escHtml(label)}</strong>
                   <small>${escHtml(hint)}</small>
                 </span>
-                <input type="checkbox" data-setting="${escHtml(field)}" ${settings[field] ? "checked" : ""}>
+                <input type="checkbox" data-setting="${escHtml(field)}" ${(field in smcl ? smcl[field] : settings[field]) ? "checked" : ""}>
               </label>
             `).join("")}
           </div>
@@ -1204,7 +1213,14 @@ async function openSessionDiffModal() {
     const data = await api(`/api/projects/${cfg.projectId}/change-proposals/diff/`, { method: "GET" });
     const session = s.longdoc.activeSession;
     if (subtitle) subtitle.textContent = session ? `Suggested change #${session.id} · ${session.status}` : "";
-    if (content) content.innerHTML = renderDiffContent(data.diff_text || "");
+    const warnings = data.smcl_warnings || session?.smcl_warnings || [];
+    const warningHtml = warnings.length ? `
+      <div class="diff-summary">
+        <span class="diff-chip del">SMCL ${escHtml(data.smcl_risk_level || session?.smcl_risk_level || "medium")}</span>
+        <span>${warnings.map(w => escHtml(w.message || w.code || "")).join(" · ")}</span>
+      </div>
+    ` : "";
+    if (content) content.innerHTML = warningHtml + renderDiffContent(data.diff_text || "");
 
     const footer = document.getElementById("session-diff-footer");
     if (footer && session?.goal) {
@@ -1240,11 +1256,15 @@ async function acceptSession() {
   if (!(await showConfirm("Прийняти запропоновану зміну? Її буде об'єднано з проєктом."))) return;
   try {
     await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, { method: "POST" });
+    if (cfg.sessionReview) {
+      window.location.href = `/projects/${cfg.projectId}/`;
+      return;
+    }
     s.longdoc.activeSession = null;
     renderSessionBanner();
     closeSessionDiffModal();
     await loadLongdocData();
-    import("./main.js").then(m => m.loadVersions?.(true)).catch(() => {});
+    import("./main.js?v=20260528-sse2").then(m => m.loadVersions?.(true)).catch(() => {});
   } catch (err) {
     alert(`Не вдалося прийняти зміни: ${err.message}`);
   }
@@ -1254,6 +1274,10 @@ async function discardSession() {
   if (!(await showConfirm("Відхилити запропоновану зміну? Дію не можна скасувати."))) return;
   try {
     await api(`/api/projects/${cfg.projectId}/change-proposals/discard/`, { method: "POST" });
+    if (cfg.sessionReview) {
+      window.location.href = `/projects/${cfg.projectId}/`;
+      return;
+    }
     s.longdoc.activeSession = null;
     renderSessionBanner();
     closeSessionDiffModal();

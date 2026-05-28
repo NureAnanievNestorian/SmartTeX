@@ -287,6 +287,9 @@ class ChangeProposal(models.Model):
     patch_ops = models.JSONField(default=list, blank=True)
     changed_files = models.JSONField(default=list, blank=True)
     diff_summary = models.TextField(blank=True)
+    smcl_risk_level = models.CharField(max_length=20, blank=True, default="")
+    smcl_warnings = models.JSONField(default=list, blank=True)
+    smcl_metadata = models.JSONField(default=dict, blank=True)
     addresses_outline_item = models.ForeignKey(
         ProjectOutlineItem,
         null=True,

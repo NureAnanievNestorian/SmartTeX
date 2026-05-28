@@ -25,6 +25,8 @@ from .session_service import (
     generate_diff,
     write_to_session,
 )
+from small_model.services.do_not_touch import validate_do_not_touch
+from small_model.services.policy_engine import ProposalPolicyEngine
 
 
 PROPOSAL_PATCH_OPS = {
@@ -249,6 +251,8 @@ def serialize_change_proposal(proposal: ChangeProposal | None) -> dict[str, Any]
         "id": proposal.id,
         "goal": proposal.goal,
         "status": proposal.status,
+        "smcl_risk_level": proposal.smcl_risk_level or "low",
+        "smcl_warnings": proposal.smcl_warnings or [],
         "validation_status": proposal.validation_status,
         "compile_status": proposal.compile_status,
         "compile_error_summary": proposal.compile_error_summary,
@@ -292,7 +296,18 @@ def propose_document_change(
             suggestion="Cancel the failed proposal or ask the user to review/discard the pending suggestion.",
         )
 
+    user = project.owner
+    pre_policy = ProposalPolicyEngine.pre_proposal_check(user, project, str(goal or ""))
+    if pre_policy.action == "stop":
+        raise SessionWriteError(
+            "SMCL_SCOPE_CLARIFICATION_REQUIRED",
+            pre_policy.reason or "Please clarify the requested edit scope.",
+            status_code=409,
+            suggestion="Clarify the scope and submit a narrower proposal.",
+        )
+
     normalized_ops = _normalize_patch_ops(patch_ops)
+    validate_do_not_touch(project, normalized_ops)
     expires_at = timezone.now() + timedelta(hours=_proposal_expire_hours())
     task = ProjectTask.objects.filter(project=project, id=addresses_task_id).first() if addresses_task_id else None
     outline_item = (
@@ -308,6 +323,7 @@ def propose_document_change(
             status=ChangeProposal.Status.VALIDATING,
             validation_status=ChangeProposal.ValidationStatus.PENDING,
             patch_ops=normalized_ops,
+            smcl_metadata=pre_policy.metadata,
             addresses_task=task,
             addresses_outline_item=outline_item,
             created_by=created_by,
@@ -360,21 +376,63 @@ def propose_document_change(
         session.refresh_from_db()
         proposal.compile_status = session.compile_status
         if compile_result.get("status") != "success" or session.compile_status != AISession.CompileStatus.SUCCESS:
+            compile_policy = ProposalPolicyEngine.post_compile_check(user, project, proposal, compile_result)
             proposal.status = ChangeProposal.Status.FAILED_COMPILE
             proposal.compile_error_summary = _serialize_compile_failure(compile_result)
-            proposal.user_visible_message = "The document could not be compiled after applying the changes."
+            proposal.smcl_risk_level = compile_policy.risk_level
+            proposal.smcl_warnings = compile_policy.warnings
+            proposal.smcl_metadata = {**(proposal.smcl_metadata or {}), **compile_policy.metadata}
+            proposal.user_visible_message = (
+                compile_policy.reason
+                if compile_policy.action in {"stop_and_ask_user", "narrow_scope"}
+                else "The document could not be compiled after applying the changes."
+            )
             proposal.save(
                 update_fields=[
                     "status",
                     "compile_status",
                     "compile_error_summary",
                     "user_visible_message",
+                    "smcl_risk_level",
+                    "smcl_warnings",
+                    "smcl_metadata",
                     "updated_at",
                 ]
             )
             return proposal
 
         diff = generate_diff(session)
+        post_policy = ProposalPolicyEngine.post_patch_check(user, project, proposal, diff)
+        proposal.smcl_risk_level = post_policy.risk_level
+        proposal.smcl_warnings = post_policy.warnings
+        proposal.smcl_metadata = {**(proposal.smcl_metadata or {}), **post_policy.metadata}
+        if post_policy.action == "reject":
+            try:
+                discard_session(session)
+            except Exception:
+                pass
+            proposal.status = ChangeProposal.Status.FAILED_VALIDATION
+            proposal.validation_status = ChangeProposal.ValidationStatus.FAILED
+            proposal.graph_validation_errors = [
+                {
+                    "error": "SMCL_DIFF_REJECTED",
+                    "message": post_policy.reason or "Suggested change was rejected by AI safety validation.",
+                }
+            ]
+            proposal.user_visible_message = post_policy.reason or "Suggested change needs a narrower patch."
+            proposal.save(
+                update_fields=[
+                    "status",
+                    "validation_status",
+                    "graph_validation_errors",
+                    "user_visible_message",
+                    "smcl_risk_level",
+                    "smcl_warnings",
+                    "smcl_metadata",
+                    "updated_at",
+                ]
+            )
+            return proposal
         finalize_batch(
             session,
             summary=proposal.goal,
@@ -393,6 +451,9 @@ def propose_document_change(
                 "diff_summary",
                 "changed_files",
                 "user_visible_message",
+                "smcl_risk_level",
+                "smcl_warnings",
+                "smcl_metadata",
                 "updated_at",
             ]
         )
