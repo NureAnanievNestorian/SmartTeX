@@ -1,6 +1,6 @@
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
-import { getContent, saveTabState, replaceTabContent } from "./cm.js?v=20260529-ui6";
+import { getContent, saveTabState, replaceTabContent } from "./cm.js?v=20260529-ui7";
 import { utf8ByteSize } from "./files.js";
 import {
   setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics,
@@ -84,10 +84,10 @@ export async function saveCurrentFile() {
     s.hasUnsavedChanges = false;
     setSaveHint("Збережено", "saved");
     setCompileState("out_of_date", "pending");
-    import("./main.js").then(m => m.renderEditorTabs?.()).catch(() => {});
+    import("./main.js?v=20260529-ui7").then(m => m.renderEditorTabs?.()).catch(() => {});
     const { renderFileList } = await import("./files.js");
     renderFileList();
-    import("./main.js").then(m => m.loadVersions(true)).catch(() => {});
+    import("./main.js?v=20260529-ui7").then(m => m.loadVersions(true)).catch(() => {});
   } catch (err) {
     setSaveHint(`Помилка: ${err.message}`, "error");
   } finally {
@@ -198,7 +198,7 @@ export async function pollUntilCompileDone(maxMs = 45000, stepMs = 600) {
 async function handleMcpUpdate() {
   setSaveHint("Проєкт оновлено через MCP. Оновлюємо…", "saving");
   try {
-    const { loadMainFile, loadFiles, loadVersions } = await import("./main.js");
+    const { loadMainFile, loadFiles, loadVersions } = await import("./main.js?v=20260529-ui7");
     await loadMainFile();
     // Refresh non-main text file if currently open
     if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
@@ -220,7 +220,7 @@ async function handleProjectUpdate(source = "web") {
   const label = source === "mcp" ? "MCP" : "Проєкт";
   setSaveHint(`${label}: оновлюємо стан…`, "saving");
   try {
-    const main = await import("./main.js?v=20260529-ui6");
+    const main = await import("./main.js?v=20260529-ui7");
     await main.loadProjectMeta();
     await main.loadMainFile();
     if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
@@ -235,7 +235,7 @@ async function handleProjectUpdate(source = "web") {
       main.loadFiles(),
       main.loadSections(),
       main.loadVersions(true),
-      import("./longdoc.js?v=20260529-ui6").then(m => m.loadLongdocData()),
+      import("./longdoc.js?v=20260529-ui7").then(m => m.loadLongdocData()),
     ]);
     if (source === "mcp") {
       await pollUntilCompileDone();
@@ -272,8 +272,8 @@ export function connectProjectUpdatesSse() {
       return;
     }
     if (data.type === "proposal_updated") {
-      import("./longdoc.js?v=20260529-ui6").then(m => m.loadLongdocData?.()).catch(() => {});
-      import("./main.js?v=20260529-ui6").then(m => m.loadProjectMeta?.()).catch(() => {});
+      import("./longdoc.js?v=20260529-ui7").then(m => m.loadLongdocData?.()).catch(() => {});
+      import("./main.js?v=20260529-ui7").then(m => m.loadProjectMeta?.()).catch(() => {});
       return;
     }
     if (data.type !== "project_updated") return;

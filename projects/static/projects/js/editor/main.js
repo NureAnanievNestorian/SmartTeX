@@ -4,7 +4,7 @@ import {
   initCodeMirror, switchLanguage,
   focusEditor, jumpToLine, view,
   saveTabState, hasTabState, activateTab, dropTabState, replaceTabContent,
-} from "./cm.js?v=20260529-ui6";
+} from "./cm.js?v=20260529-ui7";
 import { loadPdfViewer, pdfEmpty } from "./pdfviewer.js";
 import {
   setSaveHint, setCompileState, updateEditorTab, openLog,
@@ -22,8 +22,8 @@ import {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
-} from "./compile.js?v=20260529-ui6";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui6";
+} from "./compile.js?v=20260529-ui7";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui7";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 

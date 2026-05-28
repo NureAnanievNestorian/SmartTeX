@@ -4,7 +4,7 @@ import {
   escHtml, fmtBytes, editorWrapEl, assetView, assetBox,
   setSaveHint, updateEditorTab,
 } from "./ui.js";
-import { setContent, switchLanguage, focusEditor, refreshLayout } from "./cm.js?v=20260529-ui6";
+import { setContent, switchLanguage, focusEditor, refreshLayout } from "./cm.js?v=20260529-ui7";
 
 // selectFile is set from main.js to avoid circular dep at init time
 let _selectFile = null;
