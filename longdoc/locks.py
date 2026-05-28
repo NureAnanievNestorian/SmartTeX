@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from projects.models import Project
 
-from .models import AISession
+from .models import AISession, ChangeProposal
 
 
 @dataclass
@@ -22,11 +22,30 @@ def get_locking_session(project: Project) -> AISession | None:
     )
 
 
+def get_locking_change_proposal(project: Project) -> ChangeProposal | None:
+    return (
+        ChangeProposal.objects.filter(project=project, status__in=ChangeProposal.locking_statuses())
+        .order_by("created_at", "id")
+        .first()
+    )
+
+
 def is_project_locked(project: Project) -> bool:
-    return get_locking_session(project) is not None
+    return get_locking_session(project) is not None or get_locking_change_proposal(project) is not None
 
 
 def assert_not_locked(project: Project) -> None:
     session = get_locking_session(project)
     if session is not None:
+        raise ProjectLockedError(project=project, session=session)
+    proposal = get_locking_change_proposal(project)
+    if proposal is not None:
+        session = proposal.internal_session or AISession(
+            project=project,
+            goal=proposal.goal,
+            branch_name="HIDDEN",
+            worktree_path="HIDDEN",
+            status=AISession.Status.ACTIVE,
+            expires_at=proposal.expires_at,
+        )
         raise ProjectLockedError(project=project, session=session)

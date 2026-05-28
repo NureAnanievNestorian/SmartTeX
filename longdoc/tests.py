@@ -19,7 +19,7 @@ from templates_lib.models import Template, TemplateContextFile, TemplateLongDocD
 
 from .audit import audit_assistant_change
 from .locks import ProjectLockedError, assert_not_locked, get_locking_session, is_project_locked
-from .models import AISession, AssistantAuditLog, ProjectLongDocSettings, ProjectOutlineItem, ProjectRequirement, ProjectTask, SectionSummary
+from .models import AISession, AssistantAuditLog, ChangeProposal, ProjectLongDocSettings, ProjectOutlineItem, ProjectRequirement, ProjectTask, SectionSummary
 from .services import (
     DEFAULT_NOTE_SECTION_HEADINGS,
     SAMPLE_CONTEXT_FILENAME,
@@ -1014,6 +1014,116 @@ class AISessionServiceTests(TestCase):
         self.assertEqual(ctx.exception.error, "SESSION_NOT_ACTIVE")
 
 
+class ChangeProposalServiceTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        if not shutil.which("git"):
+            self.skipTest("git executable not available")
+        self.temp_dir = self.enterContext(tempfile.TemporaryDirectory())
+        self.settings_override = override_settings(MEDIA_ROOT=Path(self.temp_dir))
+        self.settings_override.enable()
+        self.user = User.objects.create_user(username="proposal-user", password="secret")
+        self.template = Template.objects.create(title="Blank", content="\\documentclass{article}\n")
+        self.project = _make_project_with_initial_commit(self.user, self.template, title="Proposal Project")
+
+    def tearDown(self) -> None:
+        self.settings_override.disable()
+        super().tearDown()
+
+    def _fake_compile_success(self, session: AISession) -> dict:
+        session.compile_status = AISession.CompileStatus.SUCCESS
+        session.status = AISession.Status.COMPILED
+        session.staging_pdf_path = f".smarttex/sessions/{session.id}/staging.pdf"
+        session.save(update_fields=["compile_status", "status", "staging_pdf_path", "updated_at"])
+        return {"status": "success", "log": "ok", "diagnostics": [], "staging_pdf_path": session.staging_pdf_path}
+
+    def _fake_compile_error(self, session: AISession) -> dict:
+        session.compile_status = AISession.CompileStatus.ERROR
+        session.compile_log = "! Undefined control sequence"
+        session.save(update_fields=["compile_status", "compile_log", "updated_at"])
+        return {"status": "error", "log": "! Undefined control sequence", "diagnostics": []}
+
+    def test_propose_document_change_creates_ready_proposal_without_exposing_session_paths(self) -> None:
+        from longdoc.proposal_service import propose_document_change, serialize_change_proposal
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_success):
+            proposal = propose_document_change(
+                self.project,
+                goal="Revise greeting",
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello World",
+                        "new_text": "Hello Proposal",
+                        "change_summary": "Revise greeting",
+                    }
+                ],
+            )
+
+        self.assertEqual(proposal.status, ChangeProposal.Status.READY_FOR_REVIEW)
+        self.assertEqual(proposal.compile_status, AISession.CompileStatus.SUCCESS)
+        self.assertEqual(proposal.internal_session.status, AISession.Status.READY_FOR_REVIEW)
+        payload = serialize_change_proposal(proposal)
+        self.assertNotIn("branch_name", payload)
+        self.assertNotIn("worktree_path", payload)
+        self.assertNotIn("diff_summary", payload)
+        self.assertTrue(payload["preview_pdf_available"])
+
+    def test_propose_document_change_failed_compile_does_not_become_ready(self) -> None:
+        from longdoc.proposal_service import propose_document_change
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_error):
+            proposal = propose_document_change(
+                self.project,
+                goal="Break compile",
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello World",
+                        "new_text": "\\undefinedcommand",
+                        "change_summary": "Introduce compile error",
+                    }
+                ],
+            )
+
+        self.assertEqual(proposal.status, ChangeProposal.Status.FAILED_COMPILE)
+        self.assertEqual(proposal.compile_status, AISession.CompileStatus.ERROR)
+        self.assertNotEqual(proposal.internal_session.status, AISession.Status.READY_FOR_REVIEW)
+
+    def test_source_file_creation_without_include_is_rejected_before_session_create(self) -> None:
+        from longdoc.proposal_service import propose_document_change
+        from longdoc.session_service import SessionWriteError
+
+        with self.assertRaises(SessionWriteError) as ctx:
+            propose_document_change(
+                self.project,
+                goal="Add orphan chapter",
+                patch_ops=[
+                    {
+                        "filename": "chapter2.tex",
+                        "op": "create_new_file",
+                        "content": "\\section{Chapter 2}\nText\n",
+                    }
+                ],
+            )
+
+        self.assertEqual(ctx.exception.error, "SOURCE_FILE_NOT_INCLUDED")
+        self.assertEqual(ChangeProposal.objects.count(), 0)
+
+    def test_document_graph_reports_orphan_source_file(self) -> None:
+        from longdoc.document_graph import inspect_document_graph
+        from projects.services import project_dir as get_project_dir
+
+        (get_project_dir(self.project) / "orphan.tex").write_text("\\section{Orphan}\n", encoding="utf-8")
+
+        graph = inspect_document_graph(self.project)
+
+        self.assertIn("orphan.tex", graph.orphan_source_files)
+        self.assertTrue(any(issue.type == "orphan_source_file" for issue in graph.errors))
+
+
 class AISessionReviewTests(TestCase):
     """Package 5B: accept/discard workflow, UI lock, version audit trail."""
 
@@ -1032,6 +1142,12 @@ class AISessionReviewTests(TestCase):
         self.settings_override.disable()
         super().tearDown()
 
+    def _mark_session_compiled(self, session: AISession) -> None:
+        session.compile_status = AISession.CompileStatus.SUCCESS
+        session.staging_pdf_path = f".smarttex/sessions/{session.id}/staging.pdf"
+        session.status = AISession.Status.COMPILED
+        session.save(update_fields=["compile_status", "staging_pdf_path", "status", "updated_at"])
+
     # ── finalize_batch ───────────────────────────────────────────────────
 
     def test_finalize_batch_creates_aibatch_and_changes(self) -> None:
@@ -1041,6 +1157,7 @@ class AISessionReviewTests(TestCase):
         session = create_session(self.project, goal="Test batch")
         write_to_session(session, "main.tex", op="replace_text",
                          old_text="Hello World", new_text="Hello Batch")
+        self._mark_session_compiled(session)
 
         batch = finalize_batch(session, summary="Added chapter intro")
 
@@ -1059,6 +1176,7 @@ class AISessionReviewTests(TestCase):
         session = create_session(self.project, goal="Stats check")
         write_to_session(session, "main.tex", op="replace_text",
                          old_text="Hello World", new_text="New line\nAnother line")
+        self._mark_session_compiled(session)
 
         batch = finalize_batch(session, summary="Two-line change")
 
@@ -1073,6 +1191,7 @@ class AISessionReviewTests(TestCase):
         session = create_session(self.project, goal="Status check")
         write_to_session(session, "main.tex", op="replace_text",
                          old_text="Hello World", new_text="Ready content")
+        self._mark_session_compiled(session)
 
         finalize_batch(session, summary="Summary")
 
@@ -1091,10 +1210,22 @@ class AISessionReviewTests(TestCase):
         )
         write_to_session(session, "main.tex", op="replace_text",
                          old_text="Hello World", new_text="Intro text")
+        self._mark_session_compiled(session)
 
         batch = finalize_batch(session, summary="Done", task_ids=[task.id])
 
         self.assertIn(task, batch.tasks_completed.all())
+
+    def test_finalize_batch_rejects_uncompiled_session(self) -> None:
+        from longdoc.session_service import SessionWriteError, create_session, finalize_batch, write_to_session
+
+        session = create_session(self.project, goal="Reject uncompiled")
+        write_to_session(session, "main.tex", op="replace_text",
+                         old_text="Hello World", new_text="Not compiled")
+
+        with self.assertRaises(SessionWriteError) as ctx:
+            finalize_batch(session, summary="Should fail")
+        self.assertEqual(ctx.exception.error, "COMPILE_REQUIRED")
 
     # ── accept_session ───────────────────────────────────────────────────
 
@@ -1161,6 +1292,7 @@ class AISessionReviewTests(TestCase):
         )
         write_to_session(session, "main.tex", op="replace_text",
                          old_text="Hello World", new_text="Section 1 done")
+        self._mark_session_compiled(session)
         finalize_batch(session, summary="Completed section", task_ids=[task.id])
 
         accept_session(session, user=self.user)
@@ -1200,84 +1332,107 @@ class AISessionReviewTests(TestCase):
 
     # ── API endpoints ────────────────────────────────────────────────────
 
-    def test_api_ai_session_returns_active_session(self) -> None:
-        from longdoc.session_service import create_session
-
-        create_session(self.project, goal="API check")
+    def test_legacy_ai_session_endpoint_is_removed(self) -> None:
         client = Client()
         client.force_login(self.user)
 
         resp = client.get(f"/api/projects/{self.project.id}/ai-session/")
 
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertIn("session", data)
-        self.assertIsNotNone(data["session"])
-        self.assertEqual(data["session"]["status"], "active")
+        self.assertEqual(resp.status_code, 404)
 
-    def test_api_ai_session_returns_none_when_no_active_session(self) -> None:
-        client = Client()
-        client.force_login(self.user)
-
-        resp = client.get(f"/api/projects/{self.project.id}/ai-session/")
-
-        self.assertEqual(resp.status_code, 200)
-        self.assertIsNone(resp.json()["session"])
-
-    def test_api_ai_session_accept_requires_login(self) -> None:
+    def test_api_change_proposal_accept_requires_login(self) -> None:
         from longdoc.session_service import create_session, write_to_session
 
         session = create_session(self.project, goal="Auth check")
         write_to_session(session, "main.tex", op="replace_text",
                          old_text="Hello World", new_text="Auth check")
+        self._mark_session_compiled(session)
+        ChangeProposal.objects.create(
+            project=self.project,
+            goal=session.goal,
+            status=ChangeProposal.Status.READY_FOR_REVIEW,
+            validation_status=ChangeProposal.ValidationStatus.PASSED,
+            compile_status=AISession.CompileStatus.SUCCESS,
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
         client = Client()
 
-        resp = client.post(f"/api/projects/{self.project.id}/ai-session/accept/")
+        resp = client.post(f"/api/projects/{self.project.id}/change-proposals/accept/")
 
         self.assertIn(resp.status_code, (302, 403))
 
-    def test_api_ai_session_accept_accepts_session(self) -> None:
+    def test_api_change_proposal_accept_accepts_proposal(self) -> None:
         from longdoc.session_service import create_session, write_to_session
 
         session = create_session(self.project, goal="HTTP accept")
         write_to_session(session, "main.tex", op="replace_text",
                          old_text="Hello World", new_text="Via HTTP accept")
+        self._mark_session_compiled(session)
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            goal=session.goal,
+            status=ChangeProposal.Status.READY_FOR_REVIEW,
+            validation_status=ChangeProposal.ValidationStatus.PASSED,
+            compile_status=AISession.CompileStatus.SUCCESS,
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
         client = Client()
         client.force_login(self.user)
 
         resp = client.post(
-            f"/api/projects/{self.project.id}/ai-session/accept/",
+            f"/api/projects/{self.project.id}/change-proposals/accept/",
             content_type="application/json",
         )
 
         self.assertEqual(resp.status_code, 200)
         session.refresh_from_db()
+        proposal.refresh_from_db()
         self.assertEqual(session.status, AISession.Status.ACCEPTED)
+        self.assertEqual(proposal.status, ChangeProposal.Status.ACCEPTED)
 
-    def test_api_ai_session_discard_discards_session(self) -> None:
+    def test_api_change_proposal_discard_discards_proposal(self) -> None:
         from longdoc.session_service import create_session
 
         session = create_session(self.project, goal="HTTP discard")
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            goal=session.goal,
+            status=ChangeProposal.Status.FAILED_COMPILE,
+            compile_status=AISession.CompileStatus.ERROR,
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
         client = Client()
         client.force_login(self.user)
 
         resp = client.post(
-            f"/api/projects/{self.project.id}/ai-session/discard/",
+            f"/api/projects/{self.project.id}/change-proposals/discard/",
             content_type="application/json",
         )
 
         self.assertEqual(resp.status_code, 200)
         session.refresh_from_db()
+        proposal.refresh_from_db()
         self.assertEqual(session.status, AISession.Status.DISCARDED)
+        self.assertEqual(proposal.status, ChangeProposal.Status.DISCARDED)
 
-    def test_api_ai_session_staging_pdf_returns_404_when_no_pdf(self) -> None:
+    def test_api_change_proposal_preview_pdf_returns_404_when_no_pdf(self) -> None:
         from longdoc.session_service import create_session
 
-        create_session(self.project, goal="No staging PDF")
+        session = create_session(self.project, goal="No preview PDF")
+        ChangeProposal.objects.create(
+            project=self.project,
+            goal=session.goal,
+            status=ChangeProposal.Status.FAILED_COMPILE,
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
         client = Client()
         client.force_login(self.user)
 
-        resp = client.get(f"/api/projects/{self.project.id}/ai-session/staging-pdf/")
+        resp = client.get(f"/api/projects/{self.project.id}/change-proposals/preview-pdf/")
 
         self.assertEqual(resp.status_code, 404)
 
@@ -1301,29 +1456,17 @@ class AISessionReviewTests(TestCase):
         data = resp.json()
         self.assertEqual(data["error"], "PROJECT_LOCKED")
 
-    def test_api_ai_session_finalize_creates_batch(self) -> None:
-        import json as _json
-        from longdoc.session_service import create_session, write_to_session
-        from longdoc.models import AIBatch
-
-        session = create_session(self.project, goal="Finalize via API")
-        write_to_session(session, "main.tex", op="replace_text",
-                         old_text="Hello World", new_text="Finalized via API")
+    def test_legacy_ai_session_finalize_endpoint_is_removed(self) -> None:
         client = Client()
         client.force_login(self.user)
 
         resp = client.post(
             f"/api/projects/{self.project.id}/ai-session/finalize/",
-            data=_json.dumps({"summary": "API-driven finalize"}),
+            data=json.dumps({"summary": "removed"}),
             content_type="application/json",
         )
 
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertIn("batch_id", data)
-        self.assertTrue(AIBatch.objects.filter(id=data["batch_id"]).exists())
-        session.refresh_from_db()
-        self.assertEqual(session.status, AISession.Status.READY_FOR_REVIEW)
+        self.assertEqual(resp.status_code, 404)
 
 
 class TemplateInitializationTests(TestCase):
@@ -1649,9 +1792,9 @@ class VerificationFixTests(TestCase):
         self.assertEqual(response.status_code, 423)
         self.assertEqual(response.json()["error"], "PROJECT_LOCKED")
 
-    # ── Session create via API (POST /ai-session/) ───────────────────────
+    # ── Legacy session API removed ───────────────────────────────────────
 
-    def test_api_ai_session_post_creates_session(self) -> None:
+    def test_api_ai_session_post_is_removed(self) -> None:
         from longdoc.services import enable_longdoc
 
         enable_longdoc(self.project)
@@ -1662,68 +1805,9 @@ class VerificationFixTests(TestCase):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 201)
-        payload = response.json()
-        self.assertIn("session", payload)
-        self.assertEqual(payload["session"]["goal"], "Write introduction")
-        self.assertEqual(payload["session"]["status"], "active")
+        self.assertEqual(response.status_code, 404)
 
-    def test_api_ai_session_post_returns_423_when_already_locked(self) -> None:
-        from longdoc.services import enable_longdoc
-        from longdoc.session_service import create_session
-
-        enable_longdoc(self.project)
-        create_session(self.project, goal="First session")
-
-        response = self.client.post(
-            f"/api/projects/{self.project.id}/ai-session/",
-            data=json.dumps({"goal": "Second session"}),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 423)
-
-    def test_api_ai_session_post_returns_403_when_ai_sessions_disabled(self) -> None:
-        from longdoc.services import enable_longdoc
-
-        settings_obj = enable_longdoc(self.project)
-        settings_obj.ai_sessions_enabled = False
-        settings_obj.save()
-
-        response = self.client.post(
-            f"/api/projects/{self.project.id}/ai-session/",
-            data=json.dumps({"goal": "Should fail"}),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 403)
-
-    # ── Session write via API (POST /ai-session/write/) ──────────────────
-
-    def test_api_ai_session_write_patches_file(self) -> None:
-        from longdoc.services import enable_longdoc
-        from longdoc.session_service import create_session
-
-        enable_longdoc(self.project)
-        create_session(self.project, goal="Write intro")
-
-        response = self.client.post(
-            f"/api/projects/{self.project.id}/ai-session/write/",
-            data=json.dumps({
-                "filename": "main.tex",
-                "op": "replace_text",
-                "old_text": "Hello World",
-                "new_text": "Updated content",
-                "change_summary": "Update intro",
-            }),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["filename"], "main.tex")
-
-    def test_api_ai_session_write_returns_404_when_no_session(self) -> None:
+    def test_api_ai_session_write_is_removed(self) -> None:
         response = self.client.post(
             f"/api/projects/{self.project.id}/ai-session/write/",
             data=json.dumps({"filename": "main.tex", "op": "append_to_file", "text": "x", "change_summary": "test"}),
@@ -1731,28 +1815,31 @@ class VerificationFixTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    # ── Overview includes active_session ─────────────────────────────────
+    # ── Overview includes active_proposal ────────────────────────────────
 
-    def test_overview_payload_includes_active_session_when_session_exists(self) -> None:
-        from longdoc.services import enable_longdoc
-        from longdoc.session_service import create_session
-
-        enable_longdoc(self.project)
-        session = create_session(self.project, goal="Active session test")
-
-        payload = overview_payload(self.project)
-
-        self.assertIn("active_session", payload)
-        self.assertIsNotNone(payload["active_session"])
-        self.assertEqual(payload["active_session"]["id"], session.id)
-        self.assertEqual(payload["active_session"]["status"], "active")
-
-    def test_overview_payload_active_session_is_none_when_no_session(self) -> None:
+    def test_overview_payload_includes_active_proposal_when_proposal_exists(self) -> None:
         from longdoc.services import enable_longdoc
 
         enable_longdoc(self.project)
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            goal="Active proposal test",
+            status=ChangeProposal.Status.FAILED_VALIDATION,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        payload = overview_payload(self.project)
+
+        self.assertIn("active_proposal", payload)
+        self.assertIsNotNone(payload["active_proposal"])
+        self.assertEqual(payload["active_proposal"]["id"], proposal.id)
+        self.assertEqual(payload["active_proposal"]["status"], ChangeProposal.Status.FAILED_VALIDATION)
+
+    def test_overview_payload_active_proposal_is_none_when_no_proposal(self) -> None:
+        from longdoc.services import enable_longdoc
+
+        enable_longdoc(self.project)
 
         payload = overview_payload(self.project)
 
-        self.assertIn("active_session", payload)
-        self.assertIsNone(payload["active_session"])
+        self.assertIn("active_proposal", payload)
+        self.assertIsNone(payload["active_proposal"])

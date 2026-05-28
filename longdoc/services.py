@@ -271,7 +271,13 @@ def update_longdoc_settings(project, **changes) -> ProjectLongDocSettings:
     return settings_obj
 
 
-def serialize_settings(settings_obj: ProjectLongDocSettings, *, locked: bool = False, locking_session_id: int | None = None) -> dict[str, Any]:
+def serialize_settings(
+    settings_obj: ProjectLongDocSettings,
+    *,
+    locked: bool = False,
+    locking_session_id: int | None = None,
+    locking_proposal_id: int | None = None,
+) -> dict[str, Any]:
     return {
         "enabled": settings_obj.enabled,
         "context_enabled": settings_obj.context_enabled,
@@ -285,6 +291,7 @@ def serialize_settings(settings_obj: ProjectLongDocSettings, *, locked: bool = F
         "mcp_write_context": settings_obj.mcp_write_context,
         "locked": bool(locked),
         "locking_session_id": locking_session_id,
+        "locking_proposal_id": locking_proposal_id,
         "updated_at": settings_obj.updated_at.isoformat(),
     }
 
@@ -1350,10 +1357,12 @@ def initialize_longdoc_from_template(project, template) -> ProjectLongDocSetting
 
 
 def overview_payload(project) -> dict[str, Any]:
-    from .locks import get_locking_session
+    from .locks import get_locking_change_proposal, get_locking_session
+    from .proposal_service import serialize_change_proposal
     settings_obj, _ = get_or_create_longdoc_settings(project)
     sync_context_file_records(project)
     locking_session = get_locking_session(project)
+    locking_proposal = get_locking_change_proposal(project)
     context_items = list(ProjectContextFile.objects.filter(project=project).order_by("filename"))
     outline_items = list(ProjectOutlineItem.objects.filter(project=project).order_by("order", "id"))
     tasks = list(ProjectTask.objects.filter(project=project).order_by("status", "-updated_at"))
@@ -1425,10 +1434,15 @@ def overview_payload(project) -> dict[str, Any]:
                 "id": locking_session.id,
                 "goal": locking_session.goal,
                 "status": locking_session.status,
-                "branch_name": locking_session.branch_name,
                 "expires_at": locking_session.expires_at.isoformat(),
             }
-            if locking_session is not None
+            if locking_session is not None and locking_proposal is None
             else None
+        ),
+        "active_proposal": serialize_change_proposal(locking_proposal),
+        "writing_workflow_guidance": (
+            "Before proposing a large text change, check the outline for missing or stub sections, "
+            "use line-targeted reads to locate the edit area, and inspect the document graph before "
+            "creating new source files."
         ),
     }

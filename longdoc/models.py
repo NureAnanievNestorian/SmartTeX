@@ -6,6 +6,13 @@ from projects.models import Project
 
 
 LOCKING_AI_SESSION_STATUSES = ("active", "compiled", "ready_for_review")
+LOCKING_CHANGE_PROPOSAL_STATUSES = (
+    "draft",
+    "validating",
+    "failed_validation",
+    "failed_compile",
+    "ready_for_review",
+)
 
 
 class ProjectLongDocSettings(models.Model):
@@ -247,6 +254,86 @@ class AISession(models.Model):
     @classmethod
     def locking_statuses(cls) -> tuple[str, ...]:
         return LOCKING_AI_SESSION_STATUSES
+
+
+class ChangeProposal(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        VALIDATING = "validating", "Validating"
+        FAILED_VALIDATION = "failed_validation", "Failed Validation"
+        FAILED_COMPILE = "failed_compile", "Failed Compile"
+        READY_FOR_REVIEW = "ready_for_review", "Ready for Review"
+        ACCEPTED = "accepted", "Accepted"
+        DISCARDED = "discarded", "Discarded"
+        EXPIRED = "expired", "Expired"
+
+    class ValidationStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PASSED = "passed", "Passed"
+        FAILED = "failed", "Failed"
+
+    class CreatedBy(models.TextChoices):
+        MCP = "mcp", "MCP"
+        USER = "user", "User"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="change_proposals")
+    goal = models.TextField()
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.VALIDATING)
+    validation_status = models.CharField(max_length=20, choices=ValidationStatus.choices, default=ValidationStatus.PENDING)
+    compile_status = models.CharField(max_length=20, choices=AISession.CompileStatus.choices, default=AISession.CompileStatus.NOT_RUN)
+    compile_error_summary = models.TextField(blank=True)
+    graph_validation_errors = models.JSONField(default=list, blank=True)
+    user_visible_message = models.TextField(blank=True)
+    patch_ops = models.JSONField(default=list, blank=True)
+    changed_files = models.JSONField(default=list, blank=True)
+    diff_summary = models.TextField(blank=True)
+    addresses_outline_item = models.ForeignKey(
+        ProjectOutlineItem,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="change_proposals",
+    )
+    addresses_task = models.ForeignKey(
+        ProjectTask,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="change_proposals",
+    )
+    internal_session = models.OneToOneField(
+        AISession,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="change_proposal",
+    )
+    created_by = models.CharField(max_length=20, choices=CreatedBy.choices, default=CreatedBy.MCP)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    discarded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["expires_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project"],
+                condition=Q(status__in=LOCKING_CHANGE_PROPOSAL_STATUSES),
+                name="longdoc_one_locking_change_proposal_per_project",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.status}:{self.goal[:40]}"
+
+    @classmethod
+    def locking_statuses(cls) -> tuple[str, ...]:
+        return LOCKING_CHANGE_PROPOSAL_STATUSES
 
 
 class AIBatch(models.Model):

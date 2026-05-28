@@ -45,6 +45,8 @@ MCP_MAX_GREP_MATCHES = max(1, int(os.getenv("MCP_MAX_GREP_MATCHES", "20")))
 MCP_MAX_GREP_CONTEXT = max(0, int(os.getenv("MCP_MAX_GREP_CONTEXT", "10")))
 MCP_MAX_PATCH_LINES = max(1, int(os.getenv("MCP_MAX_PATCH_LINES", "50")))
 MCP_MAX_SESSION_FILES = max(1, int(os.getenv("MCP_MAX_SESSION_FILES", "5")))
+MCP_MAX_PROPOSAL_LINES = max(1, int(os.getenv("MCP_MAX_PROPOSAL_LINES", "500")))
+MCP_MAX_NEW_FILE_LINES = max(1, int(os.getenv("MCP_MAX_NEW_FILE_LINES", "200")))
 MCP_MAX_FULL_READ_BYTES = max(1024, int(os.getenv("MCP_MAX_FULL_READ_BYTES", "65536")))
 MCP_SESSION_READ_BUDGET = max(1, int(os.getenv("MCP_SESSION_READ_BUDGET", "2000")))
 MCP_READ_BUDGET_HARD = os.getenv("MCP_READ_BUDGET_HARD", "false").lower() in {"1", "true", "yes"}
@@ -2300,12 +2302,134 @@ def get_longdoc_overview(project_id: int) -> dict[str, Any]:
             "max_grep_matches": MCP_MAX_GREP_MATCHES,
             "session_read_budget": MCP_SESSION_READ_BUDGET,
             "max_session_files": MCP_MAX_SESSION_FILES,
+            "max_proposal_lines": MCP_MAX_PROPOSAL_LINES,
+            "max_new_file_lines": MCP_MAX_NEW_FILE_LINES,
         })
         payload.setdefault("resources", [
             _resource_uri(project_id, name)
-            for name in ("overview", "context", "outline", "tasks", "notes", "summaries", "requirements", "ai-session")
+            for name in ("overview", "context", "outline", "tasks", "notes", "summaries", "requirements", "change-proposal")
         ])
     return payload
+
+
+@mcp.tool
+def get_project_overview(project_id: int) -> dict[str, Any]:
+    """Return project Writing Assistant context and active suggested-change status.
+
+    This is the proposal-oriented overview. It does not expose session branches,
+    worktrees, or staging filesystem paths.
+    """
+    return get_longdoc_overview(project_id)
+
+
+@mcp.tool
+def inspect_document_graph(project_id: int) -> dict[str, Any]:
+    """Inspect the compiled document graph: main file, reachable sources, missing includes, and orphan sources."""
+    return _call_allow_json_errors("GET", f"/api/projects/{project_id}/document-graph/")
+
+
+@mcp.tool
+def find_edit_targets(
+        project_id: int,
+        query: str,
+        filename: str | None = None,
+        max_results: int = 8,
+) -> dict[str, Any]:
+    """Find candidate files and line ranges for a requested edit target."""
+    if not query.strip():
+        raise ValueError("query is required")
+    results: list[dict[str, Any]] = []
+    sections = list_project_sections(project_id=project_id, compact=True)
+    for section in sections.get("sections", []) if isinstance(sections, dict) else []:
+        if not isinstance(section, dict):
+            continue
+        title = str(section.get("title") or "")
+        file_name = str(section.get("file_name") or _project_main_file_name(project_id))
+        if filename and file_name != filename:
+            continue
+        if query.lower() in title.lower():
+            results.append(
+                {
+                    "kind": "section",
+                    "filename": file_name,
+                    "title": title,
+                    "start_line": section.get("start_line"),
+                    "end_line": section.get("end_line"),
+                    "confidence": "high",
+                }
+            )
+    if len(results) < max_results:
+        search = search_project_content(
+            project_id=project_id,
+            query=query,
+            filename=filename,
+            max_results=max(1, int(max_results) - len(results)),
+        )
+        for match in search.get("matches", []) if isinstance(search, dict) else []:
+            if isinstance(match, dict):
+                results.append(
+                    {
+                        "kind": "text_match",
+                        "filename": match.get("file_name") or match.get("filename"),
+                        "line": match.get("line") or match.get("line_number"),
+                        "preview": match.get("preview") or match.get("line_text"),
+                        "confidence": "medium",
+                    }
+                )
+    return {"query": query, "targets": results[: max(1, int(max_results))]}
+
+
+@mcp.tool
+async def propose_document_change(
+        project_id: int,
+        goal: str,
+        patch_ops: list[dict[str, Any]],
+        ctx: Context,
+        addresses_task_id: int | None = None,
+        addresses_outline_item_id: int | None = None,
+) -> dict[str, Any]:
+    """Submit a suggested document change.
+
+    SmartTeX creates the hidden staging session, applies patches, validates the
+    document graph, compiles, creates the review diff, and returns proposal status.
+    Do not call legacy AI-session tools for normal writing changes.
+    """
+    payload: dict[str, Any] = {
+        "goal": goal,
+        "patch_ops": list(patch_ops or []),
+    }
+    if addresses_task_id is not None:
+        payload["addresses_task_id"] = int(addresses_task_id)
+    if addresses_outline_item_id is not None:
+        payload["addresses_outline_item_id"] = int(addresses_outline_item_id)
+    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/change-proposals/", payload)
+    if isinstance(result, dict) and not result.get("error"):
+        await _notify_longdoc_updates(ctx, project_id, "overview", "change-proposal")
+    return result
+
+
+@mcp.tool
+def get_change_proposal_status(project_id: int) -> dict[str, Any]:
+    """Return the active suggested-change status without exposing session internals."""
+    return _call_allow_json_errors("GET", f"/api/projects/{project_id}/change-proposals/status/")
+
+
+@mcp.tool
+async def cancel_change_proposal(project_id: int, ctx: Context) -> dict[str, Any]:
+    """Cancel a draft or failed suggested change.
+
+    Ready-for-review proposals are user-owned and must be accepted or discarded in the web UI.
+    """
+    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/change-proposals/cancel/")
+    if isinstance(result, dict) and not result.get("error"):
+        await _notify_longdoc_updates(ctx, project_id, "overview", "change-proposal")
+    return result
+
+
+@mcp.tool
+def preview_patch(project_id: int, patch_op: dict[str, Any]) -> dict[str, Any]:
+    """Dry-run one proposal patch operation against the live project and return a unified diff preview."""
+    return _call_allow_json_errors("POST", f"/api/projects/{project_id}/preview-patch/", patch_op)
 
 
 @mcp.tool
@@ -2722,151 +2846,16 @@ async def update_requirement_coverage(
     return payload if isinstance(payload, dict) else {"detail": "updated"}
 
 
-@mcp.tool
-def get_active_session(project_id: int) -> dict[str, Any]:
-    """Return the active AI session for a project, or null if none exists.
-
-    Use this before calling create_ai_session to check if one is already open.
-    """
-    return _call_allow_json_errors("GET", f"/api/projects/{project_id}/ai-session/")
-
-
-@mcp.tool
-async def create_ai_session(
-        project_id: int,
-        goal: str,
-        ctx: Context,
-        expires_hours: int | None = None,
-) -> dict[str, Any]:
-    """Create a new AI session for a project.
-
-    The session creates an isolated git worktree. All file writes must use
-    write_to_session. Only one session can be active per project.
-    Call get_active_session first to avoid a 423 conflict error.
-
-    IMPORTANT: You cannot accept or discard sessions — only a logged-in user
-    can do that through the web UI. Your role is to prepare changes for review.
-    """
-    payload: dict[str, Any] = {"goal": goal}
-    if expires_hours is not None:
-        payload["expires_hours"] = int(expires_hours)
-    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/", payload)
-    if isinstance(result, dict) and not result.get("error"):
-        await _notify_longdoc_updates(ctx, project_id, "overview", "ai-session")
-    return result
-
-
-@mcp.tool
-async def write_to_session(
-        project_id: int,
-        filename: str,
-        op: str,
-        change_summary: str,
-        ctx: Context,
-        content: str | None = None,
-        start_line: int | None = None,
-        end_line: int | None = None,
-        new_text: str | None = None,
-        pattern: str | None = None,
-        replacement: str | None = None,
-        text: str | None = None,
-        section_title: str | None = None,
-        is_regex: bool = False,
-        ignore_case: bool = False,
-        dry_run: bool = False,
-        max_replacements: int = 1,
-) -> dict[str, Any]:
-    """Write a change to the active AI session worktree.
-
-    op must be one of:
-    - create_new_file: write a brand-new file (requires content)
-    - patch_file_lines: replace line range start_line..end_line with new_text
-    - replace_text: find-and-replace pattern with replacement (supports dry_run)
-    - append_to_file: append text at EOF or after section_title
-    - update_section: replace a complete parsed section
-
-    Full overwrites of source files are blocked; use the patch ops instead.
-    """
-    body: dict[str, Any] = {
-        "filename": filename,
-        "op": op,
-        "change_summary": change_summary,
-    }
-    for k, v in [
-        ("content", content), ("start_line", start_line), ("end_line", end_line),
-        ("new_text", new_text), ("pattern", pattern), ("replacement", replacement),
-        ("text", text), ("section_title", section_title),
-        ("is_regex", is_regex), ("ignore_case", ignore_case),
-        ("dry_run", dry_run), ("max_replacements", max_replacements),
-    ]:
-        if v is not None and v is not False and v != 1:
-            body[k] = v
-        elif k in ("is_regex", "ignore_case", "dry_run") and v:
-            body[k] = v
-        elif k == "max_replacements":
-            body[k] = int(max_replacements)
-    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/write/", body)
-    if isinstance(result, dict) and not result.get("error"):
-        await _notify_longdoc_updates(ctx, project_id, "ai-session")
-        await _notify_project_write_updates(ctx, project_id)
-    return result
-
-
-@mcp.tool
-async def compile_ai_session(project_id: int, ctx: Context) -> dict[str, Any]:
-    """Compile the active AI session worktree.
-
-    Produces a staging PDF visible only to the project owner in the web UI.
-    Session status moves to 'compiled' on success.
-    """
-    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/compile/")
-    if isinstance(result, dict) and not result.get("error"):
-        await _notify_longdoc_updates(ctx, project_id, "ai-session")
-    return result
-
-
-@mcp.tool
-def get_session_diff(project_id: int) -> dict[str, Any]:
-    """Return the unified diff of all changes in the active AI session.
-
-    Use this to summarise what has been written before finalising.
-    """
-    return _call_allow_json_errors("GET", f"/api/projects/{project_id}/ai-session/diff/")
-
-
-@mcp.tool
-async def finalize_ai_session(
-        project_id: int,
-        summary: str,
-        ctx: Context,
-        task_ids: list[int] | None = None,
-) -> dict[str, Any]:
-    """Mark the active AI session as ready for user review (ready_for_review).
-
-    After this call the session is locked for further writes and the user will
-    be shown the diff and staging PDF for acceptance or discard.
-
-    You cannot accept or discard sessions — that requires a logged-in user.
-    """
-    body: dict[str, Any] = {"summary": summary}
-    if task_ids:
-        body["task_ids"] = [int(i) for i in task_ids]
-    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/finalize/", body)
-    if isinstance(result, dict) and not result.get("error"):
-        await _notify_longdoc_updates(ctx, project_id, "overview", "ai-session")
-    return result
-
-
 @mcp.resource(
-    "smarttex://projects/{project_id}/ai-session",
-    name="project-ai-session",
-    title="Writing Assistant AI Session",
-    description="Current AI session state including status, diff, and compile result.",
+    "smarttex://projects/{project_id}/change-proposal",
+    name="project-change-proposal",
+    title="Writing Assistant Suggested Change",
+    description="Current suggested-change state without internal session details.",
     mime_type="application/json",
 )
-def resource_project_ai_session(project_id: int) -> dict[str, Any]:
-    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/ai-session/")
-    return payload if isinstance(payload, dict) else {"session": None}
+def resource_project_change_proposal(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/change-proposals/status/")
+    return payload if isinstance(payload, dict) else {"proposal": None}
 
 
 @mcp.resource(

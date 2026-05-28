@@ -3271,20 +3271,20 @@
 
             <!-- ── Editor ──────────────────────────────── -->
             <section class="e-center" id="drop-zone">
-                <!-- AI session banner -->
+                <!-- Suggested change banner -->
                 <div class="e-session-banner" id="session-banner">
                     <div class="e-session-goal">
-                        <span class="e-session-goal-label">AI-сесія</span>
+                        <span class="e-session-goal-label">Запропонована зміна</span>
                         <span id="session-banner-goal"></span>
                     </div>
                     <div class="e-session-actions">
                         {% if session_review %}
                             <button class="e-session-btn diff" id="session-btn-diff" type="button">Переглянути diff</button>
-                            <button class="e-session-btn staging" id="session-btn-staging" type="button">Проміжний PDF</button>
+                            <button class="e-session-btn staging" id="session-btn-staging" type="button">Preview PDF</button>
                             <button class="e-session-btn accept" id="session-btn-accept" type="button">Прийняти</button>
                             <button class="e-session-btn discard" id="session-btn-discard" type="button">Відхилити</button>
                         {% else %}
-                            <a class="e-session-btn diff" id="session-btn-review" href="{% url 'projects:session_review' project.id %}">Переглянути сесію</a>
+                            <a class="e-session-btn diff" id="session-btn-review" href="{% url 'projects:session_review' project.id %}">Переглянути зміну</a>
                         {% endif %}
                     </div>
                 </div>
@@ -3305,7 +3305,7 @@
                     <div id="cm-editor"></div>
                     <div class="e-drop-overlay">Перетягніть файли сюди</div>
                     <div class="e-readonly-overlay" id="readonly-overlay">
-                        <span>{% if session_review %}Перегляд сесії доступний тільки для читання{% else %}Редактор доступний тільки для читання, доки AI-сесія активна{% endif %}</span>
+                        <span>{% if session_review %}Перегляд зміни доступний тільки для читання{% else %}Редактор доступний тільки для читання, доки запропонована зміна активна{% endif %}</span>
                     </div>
                 </div>
                 <div class="e-asset-view" id="asset-view">

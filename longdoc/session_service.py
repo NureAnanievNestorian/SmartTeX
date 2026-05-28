@@ -47,7 +47,7 @@ from projects.services import (
 )
 
 from .locks import ProjectLockedError, assert_not_locked, get_locking_session
-from .models import AIBatch, AIBatchChange, AISession, ProjectTask
+from .models import AIBatch, AIBatchChange, AISession, ChangeProposal, ProjectTask
 
 
 logger = logging.getLogger(__name__)
@@ -307,12 +307,13 @@ def _update_section(
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def create_session(project: Project, goal: str, *, expires_hours: int | None = None) -> AISession:
+def create_session(project: Project, goal: str, *, expires_hours: int | None = None, skip_lock_check: bool = False) -> AISession:
     """
     Create a new AI session: git branch + isolated worktree + AISession record.
     Raises ProjectLockedError if the project already has an active session.
     """
-    assert_not_locked(project)
+    if not skip_lock_check:
+        assert_not_locked(project)
 
     if not _git_executable():
         raise RuntimeError("git executable is not available; cannot create AI session")
@@ -633,6 +634,20 @@ def finalize_batch(
             message=f"Session {session.id} must be active or compiled to finalize.",
             status_code=409,
         )
+    if session.compile_status != AISession.CompileStatus.SUCCESS:
+        raise SessionWriteError(
+            error="COMPILE_REQUIRED",
+            message="Session must compile successfully before it can be made ready for review.",
+            status_code=409,
+            suggestion="Run compilation and fix any errors before finalizing.",
+        )
+    if not session.staging_pdf_path:
+        raise SessionWriteError(
+            error="STAGING_PDF_REQUIRED",
+            message="A preview PDF is required before the session can be made ready for review.",
+            status_code=409,
+            suggestion="Run compilation and fix any errors before finalizing.",
+        )
     diff = generate_diff(session)
 
     project = session.project
@@ -798,6 +813,14 @@ def accept_session(session: AISession, user=None) -> None:
     session.status = AISession.Status.ACCEPTED
     session.accepted_at = timezone.now()
     session.save(update_fields=["status", "accepted_at", "updated_at"])
+    try:
+        proposal = session.change_proposal
+        proposal.status = ChangeProposal.Status.ACCEPTED
+        proposal.accepted_at = session.accepted_at
+        proposal.user_visible_message = "Accepted"
+        proposal.save(update_fields=["status", "accepted_at", "user_visible_message", "updated_at"])
+    except Exception:
+        pass
 
 
 def discard_session(session: AISession) -> None:
@@ -814,6 +837,15 @@ def discard_session(session: AISession) -> None:
     session.status = AISession.Status.DISCARDED
     session.discarded_at = timezone.now()
     session.save(update_fields=["status", "discarded_at", "updated_at"])
+    try:
+        proposal = session.change_proposal
+        if proposal.status not in (ChangeProposal.Status.ACCEPTED, ChangeProposal.Status.DISCARDED, ChangeProposal.Status.EXPIRED):
+            proposal.status = ChangeProposal.Status.DISCARDED
+            proposal.discarded_at = session.discarded_at
+            proposal.user_visible_message = "Discarded"
+            proposal.save(update_fields=["status", "discarded_at", "user_visible_message", "updated_at"])
+    except Exception:
+        pass
 
 
 def expire_stale_sessions() -> int:

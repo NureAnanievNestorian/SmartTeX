@@ -15,7 +15,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from accounts.auth_helpers import get_api_user
 from SmartTeX.markup import MarkupType, source_filename_for_markup
-from longdoc.locks import get_locking_session
+from longdoc.locks import get_locking_change_proposal, get_locking_session
 from longdoc.services import get_longdoc_settings_or_none, initialize_longdoc_from_template
 from templates_lib.models import Template
 from templates_lib.services import normalize_template_main_file
@@ -100,15 +100,16 @@ def _unauthorized() -> JsonResponse:
 
 
 def _check_project_lock(project: Project) -> JsonResponse | None:
-    """Return a 423 response if the project is locked by an AI session, else None."""
+    """Return a 423 response if the project is locked by a suggested change, else None."""
+    proposal = get_locking_change_proposal(project)
     session = get_locking_session(project)
-    if session is None:
+    if proposal is None and session is None:
         return None
     return JsonResponse(
         {
             "error": "PROJECT_LOCKED",
-            "message": "An AI session is active. Accept or discard it before making changes.",
-            "session_id": session.id,
+            "message": "A suggested change is active. Accept or discard it before making changes.",
+            "proposal_id": proposal.id if proposal else None,
         },
         status=423,
     )
@@ -117,7 +118,9 @@ def _check_project_lock(project: Project) -> JsonResponse | None:
 def _project_payload(project: Project) -> dict:
     source_file_name = main_source_filename(project)
     longdoc_settings = get_longdoc_settings_or_none(project)
+    locking_proposal = get_locking_change_proposal(project) if longdoc_settings and longdoc_settings.enabled else None
     locking_session = get_locking_session(project) if longdoc_settings and longdoc_settings.enabled else None
+    locked = locking_proposal is not None or locking_session is not None
     return {
         "id": project.id,
         "title": project.title,
@@ -137,8 +140,8 @@ def _project_payload(project: Project) -> dict:
             "ai_sessions_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.ai_sessions_enabled),
             "mcp_controlled_access": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_controlled_access),
             "mcp_write_context": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_write_context),
-            "locked": locking_session is not None,
-            "locking_session_id": locking_session.id if locking_session else None,
+            "locked": locked,
+            "locking_proposal_id": locking_proposal.id if locking_proposal else None,
         },
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
@@ -326,7 +329,7 @@ def session_review(request: HttpRequest, project_id: int):
         {
             "project": project,
             "session_review": True,
-            "has_active_session": get_locking_session(project) is not None,
+            "has_active_session": get_locking_change_proposal(project) is not None,
         },
     )
 

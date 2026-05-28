@@ -232,8 +232,8 @@ async function loadRequirements() {
 
 async function loadActiveSession() {
   try {
-    const payload = await api(`/api/projects/${cfg.projectId}/ai-session/`, { method: "GET" });
-    s.longdoc.activeSession = payload.session || null;
+    const payload = await api(`/api/projects/${cfg.projectId}/change-proposals/status/`, { method: "GET" });
+    s.longdoc.activeSession = payload.proposal || null;
   } catch {
     s.longdoc.activeSession = null;
   }
@@ -315,8 +315,8 @@ function renderSettingsPanel() {
   const settings = s.longdoc.settings || {};
   const locked = Boolean(settings.locked);
   const lockText = locked
-    ? `Заблоковано AI-сесією #${settings.locking_session_id || "?"}. Запис заблоковано до завершення сесії.`
-    : "Активного блокування AI-сесією немає.";
+    ? `Заблоковано запропонованою зміною #${settings.locking_proposal_id || "?"}. Запис заблоковано до завершення перегляду.`
+    : "Активного блокування запропонованою зміною немає.";
   const groups = [
     ["Основне", [
       ["enabled", "Письмовий асистент", "Увімкнути робочий простір довгого документа."],
@@ -330,7 +330,7 @@ function renderSettingsPanel() {
       ["notes_enabled", "Нотатки", "Структурований блокнот проєкту."],
     ]],
     ["Автоматизація", [
-      ["ai_sessions_enabled", "AI-сесії", "Підготовка змін у контрольованій сесії."],
+      ["ai_sessions_enabled", "Запропоновані зміни", "Підготовка змін у контрольованому перегляді."],
       ["mcp_controlled_access", "Контрольований MCP-доступ", "Обмежити MCP доступом через контрольовані інструменти."],
       ["mcp_write_context", "MCP може писати контекст", "Дозволити MCP створювати та оновлювати контекст."],
     ]],
@@ -391,7 +391,7 @@ function renderOverviewPanel() {
   const coverageCounts = overview.requirement_coverage_counts || {};
   const openTasks = Number(taskCounts.open || 0) + Number(taskCounts.in_progress || 0);
   const issueReqs = Number(coverageCounts.unchecked || 0) + Number(coverageCounts.partial || 0) + Number(coverageCounts.missing || 0);
-  const session = overview.active_session || s.longdoc.activeSession;
+  const session = overview.active_proposal || s.longdoc.activeSession;
 
   overviewPanelEl.innerHTML = `
     <div class="e-workspace-head">
@@ -399,7 +399,7 @@ function renderOverviewPanel() {
         <h2>Письмовий асистент</h2>
         <p>Огляд структури, контексту, завдань і покриття для довгого документа.</p>
       </div>
-      ${session ? chip("warn", `AI-сесія #${session.id}`) : chip("covered", "Готово до роботи")}
+      ${session ? chip("warn", `Зміна #${session.id}`) : chip("covered", "Готово до роботи")}
     </div>
     <div class="e-longdoc-scroll">
       <section class="e-overview-grid">
@@ -1124,7 +1124,7 @@ export function renderLongdocPanels() {
   renderRequirementsPanel();
 }
 
-// ── AI Session UI ─────────────────────────────────────────────────────────────
+// ── Suggested change UI ───────────────────────────────────────────────────────
 
 const sessionBannerEl = document.getElementById("session-banner");
 const sessionBannerGoalEl = document.getElementById("session-banner-goal");
@@ -1133,7 +1133,7 @@ const pdfTabbarEl = document.getElementById("pdf-tabbar");
 
 export function renderSessionBanner() {
   const session = s.longdoc.activeSession;
-  const isActive = session && ["active", "compiled", "ready_for_review"].includes(session.status);
+  const isActive = session && ["validating", "failed_validation", "failed_compile", "ready_for_review"].includes(session.status);
 
   if (sessionBannerEl) sessionBannerEl.classList.toggle("visible", Boolean(isActive));
   if (editorWrapEl) editorWrapEl.classList.toggle("project-locked", Boolean(isActive));
@@ -1143,7 +1143,12 @@ export function renderSessionBanner() {
 
   if (sessionBannerGoalEl) sessionBannerGoalEl.textContent = session.goal || "";
 
-  const statusLabels = { active: "У роботі", compiled: "Скомпільовано", ready_for_review: "Готово до перегляду" };
+  const statusLabels = {
+    validating: "Готується",
+    failed_validation: "Потребує уваги",
+    failed_compile: "Не компілюється",
+    ready_for_review: "Готово до перегляду",
+  };
   const statusEl = document.getElementById("session-banner-status");
   if (statusEl) statusEl.textContent = statusLabels[session.status] || session.status;
 }
@@ -1196,14 +1201,14 @@ async function openSessionDiffModal() {
     if (content) content.innerHTML = `<span class="diff-empty">Завантаження diff...</span>`;
 
   try {
-    const data = await api(`/api/projects/${cfg.projectId}/ai-session/diff/`, { method: "GET" });
+    const data = await api(`/api/projects/${cfg.projectId}/change-proposals/diff/`, { method: "GET" });
     const session = s.longdoc.activeSession;
-    if (subtitle) subtitle.textContent = session ? `Session #${session.id} · ${session.status}` : "";
+    if (subtitle) subtitle.textContent = session ? `Suggested change #${session.id} · ${session.status}` : "";
     if (content) content.innerHTML = renderDiffContent(data.diff_text || "");
 
     const footer = document.getElementById("session-diff-footer");
-    if (footer && session?.batch) {
-      footer.innerHTML = `<span class="e-session-goal-label">Підсумок:</span> ${escHtml(session.batch.summary || "")}`;
+    if (footer && session?.goal) {
+      footer.innerHTML = `<span class="e-session-goal-label">Підсумок:</span> ${escHtml(session.goal || "")}`;
     }
   } catch (err) {
     if (content) content.innerHTML = `<span class="diff-empty">Помилка завантаження diff: ${escHtml(err.message)}</span>`;
@@ -1223,7 +1228,7 @@ function switchPdfTab(tab) {
   document.querySelectorAll(".e-pdf-tab").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.pdfTab === tab);
   });
-  const stagingUrl = `/api/projects/${cfg.projectId}/ai-session/staging-pdf/`;
+  const stagingUrl = `/api/projects/${cfg.projectId}/change-proposals/preview-pdf/`;
   if (_stagingPdfMode) {
     import("./pdfviewer.js").then(m => m.loadPdfViewer(stagingUrl)).catch(() => {});
   } else {
@@ -1232,9 +1237,9 @@ function switchPdfTab(tab) {
 }
 
 async function acceptSession() {
-  if (!(await showConfirm("Прийняти всі зміни AI-сесії? Їх буде об'єднано з проєктом."))) return;
+  if (!(await showConfirm("Прийняти запропоновану зміну? Її буде об'єднано з проєктом."))) return;
   try {
-    await api(`/api/projects/${cfg.projectId}/ai-session/accept/`, { method: "POST" });
+    await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, { method: "POST" });
     s.longdoc.activeSession = null;
     renderSessionBanner();
     closeSessionDiffModal();
@@ -1246,9 +1251,9 @@ async function acceptSession() {
 }
 
 async function discardSession() {
-  if (!(await showConfirm("Відхилити всі зміни AI-сесії? Дію не можна скасувати."))) return;
+  if (!(await showConfirm("Відхилити запропоновану зміну? Дію не можна скасувати."))) return;
   try {
-    await api(`/api/projects/${cfg.projectId}/ai-session/discard/`, { method: "POST" });
+    await api(`/api/projects/${cfg.projectId}/change-proposals/discard/`, { method: "POST" });
     s.longdoc.activeSession = null;
     renderSessionBanner();
     closeSessionDiffModal();
