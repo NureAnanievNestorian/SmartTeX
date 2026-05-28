@@ -165,6 +165,35 @@ function fmtLogDate(iso) {
   });
 }
 
+function renderAiLogDetails(item) {
+  const total = Number(item.input_tokens_estimate || 0) + Number(item.output_tokens_estimate || 0);
+  return `
+    <div class="ai-log-detail">
+      <div class="ai-log-detail-block">
+        <strong>Token details</strong>
+        <div>Total: ${escHtml(String(total))}</div>
+        <div>Input: ${escHtml(String(item.input_tokens_estimate || 0))}</div>
+        <div>Output: ${escHtml(String(item.output_tokens_estimate || 0))}</div>
+      </div>
+      <div class="ai-log-detail-block">
+        <strong>Request</strong>
+        <div>Task: ${escHtml(aiTaskLabel(item.task_type))}</div>
+        <div>Status: ${escHtml(aiStatusLabel(item.status))}</div>
+        <div>Latency: ${escHtml(String(item.latency_ms || 0))} ms</div>
+      </div>
+      <div class="ai-log-detail-block">
+        <strong>Provider</strong>
+        <div>${escHtml(item.provider || "—")}</div>
+        <div>${escHtml(item.model_name || "—")}</div>
+      </div>
+      <div class="ai-log-detail-block">
+        <strong>Error</strong>
+        <div>${escHtml(item.error_code || "None")}</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderAiLogModal(payload) {
   const body = document.getElementById("ai-log-body");
   if (!body) return;
@@ -202,6 +231,7 @@ function renderAiLogModal(payload) {
         <table class="ai-log-table">
           <thead>
             <tr>
+              <th class="ai-log-expand-cell"></th>
               <th>Time</th>
               <th>Task</th>
               <th>Status</th>
@@ -211,8 +241,15 @@ function renderAiLogModal(payload) {
             </tr>
           </thead>
           <tbody>
-            ${items.map(item => `
-              <tr>
+            ${items.map((item, index) => `
+              <tr class="ai-log-row expandable" data-ai-log-row="${index}">
+                <td class="ai-log-expand-cell">
+                  <button class="ai-log-expand-btn" type="button" data-ai-log-toggle="${index}" aria-expanded="false" aria-label="Expand log details">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="4 2 8 6 4 10"></polyline>
+                    </svg>
+                  </button>
+                </td>
                 <td>${escHtml(fmtLogDate(item.created_at))}</td>
                 <td><span class="ai-log-task">${escHtml(aiTaskLabel(item.task_type))}</span></td>
                 <td><span class="ai-log-status ${escHtml(item.status)}">${escHtml(aiStatusLabel(item.status))}</span>${item.error_code ? `<div class="e-longdoc-muted">${escHtml(item.error_code)}</div>` : ""}</td>
@@ -220,12 +257,32 @@ function renderAiLogModal(payload) {
                 <td>${escHtml(String(item.latency_ms || 0))} ms</td>
                 <td>${escHtml(item.provider || "")}${item.model_name ? `<div class="e-longdoc-muted">${escHtml(item.model_name)}</div>` : ""}</td>
               </tr>
+              <tr class="ai-log-detail-row" data-ai-log-detail="${index}">
+                <td class="ai-log-detail-cell" colspan="7">${renderAiLogDetails(item)}</td>
+              </tr>
             `).join("")}
           </tbody>
         </table>
       ` : `<div class="ai-log-empty">Для цього проєкту ще немає AI request log.</div>`}
     </section>
   `;
+  body.querySelectorAll("[data-ai-log-toggle]").forEach(btn => {
+    btn.addEventListener("click", event => {
+      event.stopPropagation();
+      const idx = btn.dataset.aiLogToggle;
+      const detail = body.querySelector(`[data-ai-log-detail="${idx}"]`);
+      const expanded = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", expanded ? "false" : "true");
+      detail?.classList.toggle("open", !expanded);
+    });
+  });
+  body.querySelectorAll("[data-ai-log-row]").forEach(row => {
+    row.addEventListener("click", event => {
+      if (event.target.closest("button")) return;
+      const idx = row.dataset.aiLogRow;
+      body.querySelector(`[data-ai-log-toggle="${idx}"]`)?.click();
+    });
+  });
 }
 
 export async function openAiLogModal() {
@@ -1388,7 +1445,7 @@ async function acceptSession() {
     renderSessionBanner();
     closeSessionDiffModal();
     await loadLongdocData();
-    import("./main.js?v=20260529-ui1").then(m => m.loadVersions?.(true)).catch(() => {});
+    import("./main.js?v=20260529-ui2").then(m => m.loadVersions?.(true)).catch(() => {});
   } catch (err) {
     alert(`Не вдалося прийняти зміни: ${err.message}`);
   }

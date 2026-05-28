@@ -3061,6 +3061,7 @@
             max-height: min(760px, calc(100vh - 40px));
             display: flex;
             flex-direction: column;
+            min-height: 0;
             background: var(--e-raised);
             border: 1px solid var(--e-border);
             border-radius: 8px;
@@ -3090,11 +3091,15 @@
         }
 
         .ai-log-modal-body {
+            flex: 1;
+            min-height: 0;
             padding: 16px 20px 20px;
-            overflow: auto;
+            overflow-x: hidden;
+            overflow-y: auto;
             display: flex;
             flex-direction: column;
             gap: 14px;
+            overscroll-behavior: contain;
         }
 
         .ai-log-summary {
@@ -3169,7 +3174,7 @@
         .ai-log-table-wrap {
             border: 1px solid var(--e-border);
             border-radius: 6px;
-            overflow: hidden;
+            overflow: visible;
             background: var(--e-surface);
         }
 
@@ -3194,10 +3199,52 @@
             color: var(--e-text2);
             text-transform: uppercase;
             background: rgba(255,255,255,.03);
+            position: sticky;
+            top: 0;
+            z-index: 1;
         }
 
         .ai-log-table tr:last-child td {
             border-bottom: 0;
+        }
+
+        .ai-log-table tr.ai-log-row {
+            cursor: default;
+        }
+
+        .ai-log-table tr.ai-log-row.expandable td {
+            cursor: pointer;
+        }
+
+        .ai-log-expand-cell {
+            width: 44px;
+        }
+
+        .ai-log-expand-btn {
+            width: 26px;
+            height: 26px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.04);
+            color: var(--e-text2);
+            cursor: pointer;
+            transition: background .12s, color .12s, transform .12s;
+        }
+
+        .ai-log-expand-btn:hover {
+            background: rgba(255,255,255,.08);
+            color: var(--e-text);
+        }
+
+        .ai-log-expand-btn svg {
+            transition: transform .12s;
+        }
+
+        .ai-log-expand-btn[aria-expanded="true"] svg {
+            transform: rotate(90deg);
         }
 
         .ai-log-task,
@@ -3231,6 +3278,48 @@
             background: rgba(248, 113, 113, .08);
         }
 
+        .ai-log-detail-row {
+            display: none;
+        }
+
+        .ai-log-detail-row.open {
+            display: table-row;
+        }
+
+        .ai-log-detail-cell {
+            padding: 0 !important;
+            background: rgba(255,255,255,.02);
+        }
+
+        .ai-log-detail {
+            padding: 14px 16px 16px 54px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .ai-log-detail-block {
+            background: rgba(255,255,255,.03);
+            border: 1px solid rgba(255,255,255,.06);
+            border-radius: 6px;
+            padding: 10px 12px;
+        }
+
+        .ai-log-detail-block strong {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--e-text2);
+        }
+
+        .ai-log-detail-block div {
+            color: var(--e-text);
+            font-size: 12px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+
         .ai-log-empty {
             padding: 28px 16px;
             text-align: center;
@@ -3249,6 +3338,11 @@
             .ai-log-summary,
             .ai-log-groups {
                 grid-template-columns: 1fr;
+            }
+
+            .ai-log-detail {
+                grid-template-columns: 1fr;
+                padding-left: 16px;
             }
 
             .ai-log-table th:nth-child(4),
@@ -3770,5 +3864,5 @@
             sessionReview: {% if session_review %}true{% else %}false{% endif %},
         };
     </script>
-    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui1"></script>
+    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui2"></script>
 {% endblock %}
