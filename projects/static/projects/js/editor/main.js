@@ -22,8 +22,8 @@ import {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
-} from "./compile.js?v=20260529-ui4";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui4";
+} from "./compile.js?v=20260529-ui5";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui5";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
@@ -225,6 +225,27 @@ export async function loadVersions(reset = false) {
   } finally {
     s.versionsLoading = false;
     renderVersions();
+  }
+}
+
+export async function refreshLivePdfPreview(pdfUrl = null, pdfVer = null) {
+  const payload = pdfUrl ? {
+    pdf_url: pdfUrl,
+    pdf_version: pdfVer ?? Date.now(),
+    log: "",
+    diagnostics: [],
+    compile_state: s.projectMeta?.last_status === "success" ? "synced" : "out_of_date",
+    status: s.projectMeta?.last_status || "success",
+  } : await api(`/api/projects/${cfg.projectId}/compile/`, { method: "GET" });
+
+  setCompileState(payload.compile_state || "out_of_date", payload.status);
+  updateCompileArtifacts(payload.log || "", payload);
+  if (payload.pdf_url) {
+    s.lastPdfVersion = payload.pdf_version ?? Date.now();
+    if (openPdfLink) openPdfLink.href = payload.pdf_url;
+    await loadPdfViewer(`${payload.pdf_url}?t=${s.lastPdfVersion}`);
+  } else {
+    pdfEmpty.style.display = "flex";
   }
 }
 
@@ -521,17 +542,8 @@ async function init() {
   await Promise.all([loadFiles(), loadSections(), loadVersions(true), loadLongdocData()]);
 
   const cd = await api(`/api/projects/${cfg.projectId}/compile/`, { method: "GET" });
-  setCompileState(cd.compile_state || "out_of_date", cd.status);
   if (cd.log) { logEl.textContent = cd.log; openLog(); }
-  updateCompileArtifacts(cd.log || "", cd);
-
-  if (cd.pdf_url) {
-    s.lastPdfVersion = cd.pdf_version ?? Date.now();
-    if (openPdfLink) openPdfLink.href = cd.pdf_url;
-    await loadPdfViewer(`${cd.pdf_url}?t=${s.lastPdfVersion}`);
-  } else {
-    pdfEmpty.style.display = "flex";
-  }
+  await refreshLivePdfPreview(cd.pdf_url || null, cd.pdf_version ?? null);
 
   renderFileList();
   connectProjectUpdatesSse();

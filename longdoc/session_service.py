@@ -707,10 +707,9 @@ def accept_session(session: AISession, user=None) -> None:
     create a ProjectVersion per changed file, complete linked tasks, and clean up.
     """
     from projects.services import (
-        commit_project_text_changes,
         create_project_version,
+        pdf_file_path,
         project_dir as get_project_dir,
-        read_git_version_content,
     )
     from projects.models import ProjectVersion
 
@@ -760,6 +759,15 @@ def accept_session(session: AISession, user=None) -> None:
             target = proj_dir / fname
             if target.exists():
                 target.unlink(missing_ok=True)
+
+    if session.staging_pdf_path:
+        staging_pdf = proj_dir / session.staging_pdf_path
+        if staging_pdf.exists():
+            live_pdf = pdf_file_path(project)
+            live_pdf.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(staging_pdf, live_pdf)
+            project.last_status = Project.CompileStatus.SUCCESS
+            project.save(update_fields=["last_status", "updated_at"])
 
     # 4. Create a ProjectVersion record per changed file.
     batch_summary = ""

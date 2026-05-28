@@ -1,5 +1,7 @@
+import io
 import json
 import tempfile
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -276,6 +278,33 @@ class ProjectTypstSupportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         names = [item["name"] for item in response.json()["files"]]
         self.assertFalse(any(".smarttex-git" in name for name in names))
+
+    def test_project_zip_download_excludes_hidden_and_system_files(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Zip Export", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        root = source_file_path(project).parent
+        (root / ".hidden.txt").write_text("secret", encoding="utf-8")
+        (root / "__MACOSX").mkdir(exist_ok=True)
+        (root / "notes.txt").write_text("visible", encoding="utf-8")
+        (root / "main.log").write_text("artifact", encoding="utf-8")
+        (root / ".smarttex-git").mkdir(exist_ok=True)
+        (root / ".smarttex-git" / "config").write_text("git", encoding="utf-8")
+
+        response = self.client.get(f"/api/projects/{project.id}/download-zip/")
+
+        self.assertEqual(response.status_code, 200)
+        archive = b"".join(response.streaming_content)
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            names = set(zf.namelist())
+        self.assertIn("main.typ", names)
+        self.assertIn("notes.txt", names)
+        self.assertNotIn(".hidden.txt", names)
+        self.assertNotIn("main.log", names)
+        self.assertFalse(any(name.startswith(".smarttex-git/") for name in names))
 
     def test_parse_compile_diagnostics_extracts_typst_and_latex_locations(self) -> None:
         typst_project = Project.objects.create(owner=self.user, title="Typst Parse", markup_type=MarkupType.TYPST)

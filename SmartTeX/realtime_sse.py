@@ -50,20 +50,43 @@ def _session_user_id_from_cookie(scope: dict[str, Any]) -> int | None:
         return None
 
 
-def _latest_mcp_version_id_for_owner(project_id: int, owner_id: int) -> int | None:
+def _latest_project_version_for_owner(project_id: int, owner_id: int) -> dict[str, Any] | None:
     from projects.models import ProjectVersion
 
-    qs = (
+    row = (
         ProjectVersion.objects.filter(
             project_id=project_id,
             project__owner_id=owner_id,
-            source="mcp",
         )
         .order_by("-id")
-        .values_list("id", flat=True)
+        .values("id", "source")
+        .first()
     )
-    latest = qs.first()
-    return int(latest) if latest is not None else 0
+    if row is None:
+        from projects.models import Project
+
+        exists = Project.objects.filter(id=project_id, owner_id=owner_id).exists()
+        if not exists:
+            return None
+        return {"id": 0, "source": ""}
+    return {"id": int(row["id"]), "source": str(row.get("source") or "")}
+
+
+def _active_proposal_signature_for_owner(project_id: int, owner_id: int) -> dict[str, Any] | None:
+    from longdoc.proposal_service import get_active_change_proposal
+    from projects.models import Project
+
+    project = Project.objects.filter(id=project_id, owner_id=owner_id).first()
+    if project is None:
+        return None
+    proposal = get_active_change_proposal(project)
+    if proposal is None:
+        return {"id": 0, "status": "", "updated_at": ""}
+    return {
+        "id": int(proposal.id),
+        "status": str(proposal.status or ""),
+        "updated_at": proposal.updated_at.isoformat() if proposal.updated_at else "",
+    }
 
 
 async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
@@ -87,8 +110,9 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
         await send({"type": "http.response.body", "body": b"Unauthorized"})
         return
 
-    latest = await sync_to_async(_latest_mcp_version_id_for_owner)(project_id, user_id)
-    if latest is None:
+    latest_project = await sync_to_async(_latest_project_version_for_owner)(project_id, user_id)
+    proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
+    if latest_project is None or proposal_signature is None:
         await send({"type": "http.response.start", "status": 403, "headers": []})
         await send({"type": "http.response.body", "body": b"Forbidden"})
         return
@@ -111,9 +135,16 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
 
     # Set client retry interval to 1500ms, then send connected event.
     await send({"type": "http.response.body", "body": b"retry: 1500\n\n", "more_body": True})
-    await send_event({"type": "connected", "project_id": project_id, "latest_mcp_version_id": latest})
+    await send_event({
+        "type": "connected",
+        "project_id": project_id,
+        "latest_project_version_id": latest_project["id"],
+        "latest_project_version_source": latest_project["source"],
+        "active_proposal": proposal_signature,
+    })
 
-    last_seen = latest
+    last_seen_project = int(latest_project["id"])
+    last_seen_proposal = dict(proposal_signature)
     while True:
         try:
             event = await asyncio.wait_for(receive(), timeout=1.5)
@@ -122,16 +153,24 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
         except asyncio.TimeoutError:
             pass
 
-        latest = await sync_to_async(_latest_mcp_version_id_for_owner)(project_id, user_id)
-        if latest is None:
+        latest_project = await sync_to_async(_latest_project_version_for_owner)(project_id, user_id)
+        proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
+        if latest_project is None or proposal_signature is None:
             break
-        if latest > last_seen:
-            last_seen = latest
+        if int(latest_project["id"]) > last_seen_project:
+            last_seen_project = int(latest_project["id"])
             await send_event({
                 "type": "project_updated",
                 "project_id": project_id,
-                "source": "mcp",
-                "version_id": latest,
+                "source": latest_project["source"],
+                "version_id": latest_project["id"],
+            })
+        if proposal_signature != last_seen_proposal:
+            last_seen_proposal = dict(proposal_signature)
+            await send_event({
+                "type": "proposal_updated",
+                "project_id": project_id,
+                "proposal": proposal_signature,
             })
 
     await send({"type": "http.response.body", "body": b"", "more_body": False})

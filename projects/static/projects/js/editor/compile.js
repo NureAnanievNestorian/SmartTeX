@@ -1,6 +1,6 @@
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
-import { getContent, focusEditor } from "./cm.js";
+import { getContent } from "./cm.js";
 import { utf8ByteSize } from "./files.js";
 import {
   setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics,
@@ -22,13 +22,6 @@ export function queueCompile(mode = "manual") {
 
 export function shouldOpenCompileLog(mode = "manual") {
   return mode === "manual";
-}
-
-function scheduleExternalReload(reason = "Проєкт оновлено через MCP. Оновлюємо…") {
-  if (s.externalReloadScheduled) return;
-  s.externalReloadScheduled = true;
-  setSaveHint(reason, "saving");
-  setTimeout(() => window.location.reload(), 250);
 }
 
 // ── Compile artifacts ─────────────────────────────────────────────────────────
@@ -223,6 +216,39 @@ async function handleMcpUpdate() {
   }
 }
 
+async function handleProjectUpdate(source = "web") {
+  const label = source === "mcp" ? "MCP" : "Проєкт";
+  setSaveHint(`${label}: оновлюємо стан…`, "saving");
+  try {
+    const main = await import("./main.js?v=20260529-ui5");
+    await main.loadProjectMeta();
+    await main.loadMainFile();
+    if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
+      try {
+        const params = new URLSearchParams({ include_text: "1" });
+        const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
+        const { setContent } = await import("./cm.js");
+        setContent(fd.text_content || "");
+        s.hasUnsavedChanges = false;
+      } catch (_) {}
+    }
+    await Promise.all([
+      main.loadFiles(),
+      main.loadSections(),
+      main.loadVersions(true),
+      import("./longdoc.js?v=20260529-ui5").then(m => m.loadLongdocData()),
+    ]);
+    if (source === "mcp") {
+      await pollUntilCompileDone();
+      return;
+    }
+    await main.refreshLivePdfPreview();
+    setSaveHint("Проєкт: стан оновлено", "saved");
+  } catch (err) {
+    setSaveHint(`${label}: помилка оновлення: ${err.message}`, "error");
+  }
+}
+
 export function connectProjectUpdatesSse() {
   if (s.projectSse) {
     try { s.projectSse.close(); } catch (_) {}
@@ -243,18 +269,27 @@ export function connectProjectUpdatesSse() {
     try { data = JSON.parse(ev.data || "{}"); } catch (_) { return; }
     if (!data || typeof data !== "object") return;
     if (data.type === "connected") {
-      s.lastSeenMcpVersionId = Number(data.latest_mcp_version_id || 0);
+      s.lastSeenMcpVersionId = Number(data.latest_project_version_id || 0);
       return;
     }
-    if (data.type !== "project_updated" || data.source !== "mcp") return;
+    if (data.type === "proposal_updated") {
+      import("./longdoc.js?v=20260529-ui5").then(m => m.loadLongdocData?.()).catch(() => {});
+      import("./main.js?v=20260529-ui5").then(m => m.loadProjectMeta?.()).catch(() => {});
+      return;
+    }
+    if (data.type !== "project_updated") return;
     const incoming = Number(data.version_id || 0);
     if (!incoming || incoming <= s.lastSeenMcpVersionId) return;
     s.lastSeenMcpVersionId = incoming;
-    if (s.hasUnsavedChanges) {
+    if (s.hasUnsavedChanges && data.source === "mcp") {
       setSaveHint("Проєкт змінено через MCP. Спершу збережіть локальні правки або перезавантажте сторінку.", "error");
       return;
     }
-    handleMcpUpdate().catch(() => {});
+    if (data.source === "mcp") {
+      handleMcpUpdate().catch(() => {});
+      return;
+    }
+    handleProjectUpdate(data.source || "web").catch(() => {});
   });
 
   es.addEventListener("error", () => {

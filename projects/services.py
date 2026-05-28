@@ -685,6 +685,25 @@ def extract_project_zip(project: Project, zip_bytes: bytes, *, allow_main_overri
     return created
 
 
+def build_project_zip(project: Project) -> io.BytesIO:
+    root = ensure_project_dir(project)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(root.rglob("*"), key=lambda p: str(p.relative_to(root)).lower()):
+            if not path.is_file():
+                continue
+            if not _is_visible_hidden_project_path(root, path):
+                continue
+            if _is_system_artifact_file(path):
+                continue
+            rel_path = str(path.relative_to(root)).replace("\\", "/")
+            if any(part.startswith(".") for part in Path(rel_path).parts):
+                continue
+            zf.write(path, arcname=rel_path)
+    buffer.seek(0)
+    return buffer
+
+
 def rename_project_asset(project: Project, filename: str, new_filename: str) -> dict[str, Any]:
     old_path = project_asset_path(project, filename)
     if not old_path.exists():

@@ -3517,6 +3517,15 @@
                     </svg>
                     PDF
                 </a>
+                <a id="download-zip" class="e-btn" href="/api/projects/{{ project.id }}/download-zip/">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                         stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+                        <path d="M8 2v8"/>
+                        <path d="M5 7.5 8 10.5 11 7.5"/>
+                        <path d="M3 12.5h10"/>
+                    </svg>
+                    ZIP
+                </a>
             </div>
         </div>
         <div class="e-sm-warning" id="small-model-warning">
@@ -3897,5 +3906,5 @@
             sessionReview: {% if session_review %}true{% else %}false{% endif %},
         };
     </script>
-    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui4"></script>
+    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui5"></script>
 {% endblock %}

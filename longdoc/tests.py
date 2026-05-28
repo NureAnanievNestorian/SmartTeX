@@ -1,9 +1,9 @@
-from datetime import timedelta
 import hashlib
 import json
 import shutil
 import subprocess
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -1301,6 +1301,25 @@ class AISessionReviewTests(TestCase):
         self.assertEqual(v.operation, "ai_session_accept")
         self.assertIn("session_id", v.event_payload)
         self.assertEqual(v.event_payload["session_id"], session.id)
+
+    def test_accept_session_promotes_staging_pdf_to_live_pdf(self) -> None:
+        from longdoc.session_service import create_session, accept_session, session_dir as get_session_dir, write_to_session
+        from projects.services import pdf_file_path
+
+        session = create_session(self.project, goal="Promote staged pdf")
+        write_to_session(session, "main.tex", op="replace_text",
+                         old_text="Hello World", new_text="PDF promoted")
+        staging_pdf = get_session_dir(self.project, session.id) / "staging.pdf"
+        staging_pdf.parent.mkdir(parents=True, exist_ok=True)
+        staging_pdf.write_bytes(b"%PDF-1.4\naccepted preview\n")
+        session.staging_pdf_path = f".smarttex/sessions/{session.id}/staging.pdf"
+        session.save(update_fields=["staging_pdf_path", "updated_at"])
+
+        accept_session(session, user=self.user)
+
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.last_status, Project.CompileStatus.SUCCESS)
+        self.assertEqual(pdf_file_path(self.project).read_bytes(), b"%PDF-1.4\naccepted preview\n")
 
     def test_accept_session_version_contains_before_and_after(self) -> None:
         from longdoc.session_service import create_session, accept_session, write_to_session

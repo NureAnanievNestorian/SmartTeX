@@ -11,6 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.auth_helpers import get_api_user
+from projects.services import pdf_relative_url, pdf_version
 from projects.views import _project_with_owner
 
 from .services import (
@@ -723,7 +724,15 @@ def api_change_proposal_accept(request: HttpRequest, project_id: int) -> JsonRes
     except Exception as exc:
         return JsonResponse({"error": "ACCEPT_FAILED", "message": str(exc)}, status=500)
     proposal.refresh_from_db()
-    return JsonResponse({"proposal": serialize_change_proposal(proposal)})
+    project.refresh_from_db()
+    return JsonResponse(
+        {
+            "proposal": serialize_change_proposal(proposal),
+            "pdf_url": pdf_relative_url(project),
+            "pdf_version": pdf_version(project),
+            "project": {"last_status": project.last_status},
+        }
+    )
 
 
 @login_required

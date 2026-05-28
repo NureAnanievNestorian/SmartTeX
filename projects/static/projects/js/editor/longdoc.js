@@ -1429,14 +1429,14 @@ function switchPdfTab(tab) {
   if (_stagingPdfMode) {
     import("./pdfviewer.js").then(m => m.loadPdfViewer(stagingUrl)).catch(() => {});
   } else {
-    import("./pdfviewer.js").then(m => m.loadPdfViewer(`/api/projects/${cfg.projectId}/pdf/`)).catch(() => {});
+    import("./main.js?v=20260529-ui5").then(m => m.refreshLivePdfPreview?.()).catch(() => {});
   }
 }
 
 async function acceptSession() {
   if (!(await showConfirm("Прийняти запропоновану зміну? Її буде об'єднано з проєктом."))) return;
   try {
-    await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, { method: "POST" });
+    const payload = await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, { method: "POST" });
     if (cfg.sessionReview) {
       window.location.href = `/projects/${cfg.projectId}/`;
       return;
@@ -1444,8 +1444,16 @@ async function acceptSession() {
     s.longdoc.activeSession = null;
     renderSessionBanner();
     closeSessionDiffModal();
-    await loadLongdocData();
-    import("./main.js?v=20260529-ui4").then(m => m.loadVersions?.(true)).catch(() => {});
+    const main = await import("./main.js?v=20260529-ui5");
+    await Promise.all([
+      loadLongdocData(),
+      main.loadProjectMeta?.(),
+      main.loadMainFile?.(),
+      main.loadFiles?.(),
+      main.loadSections?.(),
+      main.loadVersions?.(true),
+    ]);
+    await main.refreshLivePdfPreview?.(payload?.pdf_url, payload?.pdf_version);
   } catch (err) {
     alert(`Не вдалося прийняти зміни: ${err.message}`);
   }

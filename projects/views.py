@@ -25,6 +25,7 @@ from templates_lib.services import normalize_template_main_file
 from .models import Project, ProjectVersion
 from .services import (
     ALLOWED_UPLOAD_EXTENSIONS,
+    build_project_zip,
     build_version_diff,
     compile_state_for_status,
     commit_project_text_changes,
@@ -1287,6 +1288,19 @@ def api_project_pdf(request: HttpRequest, project_id: int):
         content_type="application/pdf",
         filename=project_pdf_download_name(project),
     )
+
+
+@csrf_exempt
+@require_GET
+def api_project_download_zip(request: HttpRequest, project_id: int):
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+
+    project = _project_with_owner(project_id, user)
+    archive = build_project_zip(project)
+    filename_base = project_pdf_download_name(project).rsplit(".", 1)[0] or "project"
+    return FileResponse(archive, content_type="application/zip", filename=f"{filename_base}.zip")
 
 
 @csrf_exempt
