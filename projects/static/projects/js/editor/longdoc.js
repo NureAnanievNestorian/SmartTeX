@@ -1388,7 +1388,7 @@ async function acceptSession() {
     renderSessionBanner();
     closeSessionDiffModal();
     await loadLongdocData();
-    import("./main.js?v=20260528-sse2").then(m => m.loadVersions?.(true)).catch(() => {});
+    import("./main.js?v=20260529-ui1").then(m => m.loadVersions?.(true)).catch(() => {});
   } catch (err) {
     alert(`Не вдалося прийняти зміни: ${err.message}`);
   }
