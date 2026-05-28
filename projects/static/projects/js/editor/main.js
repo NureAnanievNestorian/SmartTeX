@@ -22,8 +22,8 @@ import {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
-} from "./compile.js?v=20260528-sse";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI } from "./longdoc.js?v=20260528-sse";
+} from "./compile.js?v=20260528-sse2";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI } from "./longdoc.js?v=20260528-sse2";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 

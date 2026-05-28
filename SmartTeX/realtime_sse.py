@@ -98,9 +98,10 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
         "status": 200,
         "headers": [
             (b"content-type", b"text/event-stream; charset=utf-8"),
-            (b"cache-control", b"no-cache"),
+            (b"cache-control", b"no-store, no-cache"),
             (b"x-accel-buffering", b"no"),
             (b"connection", b"keep-alive"),
+            (b"x-content-type-options", b"nosniff"),
         ],
     })
 
