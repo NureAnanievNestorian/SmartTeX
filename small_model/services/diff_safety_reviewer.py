@@ -71,6 +71,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             }
         if deterministic_warnings and not self._should_consult_provider(stats, review_input, max_changed):
             return {"action": "warn", "reason": None, "risk_level": "medium", "warnings": deterministic_warnings, "review_payload": {}}
+        if self._is_tiny_low_risk_diff(stats, review_input):
+            return {"action": "allow", "reason": None, "risk_level": "low", "warnings": [], "review_payload": {}}
 
         if stats["diff_char_length"] > 12288 and stats["total_changed_lines"] > max_changed * 2:
             return {
@@ -129,6 +131,16 @@ class DiffSafetyReviewService(SmallModelCallMixin):
         if len(review_input.touched_headings) > 2:
             return True
         return False
+
+    def _is_tiny_low_risk_diff(self, stats, review_input):
+        return (
+            int(stats.get("files_changed") or 0) == 1
+            and int(stats.get("total_changed_lines") or 0) <= 4
+            and int(stats.get("hunks") or 0) == 1
+            and not review_input.deleted_labels_or_refs
+            and not review_input.changed_imports_or_includes
+            and len(review_input.touched_headings) <= 1
+        )
 
     def _payload(self, goal, edit_mode, patch_budget, review_input):
         return {

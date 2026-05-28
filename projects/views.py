@@ -17,6 +17,8 @@ from accounts.auth_helpers import get_api_user
 from SmartTeX.markup import MarkupType, source_filename_for_markup
 from longdoc.locks import get_locking_change_proposal, get_locking_session
 from longdoc.services import get_longdoc_settings_or_none, initialize_longdoc_from_template
+from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess
+from small_model.services.quota_service import SmallModelQuotaService
 from templates_lib.models import Template
 from templates_lib.services import normalize_template_main_file
 
@@ -115,12 +117,23 @@ def _check_project_lock(project: Project) -> JsonResponse | None:
     )
 
 
-def _project_payload(project: Project) -> dict:
+def _project_payload(project: Project, user=None) -> dict:
     source_file_name = main_source_filename(project)
     longdoc_settings = get_longdoc_settings_or_none(project)
+    small_model_settings = ProjectSmallModelSettings.objects.filter(project=project).first()
     locking_proposal = get_locking_change_proposal(project) if longdoc_settings and longdoc_settings.enabled else None
     locking_session = get_locking_session(project) if longdoc_settings and longdoc_settings.enabled else None
     locked = locking_proposal is not None or locking_session is not None
+    small_model_access = UserSmallModelAccess.objects.filter(user=user, enabled=True).first() if user else None
+    quota = SmallModelQuotaService.check_quota(user) if user and small_model_access else None
+    quota_reason = quota.reason if quota else ""
+    quota_warning_visible = bool(
+        small_model_settings
+        and small_model_settings.small_model_control_enabled
+        and quota
+        and not quota.quota_ok
+        and quota_reason.endswith("_exceeded")
+    )
     return {
         "id": project.id,
         "title": project.title,
@@ -142,6 +155,14 @@ def _project_payload(project: Project) -> dict:
             "mcp_write_context": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_write_context),
             "locked": locked,
             "locking_proposal_id": locking_proposal.id if locking_proposal else None,
+        },
+        "small_model": {
+            "enabled": bool(small_model_settings and small_model_settings.small_model_control_enabled),
+            "quota_ok": bool(quota.quota_ok) if quota is not None else True,
+            "quota_reason": quota_reason,
+            "requests_remaining_today": quota.requests_remaining_today if quota is not None else 0,
+            "tokens_remaining_today": quota.tokens_remaining_today if quota is not None else 0,
+            "quota_warning_visible": quota_warning_visible,
         },
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
@@ -350,7 +371,7 @@ def api_projects(request: HttpRequest) -> JsonResponse:
 
         qs = Project.objects.filter(owner=user).select_related("template")
         if limit is None and before_id is None:
-            data = [_project_payload(p) for p in qs]
+            data = [_project_payload(p, user) for p in qs]
             return JsonResponse(data, safe=False)
 
         safe_limit = max(1, min(int(limit or 24), 120))
@@ -359,7 +380,7 @@ def api_projects(request: HttpRequest) -> JsonResponse:
         rows = list(qs.order_by("-id")[: safe_limit + 1])
         has_more = len(rows) > safe_limit
         items = rows[:safe_limit]
-        data = [_project_payload(p) for p in items]
+        data = [_project_payload(p, user) for p in items]
         next_before_id = items[-1].id if has_more and items else None
         return JsonResponse({"projects": data, "has_more": has_more, "next_before_id": next_before_id})
 
@@ -405,7 +426,7 @@ def api_projects(request: HttpRequest) -> JsonResponse:
         if template_obj is not None:
             initialize_longdoc_from_template(project, template_obj)
     _compile_project_after_create(project)
-    return JsonResponse(_project_payload(project), status=201)
+    return JsonResponse(_project_payload(project, user), status=201)
 
 
 @csrf_exempt
@@ -418,7 +439,7 @@ def api_project_detail(request: HttpRequest, project_id: int) -> JsonResponse:
     project = _project_with_owner(project_id, user)
 
     if request.method == "GET":
-        data = _project_payload(project)
+        data = _project_payload(project, user)
         data["template"] = project.template.title if project.template else None
         return JsonResponse(data)
 
@@ -438,7 +459,7 @@ def api_project_detail(request: HttpRequest, project_id: int) -> JsonResponse:
             project.main_file = new_main
             update_fields.append("main_file")
         project.save(update_fields=update_fields)
-        return JsonResponse(_project_payload(project))
+        return JsonResponse(_project_payload(project, user))
 
     delete_project_files(project)
     project.delete()

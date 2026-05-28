@@ -12,3 +12,5 @@ class SmallModelConfig(AppConfig):
         provider = str(getattr(settings, "SMALL_MODEL_PROVIDER", "mock") or "mock").strip().lower()
         if provider == "gemini" and not str(getattr(settings, "GEMINI_API_KEY", "")).strip():
             raise ImproperlyConfigured("GEMINI_API_KEY is required when SMALL_MODEL_PROVIDER='gemini'.")
+        if provider == "deepseek" and not str(getattr(settings, "DEEPSEEK_API_KEY", "")).strip():
+            raise ImproperlyConfigured("DEEPSEEK_API_KEY is required when SMALL_MODEL_PROVIDER='deepseek'.")

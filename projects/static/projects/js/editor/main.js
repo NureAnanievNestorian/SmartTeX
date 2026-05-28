@@ -22,8 +22,8 @@ import {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
-} from "./compile.js?v=20260529-ui3";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui3";
+} from "./compile.js?v=20260529-ui4";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui4";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
@@ -131,6 +131,31 @@ const newFolderBtn     = document.getElementById("new-folder-btn");
 const newTextFileBtn   = document.getElementById("new-text-file-btn");
 const dropZone         = document.getElementById("drop-zone");
 const cmParent         = document.getElementById("cm-editor");
+const smallModelWarningEl = document.getElementById("small-model-warning");
+const smallModelWarningTextEl = document.getElementById("small-model-warning-text");
+
+function humanQuotaReason(reason) {
+  const labels = {
+    daily_request_limit_exceeded: "Daily request limit reached.",
+    monthly_request_limit_exceeded: "Monthly request limit reached.",
+    daily_token_limit_exceeded: "Daily token limit reached.",
+    monthly_token_limit_exceeded: "Monthly token limit reached.",
+  };
+  return labels[reason] || "Small model requests are temporarily unavailable for this project.";
+}
+
+function renderSmallModelWarning() {
+  const quota = s.projectMeta?.small_model || {};
+  const show = Boolean(quota.enabled && quota.quota_warning_visible);
+  if (smallModelWarningEl) smallModelWarningEl.classList.toggle("visible", show);
+  if (smallModelWarningTextEl && show) {
+    const parts = [humanQuotaReason(quota.quota_reason)];
+    if (typeof quota.requests_remaining_today === "number" && typeof quota.tokens_remaining_today === "number") {
+      parts.push(`Remaining today: ${quota.requests_remaining_today} requests, ${quota.tokens_remaining_today} tokens.`);
+    }
+    smallModelWarningTextEl.textContent = parts.join(" ");
+  }
+}
 
 // ── Loaders ───────────────────────────────────────────────────────────────────
 
@@ -147,6 +172,7 @@ export async function loadProjectMeta() {
   if (!selName || s.selectedFile?.type === "main" || selName === prevMain || selName === "main.tex" || selName === "main.typ") {
     s.selectedFile = { name: s.mainFileName, type: "main", is_text: true };
   }
+  renderSmallModelWarning();
 }
 
 export async function loadMainFile() {

@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from pathlib import Path
 import tempfile
@@ -15,14 +16,17 @@ from longdoc.models import ChangeProposal
 from longdoc.session_service import SessionWriteError
 from longdoc.proposal_service import serialize_change_proposal
 
+from .deepseek_provider import DeepSeekProvider
 from .models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelFeatureGrant, UserSmallModelQuota
 from .gemini_provider import GeminiProvider
 from .provider import SmallModelResponse
+from .registry import get_provider
 from .services.circuit_breaker import CircuitBreakerService
 from .services.compile_log_triage import CompileLogTriageService
 from .services.diff_utils import build_diff_review_input
 from .services.do_not_touch import validate_do_not_touch
 from .services.policy_engine import ProposalPolicyEngine
+from .services.pre_proposal import PreProposalAnalysisService
 from .services.quota_service import SmallModelQuotaService
 from .task_types import FEATURE_DIFF_SAFETY_REVIEWER
 
@@ -59,6 +63,67 @@ class SmallModelControlLayerTests(TestCase):
         parsed = provider._try_repair_json_object('{"allowed_ops":["replace"],"clarification_reason":null,')
 
         self.assertEqual(parsed, {"allowed_ops": ["replace"], "clarification_reason": None})
+
+    def test_deepseek_provider_repairs_truncated_json_object(self) -> None:
+        provider = DeepSeekProvider(api_key="test-key", model_name="deepseek-test")
+
+        parsed = provider._try_repair_json_object('{"allowed_ops":["replace"],"clarification_reason":null,')
+
+        self.assertEqual(parsed, {"allowed_ops": ["replace"], "clarification_reason": None})
+
+    @override_settings(DEEPSEEK_API_KEY="test-key")
+    def test_registry_returns_deepseek_provider(self) -> None:
+        provider = get_provider("deepseek")
+
+        self.assertIsInstance(provider, DeepSeekProvider)
+
+    @override_settings(DEEPSEEK_TEMPERATURE=0.1, DEEPSEEK_MAX_OUTPUT_TOKENS=256, DEEPSEEK_THINKING_TYPE="disabled")
+    def test_deepseek_provider_parses_chat_completion_json(self) -> None:
+        provider = DeepSeekProvider(api_key="test-key", model_name="deepseek-v4-flash")
+        response_body = json_bytes({
+            "model": "deepseek-v4-flash",
+            "choices": [{"message": {"content": '{"risk_level":"low","recommendation":"allow"}'}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 7},
+        })
+
+        with mock.patch("urllib.request.urlopen", return_value=FakeHTTPResponse(response_body)) as urlopen_mock:
+            response = provider.generate_json(
+                task_type="diff_safety_review",
+                system_instruction="Return JSON.",
+                input_payload={"diff": "tiny"},
+                response_schema={"type": "object"},
+                user=self.user,
+                project=self.project,
+                timeout_seconds=9,
+            )
+
+        self.assertTrue(response.success)
+        self.assertEqual(response.provider_name, "deepseek")
+        self.assertEqual(response.model_name, "deepseek-v4-flash")
+        self.assertEqual(response.parsed_json, {"risk_level": "low", "recommendation": "allow"})
+        self.assertEqual(response.input_tokens_estimate, 12)
+        self.assertEqual(response.output_tokens_estimate, 7)
+        request = urlopen_mock.call_args.args[0]
+        self.assertEqual(urlopen_mock.call_args.kwargs["timeout"], 9)
+        self.assertEqual(request.full_url, "https://api.deepseek.com/chat/completions")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-key")
+
+    def test_pre_proposal_fast_path_for_simple_replace_request(self) -> None:
+        result = PreProposalAnalysisService()._deterministic_fast_path(
+            "Замінити формулювання «інформаційна система» на «вебзастосунок» без інших змін."
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["edit_intent"]["edit_mode"], "micro_edit")
+        self.assertEqual(result["edit_intent"]["max_changed_lines"], 5)
+        self.assertEqual(result["edit_intent"]["max_files"], 1)
+
+    def test_pre_proposal_fast_path_skips_broad_scope_requests(self) -> None:
+        result = PreProposalAnalysisService()._deterministic_fast_path(
+            "Замінити формулювання і додати новий розділ з описом системи."
+        )
+
+        self.assertIsNone(result)
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=False)
     def test_policy_skips_diff_budget_when_smcl_disabled(self) -> None:
@@ -97,6 +162,30 @@ class SmallModelControlLayerTests(TestCase):
         self.assertEqual(result.action, "reject")
         self.assertEqual(result.risk_level, "high")
         self.assertEqual(result.warnings[0]["code"], "OVEREDIT_RISK")
+
+    def test_diff_review_skips_provider_for_tiny_low_risk_diff(self) -> None:
+        diff = (
+            "diff --git a/main.typ b/main.typ\n"
+            "--- a/main.typ\n"
+            "+++ b/main.typ\n"
+            "@@ -10,1 +10,1 @@\n"
+            '-"інформаційна система"\n'
+            '+"вебзастосунок"\n'
+        )
+        with mock.patch("small_model.services.diff_safety_reviewer.DiffSafetyReviewService.call_provider", side_effect=AssertionError("provider should not be called")):
+            result = ProposalPolicyEngine.post_patch_check(
+                self.user,
+                self.project,
+                ChangeProposal(
+                    project=self.project,
+                    goal="Replace one phrase",
+                    smcl_metadata={"edit_intent": {"max_changed_lines": 15, "max_files": 1, "edit_mode": "paragraph_edit"}},
+                ),
+                diff,
+            )
+
+        self.assertEqual(result.action, "allow")
+        self.assertFalse(result.smcl_used)
 
     def test_serializer_exposes_smcl_fields_at_top_level(self) -> None:
         proposal = ChangeProposal.objects.create(
@@ -291,3 +380,21 @@ class SmallModelControlLayerTests(TestCase):
 
         self.assertEqual(result.action, "allow")
         self.assertEqual(result.risk_level, "medium")
+
+
+class FakeHTTPResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def json_bytes(payload: dict) -> bytes:
+    return json.dumps(payload).encode("utf-8")

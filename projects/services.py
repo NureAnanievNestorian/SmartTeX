@@ -476,6 +476,30 @@ def list_project_assets(project: Project) -> list[dict[str, Any]]:
     return assets
 
 
+def analyze_typst_project_import(project: Project, use_existing_files: bool = False) -> dict[str, Any]:
+    assets = list_project_assets(project) if use_existing_files else []
+    chapter_paths = [
+        item["name"] for item in assets
+        if str(item.get("name", "")).startswith("chapters/") and str(item.get("name", "")).endswith(".typ")
+    ]
+    bibliography_paths = [
+        item["name"] for item in assets
+        if str(item.get("name", "")).endswith(".bib")
+    ]
+    bibliography_path = bibliography_paths[0] if bibliography_paths else ""
+    return {
+        "detected_counts": {
+            "chapters": len(chapter_paths),
+            "assets": len(assets),
+        },
+        "metadata": {
+            "bibliography": {
+                "path": bibliography_path,
+            }
+        },
+    }
+
+
 def save_project_asset(project: Project, filename: str, data: bytes) -> dict[str, Any]:
     path = project_asset_path(project, filename)
     ensure_project_dir(project)

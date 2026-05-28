@@ -8,6 +8,7 @@ from .views import (
     email_verification_required_view,
     login_view,
     logout_view,
+    profile_view,
     register_view,
     resend_verification_view,
     verify_email_view,
@@ -21,6 +22,7 @@ from .oauth_views import (
 )
 
 urlpatterns = [
+    path("profile/", profile_view, name="profile"),
     path("login/", login_view, name="login"),
     path("register/", register_view, name="register"),
     path("logout/", logout_view, name="logout"),

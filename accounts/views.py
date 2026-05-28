@@ -92,6 +92,36 @@ def _post_login_redirect(request: HttpRequest, user) -> str:
     return reverse("email-verification-required")
 
 
+def _small_model_profile_payload(user) -> dict:
+    from small_model.models import UserSmallModelAccess, UserSmallModelQuota
+    from small_model.services.quota_service import SmallModelQuotaService
+
+    access = UserSmallModelAccess.objects.filter(user=user).first()
+    quota = UserSmallModelQuota.objects.filter(user=user).first()
+    quota_check = SmallModelQuotaService.check_quota(user)
+    return {
+        "has_access_record": access is not None,
+        "enabled": bool(access and access.enabled),
+        "provider": access.provider if access else "",
+        "model_name": access.model_name if access else "",
+        "feature_keys": list(access.feature_grants.values_list("feature_key", flat=True)) if access else [],
+        "quota_ok": quota_check.quota_ok,
+        "quota_reason": quota_check.reason or "",
+        "requests_remaining_today": quota_check.requests_remaining_today,
+        "tokens_remaining_today": quota_check.tokens_remaining_today,
+        "daily_request_limit": quota.daily_request_limit if quota else 0,
+        "monthly_request_limit": quota.monthly_request_limit if quota else 0,
+        "daily_token_limit": quota.daily_token_limit if quota else 0,
+        "monthly_token_limit": quota.monthly_token_limit if quota else 0,
+        "daily_requests_used": quota.daily_requests_used if quota else 0,
+        "monthly_requests_used": quota.monthly_requests_used if quota else 0,
+        "daily_tokens_used": quota.daily_tokens_used if quota else 0,
+        "monthly_tokens_used": quota.monthly_tokens_used if quota else 0,
+        "daily_reset_at": quota.daily_reset_at if quota else None,
+        "monthly_reset_at": quota.monthly_reset_at if quota else None,
+    }
+
+
 @require_http_methods(["GET", "POST"])
 def login_view(request: HttpRequest):
     if request.user.is_authenticated:
@@ -160,6 +190,18 @@ def register_view(request: HttpRequest):
         {
             "form": form,
             "google_oauth_enabled": _google_oauth_enabled(),
+        },
+    )
+
+
+@login_required
+@require_GET
+def profile_view(request: HttpRequest):
+    return render(
+        request,
+        "accounts/profile.html",
+        {
+            "small_model": _small_model_profile_payload(request.user),
         },
     )
 

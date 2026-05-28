@@ -650,7 +650,7 @@
           <span class="theme-label">Тема</span>
         </button>
         {% if request.user.is_authenticated %}
-          <span class="nav-user">{{ request.user.email }}</span>
+          <a href="{% url 'profile' %}" class="nav-user">{{ request.user.email }}</a>
           <a href="{% url 'projects:dashboard' %}">Проєкти</a>
           <a href="{% url 'projects:ai-connect' %}">Інтеграція з ШІ</a>
           <a href="{% url 'projects:ai-workflow' %}">AI Workflow</a>

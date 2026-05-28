@@ -46,6 +46,25 @@
             border-bottom: 1px solid var(--e-border);
         }
 
+        .e-sm-warning {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(221, 180, 75, .14);
+            border-bottom: 1px solid rgba(221, 180, 75, .28);
+            color: #f5d98a;
+            font-size: 12px;
+        }
+
+        .e-sm-warning.visible {
+            display: flex;
+        }
+
+        .e-sm-warning strong {
+            color: #fde7a7;
+        }
+
         .e-title-side {
             display: flex;
             align-items: center;
@@ -3500,6 +3519,10 @@
                 </a>
             </div>
         </div>
+        <div class="e-sm-warning" id="small-model-warning">
+            <strong>AI limits reached.</strong>
+            <span id="small-model-warning-text">Small model requests are temporarily unavailable for this project.</span>
+        </div>
 
         <!-- Body -->
         <div class="e-body" id="e-body">
@@ -3874,5 +3897,5 @@
             sessionReview: {% if session_review %}true{% else %}false{% endif %},
         };
     </script>
-    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui3"></script>
+    <script type="module" src="{% static 'projects/js/editor/main.js' %}?v=20260529-ui4"></script>
 {% endblock %}

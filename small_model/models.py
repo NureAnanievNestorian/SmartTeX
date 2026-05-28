@@ -27,6 +27,7 @@ def next_month_utc():
 class UserSmallModelAccess(models.Model):
     class Provider(models.TextChoices):
         GEMINI = "gemini", "Gemini"
+        DEEPSEEK = "deepseek", "DeepSeek"
         MOCK = "mock", "Mock"
         OPENAI = "openai", "OpenAI"
 

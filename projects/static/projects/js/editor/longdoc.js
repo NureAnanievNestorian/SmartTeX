@@ -1445,7 +1445,7 @@ async function acceptSession() {
     renderSessionBanner();
     closeSessionDiffModal();
     await loadLongdocData();
-    import("./main.js?v=20260529-ui3").then(m => m.loadVersions?.(true)).catch(() => {});
+    import("./main.js?v=20260529-ui4").then(m => m.loadVersions?.(true)).catch(() => {});
   } catch (err) {
     alert(`Не вдалося прийняти зміни: ${err.message}`);
   }

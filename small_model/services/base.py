@@ -44,11 +44,13 @@ class SmallModelCallMixin:
         access = UserSmallModelAccess.objects.filter(user=user).first()
         provider_name = access.provider if access else None
         provider = get_provider(provider_name)
-        provider_model_name = getattr(provider, "model_name", "") or getattr(settings, "GEMINI_SMALL_MODEL_NAME", "")
+        effective_provider_name = provider_name or getattr(provider, "provider_name", "")
+        provider_prefix = str(effective_provider_name or "gemini").upper()
+        provider_model_name = getattr(provider, "model_name", "") or getattr(settings, f"{provider_prefix}_SMALL_MODEL_NAME", "")
         cache_ttl = int(getattr(settings, "SMALL_MODEL_CACHE_TTL_SECONDS", 300))
         cache_key = self._cache_key(
             task_type=self.task_type,
-            provider_name=provider_name or getattr(provider, "provider_name", ""),
+            provider_name=effective_provider_name,
             model_name=str(provider_model_name),
             project_id=getattr(project, "id", 0),
             system_instruction=system_instruction,
@@ -79,7 +81,7 @@ class SmallModelCallMixin:
         response: SmallModelResponse | None = None
         try:
             try:
-                timeout = int(getattr(settings, "GEMINI_TIMEOUT_SECONDS", 15))
+                timeout = int(getattr(settings, f"{provider_prefix}_TIMEOUT_SECONDS", 15))
                 response = provider.generate_json(
                     task_type=self.task_type,
                     system_instruction=system_instruction,

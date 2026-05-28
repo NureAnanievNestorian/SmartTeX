@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Профіль — SmartTeX{% endblock %}
+{% block content %}
+  <div class="card">
+    <h2>Профіль</h2>
+    <div class="row">
+      <div style="flex:1 1 320px">
+        <label>Email</label>
+        <div>{{ request.user.email|default:request.user.username }}</div>
+      </div>
+      <div style="flex:1 1 220px">
+        <label>Username</label>
+        <div>{{ request.user.username }}</div>
+      </div>
+    </div>
+  </div>
+
+  {% if small_model.enabled %}
+    <div class="card">
+      <h2>AI Limits</h2>
+      <div class="row">
+        <div style="flex:1 1 220px">
+          <label>Provider</label>
+          <div>{{ small_model.provider }}</div>
+        </div>
+        <div style="flex:1 1 220px">
+          <label>Model</label>
+          <div>{{ small_model.model_name|default:"—" }}</div>
+        </div>
+        <div style="flex:1 1 220px">
+          <label>Status</label>
+          <div class="status {% if small_model.quota_ok %}success{% else %}pending{% endif %}">
+            {% if small_model.quota_ok %}Available{% else %}{{ small_model.quota_reason }}{% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <div class="card" style="flex:1 1 240px; margin:0; padding:16px">
+          <div class="small">Daily requests</div>
+          <div class="mono">{{ small_model.daily_requests_used }} / {{ small_model.daily_request_limit }}</div>
+          <div class="small">Remaining today: {{ small_model.requests_remaining_today }}</div>
+        </div>
+        <div class="card" style="flex:1 1 240px; margin:0; padding:16px">
+          <div class="small">Monthly requests</div>
+          <div class="mono">{{ small_model.monthly_requests_used }} / {{ small_model.monthly_request_limit }}</div>
+        </div>
+        <div class="card" style="flex:1 1 240px; margin:0; padding:16px">
+          <div class="small">Daily tokens</div>
+          <div class="mono">{{ small_model.daily_tokens_used }} / {{ small_model.daily_token_limit }}</div>
+          <div class="small">Remaining today: {{ small_model.tokens_remaining_today }}</div>
+        </div>
+        <div class="card" style="flex:1 1 240px; margin:0; padding:16px">
+          <div class="small">Monthly tokens</div>
+          <div class="mono">{{ small_model.monthly_tokens_used }} / {{ small_model.monthly_token_limit }}</div>
+        </div>
+      </div>
+      {% if small_model.feature_keys %}
+        <div style="margin-top:16px">
+          <label>Enabled features</label>
+          <div class="row">
+            {% for key in small_model.feature_keys %}
+              <span class="small mono" style="padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:var(--surface-raised)">{{ key }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

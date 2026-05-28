@@ -8,6 +8,7 @@ from django.test import Client, TestCase, override_settings
 
 from SmartTeX.markup import MarkupType
 from projects.models import Project, ProjectVersion
+from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from projects.services import (
     analyze_typst_project_import,
     create_project_text_file,
@@ -87,6 +88,31 @@ class ProjectTypstSupportTests(TestCase):
         self.assertEqual(project.markup_type, MarkupType.TYPST)
         self.assertEqual(read_source_content(project), "= Template\n")
         self.assertEqual(project.project_mode, Project.ProjectMode.LEGACY)
+
+    def test_project_detail_exposes_small_model_quota_warning_for_enabled_project(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Quota Warning", markup_type=MarkupType.TYPST)
+        UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="gemini")
+        UserSmallModelQuota.objects.create(
+            user=self.user,
+            daily_request_limit=2,
+            daily_requests_used=2,
+            monthly_request_limit=20,
+            monthly_requests_used=2,
+            daily_token_limit=1000,
+            daily_tokens_used=10,
+            monthly_token_limit=10000,
+            monthly_tokens_used=10,
+        )
+        ProjectSmallModelSettings.objects.create(project=project, small_model_control_enabled=True)
+
+        response = self.client.get(f"/api/projects/{project.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["small_model"]["enabled"])
+        self.assertFalse(payload["small_model"]["quota_ok"])
+        self.assertTrue(payload["small_model"]["quota_warning_visible"])
+        self.assertEqual(payload["small_model"]["quota_reason"], "daily_request_limit_exceeded")
 
     def test_create_project_text_file_supports_nested_paths(self) -> None:
         project = Project.objects.create(owner=self.user, title="Nested", markup_type=MarkupType.TYPST)

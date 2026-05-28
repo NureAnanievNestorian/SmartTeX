@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import re
+
 from small_model import schemas
 from small_model.services.base import SmallModelCallMixin
 from small_model.services.edit_intent_classifier import CONSERVATIVE_PARAGRAPH, EDIT_MODE_BUDGETS
 from small_model.services.payload import PayloadSanitizer
 from small_model.task_types import FEATURE_EDIT_INTENT_CLASSIFIER, TASK_PRE_PROPOSAL_ANALYZE
+
+_REPLACE_VERBS_RE = re.compile(r"\b(замінити|replace|change|rename|поміняти)\b", re.I)
+_BROAD_SCOPE_RE = re.compile(
+    r"\b(section|розділ|додати|add|створити|create|переписати|rewrite|refactor|move|перемістити|restructure|новий)\b",
+    re.I,
+)
 
 
 class PreProposalAnalysisService(SmallModelCallMixin):
@@ -15,6 +23,9 @@ class PreProposalAnalysisService(SmallModelCallMixin):
         enabled, _, _ = self.is_enabled(user, project)
         if not enabled:
             return {}
+        deterministic = self._deterministic_fast_path(user_request)
+        if deterministic is not None:
+            return deterministic
         payload = PayloadSanitizer.clean_payload(
             {
                 "project_overview": PayloadSanitizer.trim_text(getattr(project, "title", ""), max_chars=500),
@@ -57,5 +68,31 @@ class PreProposalAnalysisService(SmallModelCallMixin):
             "do_not_touch_section_ids": parsed.get("do_not_touch_section_ids") or [],
             "recommended_read_strategy": parsed.get("recommended_read_strategy", ""),
             "max_read_lines": parsed.get("max_read_lines"),
+        }
+        return {"edit_intent": edit_intent, "context_compressor": context}
+
+    def _deterministic_fast_path(self, user_request: str) -> dict | None:
+        text = str(user_request or "").strip()
+        if not text:
+            return None
+        if not _REPLACE_VERBS_RE.search(text):
+            return None
+        if _BROAD_SCOPE_RE.search(text):
+            return None
+        edit_intent = {
+            **CONSERVATIVE_PARAGRAPH,
+            "edit_mode": "micro_edit",
+            "max_changed_lines": 5,
+            "max_files": 1,
+        }
+        context = {
+            "task_brief": PayloadSanitizer.trim_text(text, max_chars=200),
+            "relevant_files": [],
+            "relevant_section_ids": [],
+            "relevant_summaries": [],
+            "do_not_touch_files": [],
+            "do_not_touch_section_ids": [],
+            "recommended_read_strategy": "range_only",
+            "max_read_lines": 80,
         }
         return {"edit_intent": edit_intent, "context_compressor": context}
