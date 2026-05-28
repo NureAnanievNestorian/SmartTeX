@@ -4,7 +4,7 @@ import {
   initCodeMirror, switchLanguage,
   focusEditor, jumpToLine, view,
   saveTabState, hasTabState, activateTab, dropTabState, replaceTabContent,
-} from "./cm.js";
+} from "./cm.js?v=20260529-ui6";
 import { loadPdfViewer, pdfEmpty } from "./pdfviewer.js";
 import {
   setSaveHint, setCompileState, updateEditorTab, openLog,

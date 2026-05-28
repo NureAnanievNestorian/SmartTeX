@@ -1,6 +1,6 @@
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
-import { getContent, saveTabState, replaceTabContent } from "./cm.js";
+import { getContent, saveTabState, replaceTabContent } from "./cm.js?v=20260529-ui6";
 import { utf8ByteSize } from "./files.js";
 import {
   setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics,
