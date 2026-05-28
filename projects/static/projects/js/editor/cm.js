@@ -161,6 +161,54 @@ let _onSelectionCallback = () => {};
 
 export let view = null;
 
+// Per-tab EditorState cache — preserves independent undo/redo history per tab
+const _tabStates = new Map();
+
+function makeExtensions(filename) {
+  return [
+    basicSetup,
+    darkTheme,
+    syntaxHighlighting(vscodeHighlight),
+    langCompartment.of(filename ? getLanguageExt(filename) : []),
+    keymap.of([
+      indentWithTab,
+      { key: "Mod-s",     run: () => { _onInputCallback("save");    return true; } },
+      { key: "Mod-Enter", run: () => { _onInputCallback("compile"); return true; } },
+    ]),
+    EditorView.updateListener.of(update => {
+      if (update.selectionSet || update.docChanged) _onSelectionCallback();
+      if (update.docChanged && !_settingContent) _onInputCallback("change");
+    }),
+  ];
+}
+
+export function saveTabState(name) {
+  if (view && name) _tabStates.set(name, view.state);
+}
+
+export function hasTabState(name) {
+  return _tabStates.has(name);
+}
+
+// Restores cached state if available, otherwise creates fresh state with content.
+// Returns true when cached state was restored (no content fetch needed).
+export function activateTab(name, content, filename) {
+  if (!view) return false;
+  const saved = _tabStates.get(name);
+  if (saved) {
+    view.setState(saved);
+    return true;
+  }
+  _settingContent = true;
+  view.setState(EditorState.create({ doc: content || "", extensions: makeExtensions(filename) }));
+  _settingContent = false;
+  return false;
+}
+
+export function dropTabState(name) {
+  _tabStates.delete(name);
+}
+
 export function initCodeMirror(parent, onInput, onSelection) {
   _onInputCallback = onInput;
   _onSelectionCallback = onSelection;
@@ -169,21 +217,7 @@ export function initCodeMirror(parent, onInput, onSelection) {
     parent,
     state: EditorState.create({
       doc: "",
-      extensions: [
-        basicSetup,
-        darkTheme,
-        syntaxHighlighting(vscodeHighlight),
-        langCompartment.of([]),
-        keymap.of([
-          indentWithTab,
-          { key: "Mod-s",     run: () => { _onInputCallback("save");    return true; } },
-          { key: "Mod-Enter", run: () => { _onInputCallback("compile"); return true; } },
-        ]),
-        EditorView.updateListener.of(update => {
-          if (update.selectionSet || update.docChanged) _onSelectionCallback();
-          if (update.docChanged && !_settingContent) _onInputCallback("change");
-        }),
-      ],
+      extensions: makeExtensions(null),
     }),
   });
   return view;

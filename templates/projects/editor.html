@@ -229,13 +229,14 @@
             color: #fca5a5;
         }
 
-        /* ── 5-column grid with resize handles ─────────────── */
+        /* ── Editor grid with optional assistant side pane ──── */
         .e-body {
             flex: 1;
             min-height: 0;
             display: grid;
-            grid-template-columns: var(--left-w, 260px) 1px 1fr 1px var(--right-w, 420px);
+            grid-template-columns: var(--left-w, 260px) 1px minmax(0, 1fr) 1px var(--right-w, 420px);
             overflow: hidden;
+            position: relative;
         }
 
         .e-resize-handle {
@@ -270,13 +271,14 @@
 
         .e-tabs {
             display: flex;
+            flex-wrap: wrap;
             flex-shrink: 0;
             background: var(--e-raised);
             border-bottom: 1px solid var(--e-border);
         }
 
         .e-tab {
-            flex: 1;
+            flex: 1 1 25%;
             padding: 8px 0;
             font-size: 11px;
             font-weight: 600;
@@ -312,6 +314,561 @@
             display: flex;
         }
 
+        .e-wa-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 6px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: .3px;
+            text-transform: uppercase;
+            color: #b7f0c9;
+            background: rgba(34, 197, 94, .12);
+            border: 1px solid rgba(34, 197, 94, .22);
+        }
+
+        .e-wa-badge.off {
+            color: var(--e-text2);
+            background: rgba(255, 255, 255, .05);
+            border-color: rgba(255, 255, 255, .08);
+        }
+
+        /* ── File tab row ──────────────────────────────────── */
+        .e-edtabbar-row {
+            height: 35px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: stretch;
+            background: var(--e-surface);
+            border-bottom: 1px solid var(--e-border);
+        }
+
+        .e-edtabbar {
+            flex: 1;
+            min-width: 0;
+            height: auto;
+            border-bottom: 0;
+        }
+
+        #wa-tab-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 14px;
+            border: 0;
+            border-left: 1px solid var(--e-border);
+            background: var(--e-surface);
+            color: var(--e-muted);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: background .08s, color .08s;
+        }
+
+        #wa-tab-btn:hover {
+            background: var(--e-raised);
+            color: var(--e-text2);
+        }
+
+        #wa-tab-btn.active {
+            background: var(--e-bg);
+            color: #b7f0c9;
+            box-shadow: inset 0 2px 0 var(--e-accent);
+        }
+
+        /* ── Writing Assistant independent editor tab ─────── */
+        .e-wa-view {
+            display: none;
+            flex: 1;
+            min-height: 0;
+            flex-direction: column;
+            background:
+                radial-gradient(circle at 20% 0%, rgba(34, 197, 94, .08), transparent 28%),
+                linear-gradient(180deg, #202221 0%, #1b1b1b 100%);
+            overflow: hidden;
+        }
+
+        .e-center.wa-active .e-wa-view {
+            display: flex;
+        }
+
+        .e-center.wa-active .e-editor-bar,
+        .e-center.wa-active .e-editor-wrap,
+        .e-center.wa-active .e-asset-view,
+        .e-center.wa-active .e-bottom-panel,
+        .e-center.wa-active .e-bottom-opener {
+            display: none !important;
+        }
+
+        .e-wa-tabbar {
+            display: flex;
+            align-items: stretch;
+            height: 35px;
+            background: var(--e-surface);
+            border-bottom: 1px solid var(--e-border);
+            flex-shrink: 0;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .e-wa-tabbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .e-wa-tab {
+            display: inline-flex;
+            align-items: center;
+            padding: 0 16px;
+            border: 0;
+            background: transparent;
+            color: var(--e-muted);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+            border-bottom: 2px solid transparent;
+            transition: color .1s;
+            flex-shrink: 0;
+        }
+
+        .e-wa-tab:hover {
+            color: var(--e-text2);
+            background: rgba(255, 255, 255, .04);
+        }
+
+        .e-wa-tab.active {
+            color: var(--e-text);
+            border-bottom-color: var(--e-accent);
+        }
+
+        .e-wa-panel {
+            display: none;
+            flex: 1;
+            min-height: 0;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .e-wa-panel.active {
+            display: flex;
+        }
+
+        .e-wa-panel > div {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .e-longdoc-modebar {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 8px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, .03);
+        }
+
+        .e-longdoc-preview {
+            color: var(--e-text2);
+            font-size: 12px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+        }
+
+        .e-workspace-head {
+            padding: 22px 28px 14px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            flex-shrink: 0;
+        }
+
+        .e-workspace-head h2 {
+            margin: 0;
+            color: var(--e-text);
+            font-size: 22px;
+            line-height: 1.2;
+            letter-spacing: -.02em;
+        }
+
+        .e-workspace-head p {
+            margin: 6px 0 0;
+            color: var(--e-text2);
+            font-size: 13px;
+            line-height: 1.5;
+            max-width: 680px;
+        }
+
+        .e-workspace-section,
+        .e-settings-section,
+        .e-settings-strip {
+            padding: 14px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, .035);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+        }
+
+        .e-section-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        .e-section-title h3,
+        .e-settings-section h3,
+        .e-note-page h3 {
+            margin: 0;
+            color: var(--e-text);
+            font-size: 14px;
+            line-height: 1.3;
+        }
+
+        .e-section-title span,
+        .e-settings-section small,
+        .e-longdoc-muted {
+            color: var(--e-text2);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .e-overview-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(130px, 1fr));
+            gap: 10px;
+        }
+
+        .e-overview-tile {
+            min-height: 82px;
+            padding: 14px;
+            border: 0;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, .045);
+            color: var(--e-text);
+            text-align: left;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+        }
+
+        button.e-overview-tile {
+            cursor: pointer;
+        }
+
+        button.e-overview-tile:hover {
+            background: rgba(255, 255, 255, .07);
+        }
+
+        .e-overview-tile strong {
+            display: block;
+            font-size: 28px;
+            line-height: 1;
+            margin-bottom: 8px;
+        }
+
+        .e-overview-tile span {
+            color: var(--e-text2);
+            font-size: 12px;
+        }
+
+        .e-overview-tile.attention {
+            background: rgba(245, 158, 11, .08);
+        }
+
+        .e-status-row,
+        .e-chip-row,
+        .e-quick-actions,
+        .e-toolbar-row {
+            display: flex;
+            gap: 7px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .e-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 10px;
+        }
+
+        .e-library-card,
+        .e-requirement-card,
+        .e-note-page,
+        .e-task-card,
+        .e-plan-row,
+        .e-compact-row {
+            padding: 13px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, .04);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+        }
+
+        .e-library-card,
+        .e-requirement-card,
+        .e-note-page,
+        .e-task-card,
+        .e-plan-row {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .e-library-card p {
+            margin: 0;
+            color: var(--e-text2);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .e-preview-box,
+        .e-rendered-text {
+            color: var(--e-text2);
+            font-size: 12px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+        }
+
+        .e-preview-box {
+            max-height: 170px;
+            overflow: hidden;
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, .16);
+        }
+
+        .e-plan-list,
+        .e-notebook,
+        .e-settings-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .e-plan-row.level-2 { margin-left: 20px; }
+        .e-plan-row.level-3 { margin-left: 40px; }
+        .e-plan-row.level-4,
+        .e-plan-row.level-5,
+        .e-plan-row.level-6 { margin-left: 60px; }
+
+        .e-task-line,
+        .e-compact-row,
+        .e-setting-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+        }
+
+        .e-setting-row {
+            justify-content: space-between;
+            padding: 10px 0;
+            border-top: 1px solid rgba(255, 255, 255, .06);
+        }
+
+        .e-setting-row:first-child {
+            border-top: 0;
+        }
+
+        .e-setting-row span {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .e-check-dot {
+            width: 13px;
+            height: 13px;
+            margin-top: 2px;
+            border-radius: 999px;
+            box-shadow: inset 0 0 0 2px var(--e-text2);
+            flex-shrink: 0;
+        }
+
+        .e-check-dot.done {
+            background: #22c55e;
+            box-shadow: none;
+        }
+
+        .e-ref-chip {
+            padding: 3px 8px;
+            border-radius: 999px;
+            color: #bfdbfe;
+            background: rgba(59, 130, 246, .13);
+            font-size: 11px;
+        }
+
+        .e-task-board {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(190px, 1fr));
+            gap: 8px;
+            align-items: start;
+        }
+
+        .e-task-column {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .e-task-column-head {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            padding: 7px 8px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, .05);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--e-text);
+        }
+
+        .e-file-btn.smarttex-folder {
+            color: #b7f0c9;
+            background: rgba(34, 197, 94, .08);
+            border-left: 2px solid rgba(34, 197, 94, .45);
+        }
+
+        .e-longdoc-scroll {
+            min-height: 0;
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 28px 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        #longdoc-settings-panel,
+        #longdoc-overview-panel,
+        #longdoc-context-panel,
+        #longdoc-outline-panel,
+        #longdoc-tasks-panel,
+        #longdoc-notes-panel,
+        #longdoc-requirements-panel {
+            min-height: 0;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .e-longdoc-card {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 13px;
+            border: 0;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, .04);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+        }
+
+        .e-longdoc-subcard {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 8px;
+            border-radius: 7px;
+            background: rgba(255, 255, 255, .03);
+            border: 1px solid rgba(255, 255, 255, .05);
+        }
+
+        .e-longdoc-card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .e-longdoc-meta {
+            font-size: 11px;
+            color: var(--e-text2);
+        }
+
+        .e-longdoc-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 7px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            border: 1px solid transparent;
+        }
+
+        .e-longdoc-chip.ok,
+        .e-longdoc-chip.covered {
+            color: #b7f0c9;
+            background: rgba(34, 197, 94, .12);
+            border-color: rgba(34, 197, 94, .22);
+        }
+
+        .e-longdoc-chip.warn,
+        .e-longdoc-chip.partial {
+            color: #fde68a;
+            background: rgba(245, 158, 11, .12);
+            border-color: rgba(245, 158, 11, .22);
+        }
+
+        .e-longdoc-chip.missing {
+            color: #fecaca;
+            background: rgba(239, 68, 68, .12);
+            border-color: rgba(239, 68, 68, .22);
+        }
+
+        .e-longdoc-chip.unchecked {
+            color: var(--e-text2);
+            background: rgba(255, 255, 255, .05);
+            border-color: rgba(255, 255, 255, .08);
+        }
+
+        .e-longdoc-input,
+        .e-longdoc-textarea {
+            width: 100%;
+            background: var(--e-bg);
+            color: var(--e-text);
+            border: 1px solid var(--e-border);
+            border-radius: 6px;
+            padding: 7px 8px;
+            font: inherit;
+            box-sizing: border-box;
+        }
+
+        .e-longdoc-input {
+            min-height: 34px;
+        }
+
+        .e-longdoc-textarea {
+            min-height: 110px;
+            resize: vertical;
+        }
+
+        .e-longdoc-textarea.small {
+            min-height: 72px;
+        }
+
+        .e-longdoc-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .e-longdoc-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .e-sec-btn.danger {
+            color: #fda4af;
+        }
+
         /* VS Code-style EXPLORER section header */
         .e-sec-head {
             padding: 5px 12px 5px 16px;
@@ -330,11 +887,11 @@
         }
 
         .e-sec-btn {
-            padding: 2px 5px;
+            padding: 5px 9px;
             font-size: 11px;
-            border-radius: 3px;
+            border-radius: 999px;
             border: 0;
-            background: transparent;
+            background: rgba(255, 255, 255, .05);
             color: var(--e-text2);
             cursor: pointer;
             line-height: 1;
@@ -346,6 +903,11 @@
         .e-sec-btn:hover {
             color: var(--e-text);
             background: var(--e-soft);
+        }
+
+        .e-sec-btn.primary {
+            color: #d9f99d;
+            background: rgba(34, 197, 94, .14);
         }
 
         .e-file-toolbar {
@@ -1067,12 +1629,8 @@
 
         /* VS Code-style editor tab bar */
         .e-edtabbar {
-            height: 35px;
-            flex-shrink: 0;
             display: flex;
             align-items: stretch;
-            background: var(--e-surface);
-            border-bottom: 1px solid var(--e-border);
             overflow-x: auto;
             overflow-y: hidden;
             scrollbar-width: none;
@@ -1974,7 +2532,7 @@
 
         @media (max-width: 1180px) {
             .e-body {
-                grid-template-columns: minmax(220px, 270px) 1fr;
+                grid-template-columns: minmax(220px, 270px) minmax(0, 1fr);
                 grid-template-rows: minmax(0, 1fr) minmax(280px, 38vh);
             }
 
@@ -1984,7 +2542,7 @@
 
             .e-left {
                 grid-column: 1;
-                grid-row: 1 / span 2;
+                grid-row: 1;
                 border-right: 1px solid var(--e-border);
             }
 
@@ -1999,6 +2557,11 @@
                 border-left: 0;
                 border-top: 1px solid var(--e-border);
                 min-width: 0;
+            }
+
+            .e-wa-view {
+                width: auto;
+                max-width: none;
             }
         }
 
@@ -2028,6 +2591,11 @@
 
             .e-pdf {
                 grid-row: 3;
+            }
+
+            .e-wa-view {
+                width: auto;
+                max-width: none;
             }
 
             .e-form-grid {
@@ -2243,6 +2811,252 @@
         html[data-theme="light"] #cm-editor .ͼe { color: #0550ae !important; }
         html[data-theme="light"] #cm-editor .ͼf { color: #8250df !important; }
 
+        /* ── AI Session banner ─────────────────────────────────────────── */
+        .e-session-banner {
+            display: none;
+            flex-shrink: 0;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px;
+            height: 36px;
+            background: rgba(59, 130, 246, .1);
+            border-bottom: 1px solid rgba(59, 130, 246, .28);
+            font-size: 12px;
+            color: #93c5fd;
+            overflow: hidden;
+        }
+
+        .e-session-banner.visible {
+            display: flex;
+        }
+
+        .e-session-goal {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 500;
+        }
+
+        .e-session-goal-label {
+            color: rgba(147, 197, 253, .7);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-right: 5px;
+            flex-shrink: 0;
+        }
+
+        .e-session-actions {
+            display: flex;
+            gap: 5px;
+            flex-shrink: 0;
+        }
+
+        .e-session-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid;
+            transition: opacity .12s;
+            white-space: nowrap;
+        }
+
+        .e-session-btn:hover { opacity: .85; }
+
+        .e-session-btn.diff {
+            background: rgba(59, 130, 246, .12);
+            border-color: rgba(59, 130, 246, .35);
+            color: #93c5fd;
+        }
+
+        .e-session-btn.staging {
+            background: rgba(168, 85, 247, .12);
+            border-color: rgba(168, 85, 247, .35);
+            color: #d8b4fe;
+        }
+
+        .e-session-btn.accept {
+            background: rgba(34, 197, 94, .12);
+            border-color: rgba(34, 197, 94, .35);
+            color: #86efac;
+        }
+
+        .e-session-btn.discard {
+            background: rgba(239, 68, 68, .1);
+            border-color: rgba(239, 68, 68, .3);
+            color: #fca5a5;
+        }
+
+        /* Read-only editor overlay when project is locked */
+        .e-readonly-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            z-index: 15;
+            cursor: not-allowed;
+            background: transparent;
+        }
+
+        .e-editor-wrap.project-locked .e-readonly-overlay {
+            display: block;
+        }
+
+        .e-editor-wrap.project-locked #cm-editor {
+            opacity: .65;
+            pointer-events: none;
+        }
+
+        /* Staging PDF tab (added to right PDF panel) */
+        .e-pdf-tabbar {
+            display: flex;
+            flex-shrink: 0;
+            background: var(--e-surface);
+            border-bottom: 1px solid var(--e-border);
+            height: 35px;
+            align-items: stretch;
+        }
+
+        .e-pdf-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--e-muted);
+            cursor: pointer;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            background: transparent;
+            transition: color .1s;
+            white-space: nowrap;
+        }
+
+        .e-pdf-tab:hover { color: var(--e-text2); }
+
+        .e-pdf-tab.active {
+            color: var(--e-text);
+            border-bottom-color: var(--e-accent);
+        }
+
+        .e-pdf-tab.staging.active {
+            border-bottom-color: #a855f7;
+            color: #d8b4fe;
+        }
+
+        /* Session diff modal (separate from version diff modal) */
+        .session-diff-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: rgba(0, 0, 0, .72);
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .session-diff-modal-overlay.open {
+            display: flex;
+        }
+
+        .session-diff-modal {
+            width: min(1060px, 96vw);
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            background: var(--e-surface);
+            border: 1px solid var(--e-border);
+            border-radius: 14px;
+            box-shadow: 0 30px 80px rgba(0, 0, 0, .62);
+            overflow: hidden;
+        }
+
+        .session-diff-modal-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--e-border);
+        }
+
+        .session-diff-modal-title {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .session-diff-modal-title strong {
+            font-size: 14px;
+        }
+
+        .session-diff-modal-subtitle {
+            font-size: 11px;
+            color: var(--e-muted);
+        }
+
+        .session-diff-modal-body {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 12px 14px 0;
+        }
+
+        .session-diff-file-group {
+            margin-bottom: 12px;
+        }
+
+        .session-diff-file-head {
+            font-size: 11px;
+            font-weight: 700;
+            font-family: "JetBrains Mono", monospace;
+            color: var(--e-text2);
+            padding: 5px 8px;
+            background: var(--e-raised);
+            border: 1px solid var(--e-border);
+            border-radius: 6px 6px 0 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .session-diff-modal-footer {
+            padding: 10px 14px 12px;
+            border-top: 1px solid var(--e-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .session-diff-summary-text {
+            flex: 1;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--e-text2);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .session-diff-footer-actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
     </style>
 {% endblock %}
 
@@ -2316,32 +3130,40 @@
         </div>
     </div>
 
-    <div class="editor-shell">
+    <div class="editor-shell{% if session_review %} session-review{% endif %}">
         <!-- Topbar -->
         <div class="e-topbar">
             <div class="e-title-side">
                 <div class="e-title-group">
                     <span class="e-proj-name" id="project-title">{{ project.title }}</span>
+                    <span id="writing-assistant-badge" class="e-wa-badge off">Асистент вимкнено</span>
                     <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
                 </div>
-                <div class="e-menu-wrap">
-                    <button id="project-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-expanded="false"
-                            aria-haspopup="true">
-                        Проєкт <span class="caret">▾</span>
-                    </button>
-                    <div id="project-menu" class="e-menu" role="menu">
-                        <button id="rename-project-btn" class="e-menu-item" type="button" role="menuitem">Перейменувати
-                            проєкт
+                {% if not session_review %}
+                    <div class="e-menu-wrap">
+                        <button id="project-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-expanded="false"
+                                aria-haspopup="true">
+                            Проєкт <span class="caret">▾</span>
                         </button>
-                        <button id="delete-project-btn" class="e-menu-item danger" type="button" role="menuitem">
-                            Видалити проєкт
-                        </button>
+                        <div id="project-menu" class="e-menu" role="menu">
+                            <button id="rename-project-btn" class="e-menu-item" type="button" role="menuitem">Перейменувати
+                                проєкт
+                            </button>
+                            <button id="delete-project-btn" class="e-menu-item danger" type="button" role="menuitem">
+                                Видалити проєкт
+                            </button>
+                        </div>
                     </div>
-                </div>
+                {% endif %}
             </div>
             <div class="e-actions">
-                <button id="compile-btn" class="e-btn primary" type="button">Recompile <kbd class="e-kbd">⌘↵</kbd>
-                </button>
+                {% if session_review %}
+                    <a class="e-btn" href="{% url 'projects:editor' project.id %}">Повернутися до проєкту</a>
+                {% endif %}
+                {% if not session_review %}
+                    <button id="compile-btn" class="e-btn primary" type="button">Перекомпілювати <kbd class="e-kbd">⌘↵</kbd>
+                    </button>
+                {% endif %}
                 <a id="download-pdf" class="e-btn" href="/api/projects/{{ project.id }}/pdf/" target="_blank">
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
                          stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
@@ -2362,13 +3184,16 @@
             <aside class="e-left">
                 <div class="e-tabs">
                     <button class="e-tab active" data-tab="files">Файли</button>
-                    <button class="e-tab" data-tab="history">Історія</button>
+                    {% if not session_review %}
+                        <button class="e-tab" data-tab="history">Історія</button>
+                    {% endif %}
                 </div>
 
                 <!-- Files tab -->
                 <div id="tab-files" class="e-tabpanel active">
                     <div class="e-sec-head">
                         <span>Файли</span>
+                        {% if not session_review %}
                         <div class="e-file-toolbar">
                             <button id="new-folder-btn" class="e-icon-btn" type="button" title="Нова папка">
                                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -2409,29 +3234,32 @@
                                 <input id="zip-upload" type="file" accept=".zip" style="display:none">
                             </label>
                         </div>
+                        {% endif %}
                     </div>
                     <ul id="file-list" class="e-file-list"></ul>
                 </div>
 
-                <!-- History tab -->
-                <div id="tab-history" class="e-tabpanel">
-                    <div class="e-sec-head">
-                        <span>Версії</span>
-                        <div style="display:flex;gap:4px;align-items:center">
-                            <button id="history-file-filter-btn" class="e-sec-btn e-ver-filter-btn" type="button"
-                                    title="Filter to current file only">Цей файл
-                            </button>
-                            <button id="refresh-versions" class="e-sec-btn" type="button">↻</button>
+                {% if not session_review %}
+                    <!-- History tab -->
+                    <div id="tab-history" class="e-tabpanel">
+                        <div class="e-sec-head">
+                            <span>Версії</span>
+                            <div style="display:flex;gap:4px;align-items:center">
+                                <button id="history-file-filter-btn" class="e-sec-btn e-ver-filter-btn" type="button"
+                                        title="Фільтрувати тільки поточний файл">Цей файл
+                                </button>
+                                <button id="refresh-versions" class="e-sec-btn" type="button">↻</button>
+                            </div>
                         </div>
+                        <div id="versions-list" class="e-history"></div>
                     </div>
-                    <div id="versions-list" class="e-history"></div>
-                </div>
+                {% endif %}
 
                 <!-- Outline — always visible at bottom -->
                 <div class="e-outline-resize" id="resize-outline" aria-hidden="true"></div>
                 <div class="e-outline-wrap">
                     <div class="e-sec-head">
-                        <span>Outline</span>
+                        <span>Секції</span>
                         <button id="refresh-outline" class="e-sec-btn" type="button">↻</button>
                     </div>
                     <ul id="outline-list" class="e-outline"></ul>
@@ -2443,8 +3271,31 @@
 
             <!-- ── Editor ──────────────────────────────── -->
             <section class="e-center" id="drop-zone">
-                <!-- VS Code-style file tab bar (rendered dynamically) -->
-                <div class="e-edtabbar" id="editor-tabbar"></div>
+                <!-- AI session banner -->
+                <div class="e-session-banner" id="session-banner">
+                    <div class="e-session-goal">
+                        <span class="e-session-goal-label">AI-сесія</span>
+                        <span id="session-banner-goal"></span>
+                    </div>
+                    <div class="e-session-actions">
+                        {% if session_review %}
+                            <button class="e-session-btn diff" id="session-btn-diff" type="button">Переглянути diff</button>
+                            <button class="e-session-btn staging" id="session-btn-staging" type="button">Проміжний PDF</button>
+                            <button class="e-session-btn accept" id="session-btn-accept" type="button">Прийняти</button>
+                            <button class="e-session-btn discard" id="session-btn-discard" type="button">Відхилити</button>
+                        {% else %}
+                            <a class="e-session-btn diff" id="session-btn-review" href="{% url 'projects:session_review' project.id %}">Переглянути сесію</a>
+                        {% endif %}
+                    </div>
+                </div>
+                <!-- VS Code-style file tab bar -->
+                <div class="e-edtabbar-row">
+                    <div class="e-edtabbar" id="editor-tabbar"></div>
+                    <button id="wa-tab-btn" type="button" title="Письмовий асистент">
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M2 4h12M2 8h8M2 12h6"/></svg>
+                        Письмовий асистент
+                    </button>
+                </div>
                 <!-- Breadcrumb bar -->
                 <div class="e-editor-bar">
                     <span id="current-file-label" class="e-file-label">main.tex</span>
@@ -2453,11 +3304,14 @@
                 <div class="e-editor-wrap" id="editor-wrap">
                     <div id="cm-editor"></div>
                     <div class="e-drop-overlay">Перетягніть файли сюди</div>
+                    <div class="e-readonly-overlay" id="readonly-overlay">
+                        <span>{% if session_review %}Перегляд сесії доступний тільки для читання{% else %}Редактор доступний тільки для читання, доки AI-сесія активна{% endif %}</span>
+                    </div>
                 </div>
                 <div class="e-asset-view" id="asset-view">
                     <div class="e-asset-box" id="asset-box">
-                        <div class="e-empty-card"><strong>Select a file</strong>Choose a text asset, support PDF, or
-                            image from the workspace to inspect it here.
+                        <div class="e-empty-card"><strong>Виберіть файл</strong>Оберіть текстовий ресурс, допоміжний PDF або
+                            зображення з робочого простору, щоб переглянути його тут.
                         </div>
                     </div>
                 </div>
@@ -2486,14 +3340,14 @@
                         </button>
                         <div class="e-bp-spacer"></div>
                         <button class="e-bp-collapse" id="bottom-collapse-btn" type="button" title="Згорнути панель"
-                                aria-label="Collapse panel">
+                                aria-label="Згорнути панель">
                             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
                                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <polyline points="2 5 7 10 12 5"/>
                             </svg>
                         </button>
                         <button class="e-bp-close" id="bottom-close-btn" type="button" title="Закрити панель"
-                                aria-label="Close panel">
+                                aria-label="Закрити панель">
                             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
                                  stroke="currentColor" stroke-width="2" stroke-linecap="round">
                                 <line x1="2" y1="2" x2="12" y2="12"/>
@@ -2503,8 +3357,8 @@
                     </div>
                     <div id="diag-panel" class="e-bp-body active">
                         <div class="e-diag-list" id="diag-list">
-                            <div class="e-empty-card"><strong>Compile diagnostics</strong>Run Typst or LaTeX to populate
-                                structured errors, warnings, and clickable file locations.
+                            <div class="e-empty-card"><strong>Діагностика компіляції</strong>Запустіть Typst або LaTeX, щоб побачити
+                                структуровані помилки, попередження і клікабельні місця у файлах.
                             </div>
                         </div>
                     </div>
@@ -2533,15 +3387,54 @@
                         Лог
                     </button>
                 </div>
+
+                <!-- ── Writing Assistant independent editor tab ──── -->
+                <div class="e-wa-view" id="wa-view">
+                    <nav class="e-wa-tabbar" aria-label="Письмовий асистент">
+                        <button class="e-wa-tab active" type="button" data-wa-tab="overview">Огляд</button>
+                        <button class="e-wa-tab" type="button" data-wa-tab="outline">План</button>
+                        <button class="e-wa-tab" type="button" data-wa-tab="context">Контекст</button>
+                        <button class="e-wa-tab" type="button" data-wa-tab="tasks">Завдання</button>
+                        <button class="e-wa-tab" type="button" data-wa-tab="requirements">Вимоги</button>
+                        <button class="e-wa-tab" type="button" data-wa-tab="notes">Нотатки</button>
+                        <button class="e-wa-tab" type="button" data-wa-tab="settings">Налаштування</button>
+                    </nav>
+                    <div id="wa-panel-overview" class="e-wa-panel active">
+                        <div id="longdoc-overview-panel"></div>
+                    </div>
+                    <div id="wa-panel-outline" class="e-wa-panel">
+                        <div id="longdoc-outline-panel"></div>
+                    </div>
+                    <div id="wa-panel-context" class="e-wa-panel">
+                        <div id="longdoc-context-panel"></div>
+                    </div>
+                    <div id="wa-panel-tasks" class="e-wa-panel">
+                        <div id="longdoc-tasks-panel"></div>
+                    </div>
+                    <div id="wa-panel-requirements" class="e-wa-panel">
+                        <div id="longdoc-requirements-panel"></div>
+                    </div>
+                    <div id="wa-panel-notes" class="e-wa-panel">
+                        <div id="longdoc-notes-panel"></div>
+                    </div>
+                    <div id="wa-panel-settings" class="e-wa-panel">
+                        <div id="longdoc-settings-panel"></div>
+                    </div>
+                </div>
             </section>
 
-            <!-- ── Resize handle ─────────────────────── -->
             <div class="e-resize-handle" id="resize-right" aria-hidden="true"></div>
 
             <!-- ── PDF ─────────────────────────────────── -->
             <section class="e-pdf">
+                {% if session_review and has_active_session %}
+                    <div class="e-pdf-tabbar visible" id="pdf-tabbar">
+                        <button class="e-pdf-tab active" id="pdf-tab-main" type="button" data-pdf-tab="main">Основний PDF</button>
+                        <button class="e-pdf-tab staging" id="pdf-tab-staging" type="button" data-pdf-tab="staging">Проміжний PDF</button>
+                    </div>
+                {% endif %}
                 <div class="e-pdf-bar">
-                    <span class="e-pdf-label">PDF Preview</span>
+                    <span class="e-pdf-label">Перегляд PDF</span>
                     <div class="e-pdf-actions">
                         <span id="pdf-page-info" class="e-pdf-page-info"></span>
                         <button id="refresh-pdf" class="e-icon-btn" type="button" title="Оновити PDF">
@@ -2570,9 +3463,8 @@
                             <polyline points="14 2 14 8 20 8"/>
                         </svg>
                         <div>
-                            <strong style="display:block;color:var(--e-text);margin-bottom:6px;">Preview not synced
-                                yet</strong>
-                            <span class="e-state-copy">Compile the project to generate or refresh the preview.</span>
+                            <strong style="display:block;color:var(--e-text);margin-bottom:6px;">Перегляд ще не синхронізовано</strong>
+                            <span class="e-state-copy">Скомпілюйте проєкт, щоб створити або оновити перегляд.</span>
                         </div>
                     </div>
                     <div id="pdf-loading" class="e-pdf-loading">Завантаження PDF…</div>
@@ -2581,13 +3473,43 @@
 
         </div>
 
+        <!-- ── Session diff modal ─────────────────────────── -->
+        <div class="session-diff-modal-overlay" id="session-diff-overlay">
+            <div class="session-diff-modal" role="dialog" aria-modal="true" aria-labelledby="session-diff-title">
+                <div class="session-diff-modal-head">
+                    <div>
+                        <div class="session-diff-modal-title" id="session-diff-title">
+                            <strong>Зміни AI-сесії</strong>
+                        </div>
+                        <div class="session-diff-modal-subtitle" id="session-diff-subtitle"></div>
+                    </div>
+                    <div class="session-diff-modal-actions">
+                        <button class="e-session-btn accept" id="session-diff-accept-btn" type="button">Прийняти зміни</button>
+                        <button class="e-session-btn discard" id="session-diff-discard-btn" type="button">Відхилити</button>
+                        <button class="e-icon-btn" id="session-diff-close-btn" type="button" title="Закрити" aria-label="Закрити diff">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                <line x1="2" y1="2" x2="12" y2="12"/>
+                                <line x1="12" y1="2" x2="2" y2="12"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="session-diff-modal-body" id="session-diff-body">
+                    <div class="e-diff-scroll" id="session-diff-content">
+                        <span class="diff-empty">Завантаження diff...</span>
+                    </div>
+                </div>
+                <div class="session-diff-modal-footer" id="session-diff-footer"></div>
+            </div>
+        </div>
+
         <!-- ── Status bar ──────────────────────────────────── -->
         <div class="e-statusbar" id="statusbar">
             <div class="e-sb-left">
       <span class="e-sb-item" id="sb-compile">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
              stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><polyline points="6 8 7.5 9.5 10.5 6.5"/></svg>
-        Synced
+        Синхронізовано
       </span>
             </div>
             <div class="e-sb-right">
@@ -2605,6 +3527,7 @@
         window.EDITOR_CONFIG = {
             projectId: {{ project.id }},
             csrfToken: "{{ csrf_token }}",
+            sessionReview: {% if session_review %}true{% else %}false{% endif %},
         };
     </script>
     <script type="module" src="{% static 'projects/js/editor/main.js' %}"></script>

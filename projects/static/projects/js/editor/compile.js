@@ -57,6 +57,14 @@ export function updateCompileArtifacts(logText = "", compilePayload = null) {
 // ── Save ──────────────────────────────────────────────────────────────────────
 
 export async function saveCurrentFile() {
+  if (cfg.sessionReview) {
+    setSaveHint("Session review is read-only", "error");
+    return;
+  }
+  if (s.longdoc.activeSession) {
+    setSaveHint("Read-only: AI session active", "error");
+    return;
+  }
   if (s.saving || !s.selectedFile.is_text || s.selectedFile.is_dir) return;
   s.saving = true;
   setSaveHint("Збереження…", "saving");
@@ -103,6 +111,10 @@ export async function waitUntilSaveIdle(maxWaitMs = 4000) {
 // ── Compile ───────────────────────────────────────────────────────────────────
 
 export async function runCompile(mode = "manual") {
+  if (cfg.sessionReview) {
+    setSaveHint("Session review is read-only", "error");
+    return;
+  }
   if (s.compileInFlight) { queueCompile(mode); return; }
   s.compileInFlight = true;
   setCompileState("compiling", "pending");
@@ -187,7 +199,7 @@ export async function pollUntilCompileDone(maxMs = 45000, stepMs = 600) {
   setSaveHint("MCP: компіляція не завершена (таймаут)", "error");
 }
 
-// ── WebSocket (MCP project updates) ──────────────────────────────────────────
+// ── SSE (MCP project updates) ─────────────────────────────────────────────────
 
 async function handleMcpUpdate() {
   setSaveHint("Проєкт оновлено через MCP. Оновлюємо…", "saving");
@@ -211,26 +223,17 @@ async function handleMcpUpdate() {
   }
 }
 
-export function connectProjectUpdatesWebSocket() {
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const url   = `${proto}://${window.location.host}/ws/projects/${cfg.projectId}/updates/`;
+export function connectProjectUpdatesSse() {
+  if (s.projectSse) {
+    try { s.projectSse.close(); } catch (_) {}
+    s.projectSse = null;
+  }
 
-  const cleanupReconnect = () => {
-    if (s.projectWsReconnectTimer) { clearTimeout(s.projectWsReconnectTimer); s.projectWsReconnectTimer = null; }
-  };
-  const scheduleReconnect = () => {
-    if (s.externalReloadScheduled || s.projectWsReconnectTimer) return;
-    s.projectWsReconnectTimer = setTimeout(() => {
-      s.projectWsReconnectTimer = null;
-      connectProjectUpdatesWebSocket();
-    }, 1500);
-  };
+  const url = `/sse/projects/${cfg.projectId}/updates/`;
+  const es = new EventSource(url);
+  s.projectSse = es;
 
-  try { s.projectWs = new WebSocket(url); }
-  catch (_) { scheduleReconnect(); return; }
-
-  s.projectWs.addEventListener("open", cleanupReconnect);
-  s.projectWs.addEventListener("message", ev => {
+  es.addEventListener("message", ev => {
     let data = null;
     try { data = JSON.parse(ev.data || "{}"); } catch (_) { return; }
     if (!data || typeof data !== "object") return;
@@ -247,10 +250,6 @@ export function connectProjectUpdatesWebSocket() {
       return;
     }
     handleMcpUpdate().catch(() => {});
-  });
-  s.projectWs.addEventListener("close", scheduleReconnect);
-  s.projectWs.addEventListener("error", () => {
-    try { s.projectWs.close(); } catch (_) {}
   });
 }
 

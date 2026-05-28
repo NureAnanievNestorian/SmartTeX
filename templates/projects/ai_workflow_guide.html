@@ -1,0 +1,858 @@
+{% extends "base.html" %}
+{% block title %}AI Workflow — SmartTeX{% endblock %}
+{% block meta_description %}Recommended workflow for using AI assistants with SmartTeX: session-based editing, Writing Assistant tools, and safe review before applying changes.{% endblock %}
+{% block head %}
+    <style>
+        .docs-hero {
+            border: 1px solid var(--border-soft);
+            border-radius: 16px;
+            padding: 26px 24px;
+            margin-bottom: 12px;
+            background: radial-gradient(700px 280px at 8% -18%, rgba(34, 197, 94, 0.16), transparent 56%),
+            radial-gradient(700px 280px at 98% -10%, rgba(59, 130, 246, 0.14), transparent 58%),
+            linear-gradient(180deg, rgba(20, 31, 51, 0.92), rgba(11, 18, 32, 0.97));
+        }
+
+        .docs-hero h1 {
+            margin: 0 0 8px;
+            font-size: clamp(24px, 4vw, 38px);
+            letter-spacing: -0.5px;
+            line-height: 1.08;
+        }
+
+        .docs-hero p {
+            margin: 0;
+            max-width: 860px;
+            color: var(--text-2);
+            font-size: 16px;
+            line-height: 1.7;
+        }
+
+        .docs-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .docs-card {
+            border: 1px solid var(--border-soft);
+            border-radius: 14px;
+            background: var(--surface);
+            padding: 20px;
+        }
+
+        .docs-card h2 {
+            margin: 0 0 12px;
+            font-size: 21px;
+            letter-spacing: -0.3px;
+        }
+
+        .docs-card h3 {
+            margin: 20px 0 8px;
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .docs-card h3:first-of-type { margin-top: 12px; }
+
+        .docs-card p {
+            margin: 0;
+            color: var(--text-2);
+            line-height: 1.68;
+        }
+
+        .docs-card p + p { margin-top: 8px; }
+        .docs-card p + ul, .docs-card p + ol { margin-top: 8px; }
+
+        .muted {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .toc {
+            margin: 0;
+            padding-left: 20px;
+            display: grid;
+            gap: 5px;
+        }
+
+        .toc a { color: var(--text-2); text-decoration: none; }
+        .toc a:hover { color: var(--text); text-decoration: underline; }
+
+        ol.steps {
+            margin: 8px 0 0;
+            padding-left: 20px;
+            display: grid;
+            gap: 10px;
+        }
+
+        ol.steps li {
+            color: var(--text-2);
+            line-height: 1.62;
+        }
+
+        ul.checks {
+            margin: 8px 0 0;
+            padding-left: 19px;
+            display: grid;
+            gap: 6px;
+        }
+
+        ul.checks li { color: var(--text-2); line-height: 1.6; }
+
+        .callout {
+            margin-top: 10px;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            background: rgba(245, 158, 11, 0.1);
+            color: #fcd34d;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.55;
+        }
+
+        .callout.blue {
+            border-color: rgba(59, 130, 246, 0.35);
+            background: rgba(59, 130, 246, 0.1);
+            color: #bfdbfe;
+        }
+
+        .callout.green {
+            border-color: rgba(34, 197, 94, 0.35);
+            background: rgba(34, 197, 94, 0.08);
+            color: #bbf7d0;
+        }
+
+        .callout.red {
+            border-color: rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.08);
+            color: #fecaca;
+        }
+
+        .code-inline {
+            display: inline-block;
+            font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px;
+            padding: 2px 7px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface-raised);
+            color: var(--text);
+        }
+
+        .tool-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .tool-card {
+            padding: 10px 12px;
+            border: 1px solid var(--border-soft);
+            border-radius: 10px;
+            background: var(--surface-raised);
+        }
+
+        .tool-card .tool-name {
+            font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+            font-size: 11px;
+            color: #86efac;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .tool-card .tool-desc {
+            font-size: 12px;
+            color: var(--text-2);
+            line-height: 1.5;
+        }
+
+        .flow-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            margin-top: 12px;
+        }
+
+        .flow-step {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-soft);
+            background: var(--surface-raised);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-2);
+        }
+
+        .flow-step.ai {
+            border-color: rgba(59, 130, 246, 0.4);
+            background: rgba(59, 130, 246, 0.08);
+            color: #bfdbfe;
+        }
+
+        .flow-step.user {
+            border-color: rgba(34, 197, 94, 0.4);
+            background: rgba(34, 197, 94, 0.08);
+            color: #bbf7d0;
+        }
+
+        .flow-arrow { color: var(--muted); font-size: 14px; }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 1px 7px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: .3px;
+            text-transform: uppercase;
+        }
+
+        .badge.ai {
+            background: rgba(59, 130, 246, 0.14);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #93c5fd;
+        }
+
+        .badge.user {
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.25);
+            color: #86efac;
+        }
+
+        .feature-block {
+            margin-top: 16px;
+            padding: 14px;
+            border: 1px solid var(--border-soft);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, .02);
+        }
+
+        .feature-block .fb-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .feature-block .fb-body {
+            color: var(--text-2);
+            font-size: 13.5px;
+            line-height: 1.65;
+        }
+
+        .feature-block .fb-meta {
+            margin-top: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid transparent;
+        }
+
+        .chip.green {
+            color: #bbf7d0;
+            background: rgba(34, 197, 94, .1);
+            border-color: rgba(34, 197, 94, .22);
+        }
+
+        .chip.blue {
+            color: #bfdbfe;
+            background: rgba(59, 130, 246, .1);
+            border-color: rgba(59, 130, 246, .22);
+        }
+
+        .chip.yellow {
+            color: #fde68a;
+            background: rgba(245, 158, 11, .1);
+            border-color: rgba(245, 158, 11, .22);
+        }
+
+        .chip.gray {
+            color: var(--text-2);
+            background: rgba(255, 255, 255, .05);
+            border-color: rgba(255, 255, 255, .1);
+        }
+
+        .chip.red {
+            color: #fecaca;
+            background: rgba(239, 68, 68, .1);
+            border-color: rgba(239, 68, 68, .22);
+        }
+
+        @media (max-width: 760px) {
+            .docs-card { padding: 16px; }
+            .tool-grid { grid-template-columns: 1fr 1fr; }
+        }
+
+        @media (max-width: 480px) {
+            .tool-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+{% endblock %}
+{% block content %}
+    <section class="docs-hero">
+        <h1>AI Workflow — SmartTeX</h1>
+        <p>
+            Рекомендований спосіб роботи AI-асистента з вашими документами: покроковий огляд інструментів,
+            Writing Assistant features та безпечних сесій редагування.
+        </p>
+    </section>
+
+    <div class="docs-grid">
+
+        <!-- TOC -->
+        <section class="docs-card">
+            <h2>Зміст</h2>
+            <ol class="toc">
+                <li><a href="#overview">Загальна схема роботи</a></li>
+                <li><a href="#basic-tools">Базові інструменти</a></li>
+                <li><a href="#writing-assistant">Writing Assistant — огляд</a></li>
+                <li><a href="#feature-context">Контекстні файли (Context)</a></li>
+                <li><a href="#feature-outline">Структура документа (Outline)</a></li>
+                <li><a href="#feature-tasks">Завдання (Tasks)</a></li>
+                <li><a href="#feature-notes">Нотатки (Notes)</a></li>
+                <li><a href="#feature-summaries">Підсумки розділів (Summaries)</a></li>
+                <li><a href="#feature-requirements">Вимоги (Requirements)</a></li>
+                <li><a href="#ai-session">AI-сесії — безпечне редагування</a></li>
+                <li><a href="#security">Що залишається тільки за вами</a></li>
+                <li><a href="#prompts">Рекомендовані промпти</a></li>
+            </ol>
+        </section>
+
+        <!-- Overview -->
+        <section class="docs-card" id="overview">
+            <h2>1. Загальна схема роботи</h2>
+            <p>
+                AI-асистент взаємодіє зі SmartTeX виключно через MCP-інструменти — він не має прямого доступу до
+                файлів, оминаючи SmartTeX. Всі зміни в документах проходять через <strong>сесію</strong>, яку ви
+                переглядаєте та приймаєте у браузері перед застосуванням.
+            </p>
+
+            <div class="flow-row">
+                <span class="flow-step ai">1. AI читає проєкт</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step ai">2. AI відкриває сесію</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step ai">3. AI пише зміни</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step ai">4. AI компілює</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step ai">5. AI фіналізує</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step user">6. Ви дивитесь diff</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step user">7. Accept / Discard</span>
+            </div>
+
+            <div class="callout green" style="margin-top:12px;">
+                Кроки 1–5 виконує AI. Кроки 6–7 — тільки ви у браузері SmartTeX.
+                <strong>Accept і Discard навмисно недоступні через MCP.</strong>
+            </div>
+        </section>
+
+        <!-- Basic tools -->
+        <section class="docs-card" id="basic-tools">
+            <h2>2. Базові інструменти</h2>
+            <p>Доступні для будь-якого проєкту після підключення MCP.</p>
+
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">list_projects</div>
+                    <div class="tool-desc">Список всіх ваших проєктів із назвами та ID</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">get_project_overview</div>
+                    <div class="tool-desc">Назва, тип компілятора, статус останньої компіляції, стан активної сесії</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">list_project_files</div>
+                    <div class="tool-desc">Файлова структура: ім'я, тип, розмір, чи є текстовим</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">read_project_file</div>
+                    <div class="tool-desc">Повний вміст текстового файлу (з бюджетом на обсяг за сесію)</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">read_file_lines</div>
+                    <div class="tool-desc">Читання конкретного діапазону рядків — ефективно для великих файлів</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">compile_project</div>
+                    <div class="tool-desc">Запускає Typst або LaTeX компіляцію, повертає структуровані помилки</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">get_compilation_log</div>
+                    <div class="tool-desc">Повний лог останньої компіляції для детального налагодження</div>
+                </div>
+            </div>
+
+            <div class="callout blue" style="margin-top:12px;">
+                <strong>Редагування файлів поза сесією недоступне.</strong>
+                Щоб змінити документ, AI має спочатку відкрити AI-сесію (розділ 10).
+            </div>
+        </section>
+
+        <!-- Writing Assistant overview -->
+        <section class="docs-card" id="writing-assistant">
+            <h2>3. Writing Assistant — огляд</h2>
+            <p>
+                Writing Assistant — набір структурованих інструментів для роботи над <em>великими, довготривалими
+                документами</em>: дисертаціями, книгами, технічними звітами. Увімкнюється окремо в налаштуваннях
+                проєкту.
+            </p>
+            <p>
+                Кожна функція (Context, Outline, Tasks, Notes, Summaries, Requirements) вмикається незалежно.
+                Після увімкнення вони доступні через відповідні MCP-інструменти та відображаються у вкладці
+                <strong>Writing Assistant</strong> в редакторі.
+            </p>
+
+            <h3>Інструмент-огляд</h3>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">get_longdoc_overview</div>
+                    <div class="tool-desc">Повний стан проєкту: завдання, вимоги, нотатки, структура, активна сесія,
+                        бюджет читання — все одним викликом
+                    </div>
+                </div>
+            </div>
+
+            <div class="callout blue" style="margin-top:10px;">
+                Рекомендується починати кожну сесію роботи з <span class="code-inline">get_longdoc_overview</span> —
+                це дає AI повну картину проєкту без зайвих викликів.
+            </div>
+        </section>
+
+        <!-- Context -->
+        <section class="docs-card" id="feature-context">
+            <h2>4. Контекстні файли (Context)</h2>
+            <p>
+                Контекстні файли — це спеціальні довідкові документи, які зберігаються в
+                <span class="code-inline">.smarttex/context/</span> і <strong>не впливають на компіляцію</strong>.
+                Вони призначені виключно для того, щоб AI міг швидко зрозуміти структуру і зміст документа без
+                необхідності кожного разу перечитувати весь вихідний код.
+            </p>
+
+            <div class="feature-block">
+                <div class="fb-title">Що зберігається в контекстних файлах?</div>
+                <div class="fb-body">
+                    Будь-який текст, який допомагає орієнтуватися: загальний опис документа, список персонажів або
+                    термінів, схема аргументації, список використаних джерел, стилістичні вимоги, нотатки
+                    редактора, TODO-списки, структурні плани розділів.
+                </div>
+            </div>
+
+            <div class="feature-block">
+                <div class="fb-title">Хто може їх редагувати?</div>
+                <div class="fb-body">
+                    За замовчуванням файли доступні тільки для читання (<span class="code-inline">is_read_only: true</span>).
+                    AI може записувати в контекстні файли які дозволяють запис — без відкриття сесії, тому що
+                    контекст не є частиною скомпільованого документа і не потребує перегляду diff.
+                </div>
+                <div class="fb-meta">
+                    <span class="chip green">Без сесії</span>
+                    <span class="chip blue">write_context_file</span>
+                </div>
+            </div>
+
+            <h3>Інструменти</h3>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">list_context_files</div>
+                    <div class="tool-desc">Повертає всі контекстні файли з назвою, описом, розміром і прапором read_only</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">read_context_file</div>
+                    <div class="tool-desc">Повний вміст контекстного файлу (враховує бюджет читання і ліміт обсягу)</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">write_context_file</div>
+                    <div class="tool-desc">Перезаписує вміст файлу; недоступно якщо is_read_only</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Outline -->
+        <section class="docs-card" id="feature-outline">
+            <h2>5. Структура документа (Outline)</h2>
+            <p>
+                Outline — ієрархічний план документа, який відображає розділи та їх стан розробки.
+                Це <em>плановий</em> розклад структури, незалежний від реального коду — ви та AI можете
+                підтримувати його актуальним паралельно з написанням.
+            </p>
+
+            <div class="feature-block">
+                <div class="fb-title">Що таке елемент Outline?</div>
+                <div class="fb-body">
+                    Кожен елемент — це розділ документа з: заголовком, рівнем вкладеності (глава → підрозділ → …),
+                    порядковим номером, очікуваним обсягом у сторінках, нотатками та статусом.
+                </div>
+                <div class="fb-meta">
+                    <span class="chip red">missing — не розпочато</span>
+                    <span class="chip yellow">stub — є заглушка</span>
+                    <span class="chip blue">draft — чернетка</span>
+                    <span class="chip green">done — завершено</span>
+                </div>
+            </div>
+
+            <div class="feature-block">
+                <div class="fb-title">Навіщо AI це потрібно?</div>
+                <div class="fb-body">
+                    AI може прочитати Outline і одразу зрозуміти: що вже написано, що ще <span
+                        class="chip red" style="display:inline">missing</span>, наскільки великим має бути кожен
+                    розділ. Після внесення змін AI оновлює статуси — і ви бачите прогрес прямо у Writing Assistant.
+                </div>
+            </div>
+
+            <h3>Інструменти</h3>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">get_outline</div>
+                    <div class="tool-desc">Повна ієрархія розділів зі статусами та нотатками</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">create_outline_item</div>
+                    <div class="tool-desc">Додає новий розділ до плану з вказаними рівнем і позицією</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">update_outline_item</div>
+                    <div class="tool-desc">Оновлює статус, нотатки або очікуваний обсяг розділу</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tasks -->
+        <section class="docs-card" id="feature-tasks">
+            <h2>6. Завдання (Tasks)</h2>
+            <p>
+                Tasks — Kanban-дошка для відстеження конкретних робочих завдань у проєкті.
+                Завдання можуть створювати і ви, і AI-асистент.
+            </p>
+
+            <div class="feature-block">
+                <div class="fb-title">Структура завдання</div>
+                <div class="fb-body">
+                    Кожне завдання має: опис (вільний текст), статус, автора (user або mcp), і необов'язковий
+                    зв'язок із AI-сесією, яка його виконала. Завдання без прив'язки до розділу — загальні, із
+                    прив'язкою — структурні.
+                </div>
+                <div class="fb-meta">
+                    <span class="chip gray">open</span>
+                    <span class="chip yellow">in_progress</span>
+                    <span class="chip green">done</span>
+                </div>
+            </div>
+
+            <div class="feature-block">
+                <div class="fb-title">Зв'язок із AI-сесіями</div>
+                <div class="fb-body">
+                    При фіналізації сесії (<span class="code-inline">finalize_ai_session</span>) AI може передати
+                    список ID завдань, які воно виконало — вони автоматично позначаться як <span
+                        class="chip green" style="display:inline">done</span> із посиланням на сесію.
+                </div>
+            </div>
+
+            <h3>Інструменти</h3>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">list_tasks</div>
+                    <div class="tool-desc">Всі завдання проєкту, згруповані за статусом</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">create_task</div>
+                    <div class="tool-desc">Створює нове завдання з описом і початковим статусом open</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">update_task</div>
+                    <div class="tool-desc">Змінює статус або опис існуючого завдання</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Notes -->
+        <section class="docs-card" id="feature-notes">
+            <h2>7. Нотатки (Notes)</h2>
+            <p>
+                Notes — структуровані нотатки до документа, організовані за секціями.
+                Кожна секція має заголовок і вільний текст.
+                На відміну від контекстних файлів, нотатки зберігаються в базі даних і відображаються
+                прямо в Writing Assistant без відкриття файлів.
+            </p>
+
+            <div class="feature-block">
+                <div class="fb-title">Для чого використовувати Notes?</div>
+                <div class="fb-body">
+                    Нотатки підходять для: редакторських зауважень до конкретної теми, списку питань до
+                    наукового керівника, нагадувань про незавершені деталі, тимчасових коментарів які не
+                    мають бути у вихідному коді. AI може читати та оновлювати нотатки для збереження
+                    проміжних висновків між сесіями.
+                </div>
+            </div>
+
+            <h3>Інструменти</h3>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">list_notes</div>
+                    <div class="tool-desc">Всі секції нотаток із заголовками і вмістом</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">create_note</div>
+                    <div class="tool-desc">Створює нову секцію з заголовком і текстом</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">update_note</div>
+                    <div class="tool-desc">Оновлює заголовок або текст існуючої секції</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Summaries -->
+        <section class="docs-card" id="feature-summaries">
+            <h2>8. Підсумки розділів (Summaries)</h2>
+            <p>
+                Summaries — короткі AI-підсумки конкретних розділів документа.
+                Кожен підсумок прив'язаний до конкретного файлу та діапазону рядків, і позначається як
+                застарілий (<em>stale</em>), якщо вихідний текст змінився після написання підсумку.
+            </p>
+
+            <div class="feature-block">
+                <div class="fb-title">Навіщо підсумки потрібні AI?</div>
+                <div class="fb-body">
+                    Замість того щоб кожного разу перечитувати всі 200 сторінок, AI може прочитати стислі
+                    підсумки розділів і зрозуміти зміст. Це знижує витрати на читання (бюджет) і прискорює
+                    орієнтацію у великому документі. Якщо підсумок <span class="chip yellow"
+                        style="display:inline">stale</span> — потрібно перечитати розділ і оновити його.
+                </div>
+            </div>
+
+            <div class="feature-block">
+                <div class="fb-title">Що зберігає підсумок?</div>
+                <div class="fb-body">
+                    Заголовок розділу, посилання на файл, діапазон рядків, хеш вмісту, номер версії проєкту
+                    на момент написання, текст підсумку і автора (user або mcp).
+                </div>
+            </div>
+
+            <h3>Інструменти</h3>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">list_section_summaries</div>
+                    <div class="tool-desc">Всі підсумки з прапором is_stale — легко знайти що потребує оновлення</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">create_section_summary</div>
+                    <div class="tool-desc">Записує новий підсумок; якщо для цього заголовку вже є — перезаписує</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Requirements -->
+        <section class="docs-card" id="feature-requirements">
+            <h2>9. Вимоги (Requirements)</h2>
+            <p>
+                Requirements — формальні вимоги до документа з унікальним ID і статусом покриття.
+                Підходить для академічних робіт, де є перелік критеріїв оцінювання, або технічних документів
+                із чек-листом вимог замовника. За замовчуванням вимкнено; вмикається в Settings.
+            </p>
+
+            <div class="feature-block">
+                <div class="fb-title">Структура вимоги</div>
+                <div class="fb-body">
+                    Кожна вимога має: унікальний ідентифікатор (<span
+                        class="code-inline">req_id</span>, наприклад REQ-01), опис, статус покриття, нотатку
+                    та список розділів документа, де вимога відображена.
+                </div>
+                <div class="fb-meta">
+                    <span class="chip gray">unchecked — ще не перевірено</span>
+                    <span class="chip green">covered — повністю висвітлено</span>
+                    <span class="chip yellow">partial — частково</span>
+                    <span class="chip red">missing — відсутнє</span>
+                </div>
+            </div>
+
+            <div class="feature-block">
+                <div class="fb-title">Як AI використовує Requirements?</div>
+                <div class="fb-body">
+                    AI може прочитати список вимог, перевірити по документу яка з них відображена, і оновити
+                    статуси. Прив'язка до розділів Outline дозволяє точно вказати де саме вимога закрита. Це
+                    корисно для самоперевірки перед здачею роботи.
+                </div>
+            </div>
+
+            <h3>Інструменти</h3>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <div class="tool-name">list_requirements</div>
+                    <div class="tool-desc">Всі вимоги зі статусами покриття і прив'язкою до розділів</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">create_requirement</div>
+                    <div class="tool-desc">Додає нову формальну вимогу з ID і описом</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-name">update_requirement</div>
+                    <div class="tool-desc">Оновлює статус покриття, нотатки і список розділів</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- AI Session -->
+        <section class="docs-card" id="ai-session">
+            <h2>10. AI-сесії</h2>
+            <p>
+                AI-сесія — ізольоване середовище для внесення змін у документ. Всі правки зберігаються окремо
+                від основного проєкту у власному git-гілці і стають видимими лише після того, як ви їх приймете.
+            </p>
+
+            <h3>Покроковий процес</h3>
+            <ol class="steps">
+                <li>
+                    <strong>Читання проєкту</strong> <span class="badge ai">AI</span> —
+                    AI отримує огляд через <span class="code-inline">get_longdoc_overview</span> або
+                    <span class="code-inline">get_project_overview</span>, читає файли, контекст, підсумки.
+                </li>
+                <li>
+                    <strong>Відкриття сесії</strong> <span class="badge ai">AI</span> —
+                    <span class="code-inline">create_ai_session(goal=…)</span>. Проєкт блокується: ніхто
+                    інший не може відкрити нову сесію або редагувати файли через MCP.
+                </li>
+                <li>
+                    <strong>Внесення змін</strong> <span class="badge ai">AI</span> —
+                    <span class="code-inline">write_to_session</span> підтримує операції:
+                    <ul class="checks" style="margin-top:6px;">
+                        <li><span class="code-inline">overwrite</span> — повна заміна вмісту файлу</li>
+                        <li><span class="code-inline">patch</span> — заміна рядків у вказаному діапазоні</li>
+                        <li><span class="code-inline">find_replace</span> — пошук і заміна (текст або regex)</li>
+                        <li><span class="code-inline">append_section</span> — додавання нового розділу в кінець</li>
+                        <li><span class="code-inline">dry_run: true</span> — перегляд результату без застосування</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Компіляція в сесії</strong> <span class="badge ai">AI</span> —
+                    <span class="code-inline">compile_ai_session</span> компілює саме версію сесії, не торкаючись
+                    основного проєкту. AI виправляє помилки і компілює знову.
+                </li>
+                <li>
+                    <strong>Перегляд diff</strong> <span class="badge ai">AI</span> —
+                    <span class="code-inline">get_session_diff</span> повертає unified diff по всіх змінених
+                    файлах.
+                </li>
+                <li>
+                    <strong>Фіналізація</strong> <span class="badge ai">AI</span> —
+                    <span class="code-inline">finalize_ai_session(summary=…, task_ids=[…])</span>.
+                    AI описує зроблені зміни і вказує виконані завдання. Сесія переходить у стан
+                    <em>ready_for_review</em>.
+                </li>
+                <li>
+                    <strong>Перегляд у браузері</strong> <span class="badge user">Ви</span> —
+                    SmartTeX показує сесійний банер. Відкрийте сторінку перегляду: diff по файлах і
+                    staging PDF поряд із основним.
+                </li>
+                <li>
+                    <strong>Accept або Discard</strong> <span class="badge user">Тільки ви</span> —
+                    <strong>Accept</strong> зливає зміни, <strong>Discard</strong> — скасовує.
+                    Ці дії доступні <em>виключно у браузері</em>.
+                </li>
+            </ol>
+
+            <h3>Стани сесії</h3>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+                <span class="chip blue">active — сесія відкрита, AI пише зміни</span>
+                <span class="chip yellow">compiled — скомпільовано в сесії</span>
+                <span class="chip green">ready_for_review — фіналізовано, чекає на вас</span>
+                <span class="chip green">accepted — прийнято</span>
+                <span class="chip red">discarded — відхилено</span>
+                <span class="chip gray">expired — протермінувало</span>
+            </div>
+
+            <div class="callout" style="margin-top:12px;">
+                Якщо сесія вже активна, <span class="code-inline">create_ai_session</span> поверне
+                423 Locked — поки ви не приймете або не відхилите поточну сесію, нову відкрити неможливо.
+            </div>
+
+            <h3>MCP-ресурс</h3>
+            <p>
+                <span class="code-inline">smarttex://projects/{id}/ai-session</span> — підписка на зміни стану
+                активної сесії. AI-клієнт отримує сповіщення, коли сесія переходить до
+                <em>ready_for_review</em> або закривається.
+            </p>
+        </section>
+
+        <!-- Security -->
+        <section class="docs-card" id="security">
+            <h2>11. Що залишається тільки за вами</h2>
+            <p>Ці дії навмисно виключені з MCP і доступні виключно через браузер SmartTeX:</p>
+            <ul class="checks">
+                <li><strong>Accept</strong> — злиття змін сесії в основний проєкт</li>
+                <li><strong>Discard</strong> — видалення всіх правок сесії</li>
+                <li><strong>Видалення проєкту</strong></li>
+                <li><strong>Управління токенами доступу</strong> (Settings → Integrations)</li>
+                <li><strong>Вмикання/вимикання Writing Assistant</strong></li>
+            </ul>
+            <div class="callout green" style="margin-top:10px;">
+                Ніяка AI-дія не може застосувати зміни без вашого явного підтвердження у браузері.
+                Це архітектурне рішення, а не налаштування.
+            </div>
+        </section>
+
+        <!-- Prompts -->
+        <section class="docs-card" id="prompts">
+            <h2>12. Рекомендовані промпти</h2>
+
+            <h3>Перевірка підключення</h3>
+            <div class="callout blue" style="font-weight:400;font-style:italic;">
+                Using SmartTeX, check if you have access to my projects and show me the list.
+            </div>
+
+            <h3>Початок роботи над документом</h3>
+            <div class="callout blue" style="font-weight:400;font-style:italic;">
+                Using SmartTeX, open project [ID], read the longdoc overview and main source files,
+                then tell me the current structure, task status, and what's missing.
+            </div>
+
+            <h3>Редагування через сесію</h3>
+            <div class="callout blue" style="font-weight:400;font-style:italic;">
+                Using SmartTeX, open an AI session for project [ID] with goal "Fix bibliography formatting",
+                apply the changes, compile to verify, then finalize so I can review the diff.
+            </div>
+
+            <h3>Оновлення стану проєкту</h3>
+            <div class="callout blue" style="font-weight:400;font-style:italic;">
+                Using SmartTeX, read the outline and current source files for project [ID],
+                update section statuses to reflect actual progress, and mark completed tasks as done.
+            </div>
+
+            <h3>Перевірка вимог</h3>
+            <div class="callout blue" style="font-weight:400;font-style:italic;">
+                Using SmartTeX, read requirements and source files for project [ID],
+                check which requirements are covered by the current text and update their coverage status.
+            </div>
+
+            <div class="callout" style="margin-top:12px;">
+                Не вказуйте асистенту «прийняти» або «застосувати» сесію — цей крок завжди виконуєте ви.
+            </div>
+        </section>
+
+    </div>
+{% endblock %}

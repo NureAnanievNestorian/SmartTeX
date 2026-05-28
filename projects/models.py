@@ -32,6 +32,11 @@ class ProjectVersion(models.Model):
         TEXT = "text", "Text"
         EVENT = "event", "Event"
 
+    class Category(models.TextChoices):
+        SOURCE = "source", "Source"
+        ASSISTANT = "assistant", "Assistant"
+        SESSION_ACCEPT = "session_accept", "Session Accept"
+
     class Source(models.TextChoices):
         MCP = "mcp", "MCP"
         WEB = "web", "Web"
@@ -44,6 +49,7 @@ class ProjectVersion(models.Model):
     operation = models.CharField(max_length=64)
     target = models.CharField(max_length=255, default="main.tex")
     target_file = models.CharField(max_length=255, default="", blank=True)
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.SOURCE)
     snapshot_kind = models.CharField(max_length=12, choices=SnapshotKind.choices, default=SnapshotKind.TEXT)
     event_payload = models.JSONField(default=dict, blank=True)
     is_revertible = models.BooleanField(default=True)

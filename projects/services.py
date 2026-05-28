@@ -335,7 +335,8 @@ def _safe_file_path(project: Project, filename: str) -> Path:
         raise ValueError("absolute paths not allowed")
     if any(part in {".", ".."} for part in parts):
         raise ValueError("path traversal not allowed")
-    if any(part.startswith(".") for part in parts):
+    allowed_hidden_path = len(parts) >= 3 and parts[0] == ".smarttex" and parts[1] == "context"
+    if any(part.startswith(".") for part in parts) and not allowed_hidden_path:
         raise ValueError("hidden files not allowed")
 
     final = parts[-1]
@@ -366,7 +367,8 @@ def _safe_directory_path(project: Project, directory: str) -> Path:
         raise ValueError("absolute paths not allowed")
     if any(part in {".", ".."} for part in parts):
         raise ValueError("path traversal not allowed")
-    if any(part.startswith(".") for part in parts):
+    allowed_hidden_path = parts in {(".smarttex",), (".smarttex", "context")}
+    if any(part.startswith(".") for part in parts) and not allowed_hidden_path:
         raise ValueError("hidden folders not allowed")
 
     root = ensure_project_dir(project).resolve()
@@ -429,15 +431,41 @@ def _is_system_artifact_file(path: Path) -> bool:
     return False
 
 
-def _has_hidden_relative_parts(root: Path, path: Path) -> bool:
-    return any(part.startswith(".") for part in path.relative_to(root).parts)
+VISIBLE_SMARTTEX_PARTS = {
+    (".smarttex",),
+    (".smarttex", "context"),
+}
+
+VISIBLE_ROOT_DOTFILES = {
+    ".latexmkrc",
+    ".typstignore",
+    ".gitignore",
+    ".editorconfig",
+}
+
+
+def _is_visible_hidden_project_path(root: Path, path: Path) -> bool:
+    parts = path.relative_to(root).parts
+    if not parts:
+        return True
+    if parts[0] == ".smarttex-git":
+        return False
+    if parts[0] == ".smarttex":
+        if len(parts) >= 2 and parts[1] == "sessions":
+            return False
+        if path.is_dir():
+            return parts in VISIBLE_SMARTTEX_PARTS
+        return len(parts) >= 3 and parts[:2] == (".smarttex", "context")
+    if len(parts) == 1 and parts[0] in VISIBLE_ROOT_DOTFILES:
+        return True
+    return not any(part.startswith(".") for part in parts)
 
 
 def list_project_assets(project: Project) -> list[dict[str, Any]]:
     root = ensure_project_dir(project)
     assets = []
     for path in sorted(root.rglob("*"), key=lambda p: str(p.relative_to(root)).lower()):
-        if _has_hidden_relative_parts(root, path):
+        if not _is_visible_hidden_project_path(root, path):
             continue
         if path.is_dir():
             assets.append(_asset_payload(project, path))
@@ -865,7 +893,7 @@ def list_source_sections(project: Project) -> list[dict[str, Any]]:
     root = ensure_project_dir(project)
     next_index = (max(c.index for c in chunks) if chunks else -1) + 1
     for path in sorted(root.rglob("*.typ"), key=lambda p: str(p.relative_to(root)).lower()):
-        if _has_hidden_relative_parts(root, path):
+        if any(part.startswith(".") for part in path.relative_to(root).parts):
             continue
         rel = str(path.relative_to(root)).replace("\\", "/")
         if rel == main_file:
@@ -1189,6 +1217,7 @@ def create_project_version(
     before_content: str,
     after_content: str,
     target_file: str | None = None,
+    category: str = ProjectVersion.Category.SOURCE,
     snapshot_kind: str = ProjectVersion.SnapshotKind.TEXT,
     event_payload: dict[str, Any] | None = None,
     is_revertible: bool = True,
@@ -1210,6 +1239,7 @@ def create_project_version(
             operation=operation,
             target=target,
             target_file=(target_file or target.split(":", 1)[0]).strip(),
+            category=category,
             snapshot_kind=snapshot_kind,
             event_payload=event_payload or {},
             is_revertible=is_revertible,
@@ -1229,6 +1259,7 @@ def create_text_project_version(
     target_file: str,
     summary: str,
     tracked_files: list[str] | None = None,
+    category: str = ProjectVersion.Category.SOURCE,
     is_revertible: bool = True,
 ) -> ProjectVersion | None:
     commit_info = commit_project_text_changes(
@@ -1247,6 +1278,7 @@ def create_text_project_version(
         operation=operation,
         target=target,
         target_file=target_file,
+        category=category,
         summary=summary,
         before_content="",
         after_content="",

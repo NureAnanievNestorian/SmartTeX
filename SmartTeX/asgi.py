@@ -12,13 +12,13 @@ import os
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'SmartTeX.settings')
 
 from django.core.asgi import get_asgi_application
-from .realtime_ws import websocket_project_updates
+from .realtime_sse import sse_project_updates
 
 django_asgi_app = get_asgi_application()
 
 
 async def application(scope, receive, send):
-    if scope["type"] == "websocket":
-        await websocket_project_updates(scope, receive, send)
+    if scope["type"] == "http" and str(scope.get("path", "")).startswith("/sse/projects/"):
+        await sse_project_updates(scope, receive, send)
         return
     await django_asgi_app(scope, receive, send)

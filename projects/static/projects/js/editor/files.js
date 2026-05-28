@@ -77,6 +77,25 @@ export function buildProjectTree(entries) {
   const dirMap = { "": root };
 
   for (const entry of entries) {
+    if (entry.is_dir) {
+      const dir = entry.name;
+      const parentDir = pathDirName(dir);
+      const parent = dirMap[parentDir] || root;
+      if (!dirMap[dir]) {
+        const node = {
+          key: dir,
+          name: pathBaseName(dir) || dir,
+          depth: parent.depth + 1,
+          children: [],
+          file: entry,
+        };
+        dirMap[dir] = node;
+        parent.children.push(node);
+      } else {
+        dirMap[dir].file = entry;
+      }
+      continue;
+    }
     const dir = pathDirName(entry.name);
     if (dir && !dirMap[dir]) {
       const parentDir = pathDirName(dir);
@@ -111,7 +130,7 @@ export function renderFileList() {
   if (!fileListEl) return;
   fileListEl.innerHTML = "";
   const mainEntry = { name: s.mainFileName, is_text: true, type: "main", is_dir: false };
-  const treeRoot  = buildProjectTree(s.projectFiles.filter(f => f.name !== s.mainFileName && !f.is_dir));
+  const treeRoot  = buildProjectTree(s.projectFiles.filter(f => f.name !== s.mainFileName));
 
   function renderEntry(file, depth = 0, labelOverride = null) {
     const li  = document.createElement("li");
@@ -120,6 +139,9 @@ export function renderFileList() {
 
     const btn = document.createElement("button");
     btn.className = `e-file-btn${s.selectedFile.name === file.name ? " active" : ""}`;
+    if (file.name === ".smarttex" || file.name.startsWith(".smarttex/")) {
+      btn.classList.add("smarttex-folder");
+    }
     btn.style.paddingLeft = `${8 + depth * 14}px`;
     btn.dataset.path  = file.name;
     btn.dataset.isDir = file.is_dir ? "1" : "0";
@@ -153,7 +175,7 @@ export function renderFileList() {
       btn.addEventListener("click", () => _selectFile?.(file));
     }
 
-    if (!file.is_dir && file.name !== s.mainFileName) {
+    if (!cfg.sessionReview && !file.is_dir && file.name !== s.mainFileName) {
       btn.draggable = true;
       btn.addEventListener("dragstart", e => {
         s.draggedFilePath = file.name;
@@ -165,7 +187,7 @@ export function renderFileList() {
       });
     }
 
-    if (file.is_dir) {
+    if (!cfg.sessionReview && file.is_dir) {
       btn.addEventListener("dragover", e => {
         if (!s.draggedFilePath || s.draggedFilePath.startsWith(`${file.name}/`)) return;
         e.preventDefault(); btn.classList.add("drag-target");
@@ -183,7 +205,7 @@ export function renderFileList() {
     // File action buttons
     const actions = document.createElement("div");
     actions.className = "e-file-actions";
-    if (!file.is_dir && file.is_text && file.name !== s.mainFileName) {
+    if (!cfg.sessionReview && !file.is_dir && file.is_text && file.name !== s.mainFileName) {
       const setMainBtn = document.createElement("button");
       setMainBtn.type = "button"; setMainBtn.className = "e-file-act"; setMainBtn.textContent = "★";
       setMainBtn.title = "Set as main file";
@@ -200,8 +222,10 @@ export function renderFileList() {
     deleteBtn.title = "Delete";
     deleteBtn.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); deleteFile(file).catch(() => {}); });
 
-    actions.appendChild(renameBtn);
-    actions.appendChild(deleteBtn);
+    if (!cfg.sessionReview) {
+      actions.appendChild(renameBtn);
+      actions.appendChild(deleteBtn);
+    }
     row.appendChild(actions);
     li.appendChild(row);
     fileListEl.appendChild(li);

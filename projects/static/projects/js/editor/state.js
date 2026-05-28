@@ -3,6 +3,7 @@
 export const cfg = {
   projectId: 0,
   csrfToken: "",
+  sessionReview: false,
 };
 
 export const s = {
@@ -30,8 +31,7 @@ export const s = {
   queuedCompileMode: null,
   typstCompileTimer: null,
   hasUnsavedChanges: false,
-  projectWs: null,
-  projectWsReconnectTimer: null,
+  projectSse: null,
   lastSeenMcpVersionId: 0,
   diagnostics: [],
   compileState: "out_of_date",
@@ -47,4 +47,15 @@ export const s = {
   _renameResolve: null,
   _renameProjectResolve: null,
   _createEntryResolve: null,
+  longdoc: {
+    settings: null,
+    overview: null,
+    contextFiles: [],
+    outlineItems: [],
+    sectionSummaries: [],
+    tasks: [],
+    noteSections: [],
+    requirements: [],
+    activeSession: null,
+  },
 };

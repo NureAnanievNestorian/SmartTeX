@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 import re
 import sys
+import difflib
+import fnmatch
+import hashlib
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -37,6 +40,19 @@ MCP_INTROSPECTION_URL = os.getenv("MCP_INTROSPECTION_URL", f"{BASE_URL}/oauth/in
 MCP_INTROSPECTION_SECRET = os.getenv("MCP_INTROSPECTION_SECRET", "").strip()
 MCP_OAUTH_ENABLED = os.getenv("MCP_OAUTH_ENABLED", "True").lower() in {"1", "true", "yes"}
 MCP_CORS_ORIGINS = [o.strip() for o in os.getenv("MCP_CORS_ORIGINS", "*").split(",") if o.strip()]
+MCP_MAX_READ_LINES = max(1, int(os.getenv("MCP_MAX_READ_LINES", "300")))
+MCP_MAX_GREP_MATCHES = max(1, int(os.getenv("MCP_MAX_GREP_MATCHES", "20")))
+MCP_MAX_GREP_CONTEXT = max(0, int(os.getenv("MCP_MAX_GREP_CONTEXT", "10")))
+MCP_MAX_PATCH_LINES = max(1, int(os.getenv("MCP_MAX_PATCH_LINES", "50")))
+MCP_MAX_SESSION_FILES = max(1, int(os.getenv("MCP_MAX_SESSION_FILES", "5")))
+MCP_MAX_FULL_READ_BYTES = max(1024, int(os.getenv("MCP_MAX_FULL_READ_BYTES", "65536")))
+MCP_SESSION_READ_BUDGET = max(1, int(os.getenv("MCP_SESSION_READ_BUDGET", "2000")))
+MCP_READ_BUDGET_HARD = os.getenv("MCP_READ_BUDGET_HARD", "false").lower() in {"1", "true", "yes"}
+MCP_MAX_SEARCH_RESULTS = max(1, int(os.getenv("MCP_MAX_SEARCH_RESULTS", "30")))
+SOURCE_EXTENSIONS = {".tex", ".typ"}
+TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl"}
+READ_BUDGET_STATE: dict[tuple[str, int], int] = {}
+REPLACE_DRY_RUN_STATE: dict[tuple[str, int, str], str] = {}
 
 
 class DjangoIntrospectionTokenVerifier(TokenVerifier):
@@ -122,6 +138,30 @@ def _call(method: str, path: str, data: dict[str, Any] | None = None) -> Any:
     if "application/json" in ctype:
         return response.json()
     return {"status_code": response.status_code, "text": response.text}
+
+
+def _call_allow_json_errors(method: str, path: str, data: dict[str, Any] | None = None) -> Any:
+    url = f"{BASE_URL}{path}"
+    with httpx.Client(timeout=60, headers=_headers()) as client:
+        response = client.request(method, url, json=data)
+    ctype = response.headers.get("content-type", "")
+    payload = response.json() if "application/json" in ctype else {"detail": response.text}
+    if response.is_error and not (isinstance(payload, dict) and payload.get("error")):
+        response.raise_for_status()
+    return payload
+
+
+def _normalized_project_file_name(file_name: str | None, project_id: int) -> str:
+    return str(file_name or _project_main_file_name(project_id)).strip()
+
+
+def _rejection(error: str, message: str, suggestion: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "error": error,
+        "message": message,
+        "suggestion": suggestion,
+        **extra,
+    }
 
 
 def _call_upload(path: str, file_bytes: bytes, filename: str = "upload.zip") -> Any:
@@ -380,12 +420,44 @@ def _project_meta(project_id: int) -> dict[str, Any]:
     return payload
 
 
+def _project_longdoc_meta(project_id: int) -> dict[str, Any]:
+    meta = _project_meta(project_id)
+    longdoc = meta.get("longdoc") if isinstance(meta, dict) else {}
+    return longdoc if isinstance(longdoc, dict) else {}
+
+
 def _project_main_file_name(project_id: int) -> str:
     project_meta = _project_meta(project_id)
     file_name = str(project_meta.get("main_file_name") or "").strip()
     if file_name:
         return file_name
     return "main.typ" if project_meta.get("markup_type") == "typst" else "main.tex"
+
+
+def _project_controlled_mode_enabled(project_id: int) -> bool:
+    longdoc = _project_longdoc_meta(project_id)
+    return bool(longdoc.get("enabled") and longdoc.get("mcp_controlled_access"))
+
+
+def _project_longdoc_feature_enabled(project_id: int, feature_name: str) -> bool:
+    longdoc = _project_longdoc_meta(project_id)
+    return bool(longdoc.get("enabled") and longdoc.get(feature_name))
+
+
+def _project_files_payload(project_id: int) -> list[dict[str, Any]]:
+    payload = _call("GET", f"/api/projects/{project_id}/files/")
+    files = payload.get("files") if isinstance(payload, dict) else []
+    return files if isinstance(files, list) else []
+
+
+def _project_file_metadata(project_id: int, file_name: str) -> dict[str, Any] | None:
+    normalized = _normalized_project_file_name(file_name, project_id)
+    for item in _project_files_payload(project_id):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name") or "") == normalized:
+            return item
+    return None
 
 
 async def _notify_resource_updated(ctx: Context | None, uri: str) -> None:
@@ -408,6 +480,12 @@ async def _notify_project_write_updates(
     await _notify_resource_updated(ctx, _resource_uri(project_id, "file-info"))
     if include_compile_log:
         await _notify_resource_updated(ctx, _resource_uri(project_id, "compile-log"))
+
+
+async def _notify_longdoc_updates(ctx: Context | None, project_id: int, *resource_names: str) -> None:
+    names = resource_names or ("overview", "context", "outline", "tasks", "notes", "summaries", "requirements")
+    for resource_name in names:
+        await _notify_resource_updated(ctx, _resource_uri(project_id, resource_name))
 
 
 def _read_main_file_info(project_id: int) -> dict[str, Any]:
@@ -443,6 +521,168 @@ def _read_main_file_info(project_id: int) -> dict[str, Any]:
         "last_modified": project_meta.get("updated_at") if isinstance(project_meta, dict) else None,
         "image_assets": image_assets,
     }
+
+
+def _budget_key(project_id: int) -> tuple[str, int]:
+    token = _current_bearer_token() or LEGACY_TOKEN or "anonymous"
+    return token, int(project_id)
+
+
+def _read_budget_remaining(project_id: int) -> int:
+    try:
+        payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/mcp-budget/")
+        if isinstance(payload, dict) and "remaining" in payload:
+            val = int(payload["remaining"])
+            READ_BUDGET_STATE[_budget_key(project_id)] = val
+            return val
+    except Exception:
+        pass
+    return READ_BUDGET_STATE.get(_budget_key(project_id), MCP_SESSION_READ_BUDGET)
+
+
+def _attach_read_budget(payload: dict[str, Any], project_id: int) -> dict[str, Any]:
+    payload["read_budget_remaining"] = max(0, _read_budget_remaining(project_id))
+    return payload
+
+
+def _consume_read_budget(
+        project_id: int,
+        lines: int,
+        *,
+        suggestion: str,
+) -> dict[str, Any] | None:
+    cost = max(0, int(lines))
+    remaining_before = _read_budget_remaining(project_id)
+    raw_remaining_after = remaining_before - cost
+    # Persist to Django cache; fall back to in-memory on failure.
+    try:
+        resp = _call_allow_json_errors("POST", f"/api/projects/{project_id}/mcp-budget/", {"lines": cost})
+        if isinstance(resp, dict) and "remaining" in resp:
+            remaining_after_stored = int(resp["remaining"])
+            READ_BUDGET_STATE[_budget_key(project_id)] = remaining_after_stored
+        else:
+            raise ValueError("unexpected budget response")
+    except Exception:
+        key = _budget_key(project_id)
+        remaining_after_stored = max(0, raw_remaining_after)
+        READ_BUDGET_STATE[key] = remaining_after_stored
+    if MCP_READ_BUDGET_HARD and raw_remaining_after < 0:
+        return _rejection(
+            "READ_BUDGET_EXHAUSTED",
+            f"Read budget exhausted for project {project_id}. Requested {cost} more lines with {max(0, remaining_before)} remaining.",
+            suggestion,
+            read_budget_remaining=max(0, remaining_before),
+            requested_lines=cost,
+        )
+    if raw_remaining_after < 0:
+        return _rejection(
+            "READ_BUDGET_EXHAUSTED",
+            f"Read budget is exhausted for project {project_id}, but the read was allowed because hard enforcement is off.",
+            suggestion,
+            read_budget_remaining=0,
+            requested_lines=cost,
+            warning=True,
+        )
+    return None
+
+
+def _read_file_lines_raw(project_id: int, file_name: str, start_line: int, end_line: int) -> dict[str, Any]:
+    params = urlencode(
+        {
+            "file_name": _normalized_project_file_name(file_name, project_id),
+            "start_line": int(start_line),
+            "end_line": int(end_line),
+        }
+    )
+    payload = _call("GET", f"/api/projects/{project_id}/read-window/?{params}")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _file_line_info(project_id: int, file_name: str) -> dict[str, Any]:
+    normalized = _normalized_project_file_name(file_name, project_id)
+    metadata = _project_file_metadata(project_id, normalized)
+    if metadata is None:
+        raise ValueError("file not found")
+    if bool(metadata.get("is_dir")):
+        raise ValueError("file is a directory")
+    window = _read_file_lines_raw(project_id, normalized, 1, 1)
+    return {
+        "file_name": normalized,
+        "size_bytes": int(metadata.get("size") or 0),
+        "line_count": int(window.get("total_lines") or 0),
+        "total_chars": int(window.get("total_chars") or 0),
+        "modified_at": metadata.get("updated_at"),
+        "extension": metadata.get("extension") or "",
+        "is_text": bool(metadata.get("is_text")),
+        "is_image": bool(metadata.get("is_image")),
+    }
+
+
+def _normalize_line_text(value: str | None) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _compute_diff_stats(before: str, after: str) -> tuple[str, int, int]:
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    diff_lines = list(
+        difflib.unified_diff(
+            before_lines,
+            after_lines,
+            fromfile="before",
+            tofile="after",
+            lineterm="",
+        )
+    )
+    lines_added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+    lines_removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+    return "\n".join(diff_lines), lines_added, lines_removed
+
+
+def _ensure_patch_size_allowed(lines_added: int, lines_removed: int) -> dict[str, Any] | None:
+    changed = lines_added + lines_removed
+    if changed <= MCP_MAX_PATCH_LINES:
+        return None
+    return _rejection(
+        "PATCH_TOO_LARGE",
+        f"Requested patch changes {changed} diff lines, exceeding the limit of {MCP_MAX_PATCH_LINES}.",
+        "Reduce the edit scope, then retry with patch_file_lines or update_project_section on a smaller range.",
+        lines_added=lines_added,
+        lines_removed=lines_removed,
+        max_patch_lines=MCP_MAX_PATCH_LINES,
+    )
+
+
+def _latest_version_number(project_id: int, file_name: str | None = None) -> int | None:
+    params = {"limit": 1}
+    if file_name:
+        params["file"] = file_name
+    payload = _call("GET", f"/api/projects/{project_id}/versions/?{urlencode(params)}")
+    versions = payload.get("versions") if isinstance(payload, dict) else []
+    if not versions:
+        return None
+    first = versions[0]
+    if not isinstance(first, dict):
+        return None
+    number = first.get("number")
+    if isinstance(number, int):
+        return number
+    version_id = first.get("id")
+    return int(version_id) if isinstance(version_id, int) else None
+
+
+def _replace_preview_key(project_id: int, file_name: str, pattern: str, replacement: str, is_regex: bool, ignore_case: bool, max_replacements: int) -> tuple[str, int, str]:
+    token = _current_bearer_token() or LEGACY_TOKEN or "anonymous"
+    digest = hashlib.sha256(
+        f"{project_id}\0{file_name}\0{pattern}\0{replacement}\0{int(is_regex)}\0{int(ignore_case)}\0{int(max_replacements)}".encode("utf-8")
+    ).hexdigest()
+    return token, int(project_id), digest
+
+
+def _char_window_line_cost(payload: dict[str, Any]) -> int:
+    start_line = int(payload.get("start_line") or 1)
+    end_line = int(payload.get("end_line") or start_line)
+    return max(1, end_line - start_line + 1)
 
 
 def _line_column_to_position(
@@ -570,6 +810,7 @@ mcp = FastMCP(
     2. Assume the document is NOT empty. Read before writing.
     3. NEVER call `get_project_file` to read the entire file.
     4. Read only what you need — section content or a narrow window.
+    5. In controlled MCP mode, prefer `file_line_count`, `read_file_lines`, and `grep_file` over broad reads.
 
     ### Choosing the right read strategy
     | Situation | Tool |
@@ -578,15 +819,20 @@ mcp = FastMCP(
     | Need content of one section | `get_project_section` include_content=True |
     | Section is large, need only a fragment | `read_project_window` with exact start_line/end_line |
     | Don't know where something is | `search_project_content` first, then read that window |
+    | Need line-precise read from any text file | `read_file_lines` |
+    | Need file inventory / sizes / line counts | `find_project_files`, `file_line_count` |
+    | Need targeted search in one file | `grep_file` |
     | Need content of an auxiliary file | `get_project_file_content(include_text=True)` |
 
     ### Choosing the right edit strategy
     Priority order — always use the most targeted option available:
 
-    1. **`replace_in_project_file`** — for repetitive pattern-based changes across the file (rename a label, fix recurring syntax). Always use `dry_run=True` first to verify scope.
-    2. **`update_project_section`** — for meaningful content changes within a named section. Uses the section's `file_name` automatically.
-    3. **`rewrite_project_window`** — for targeted changes within a section or auxiliary file. Pass explicit `file_name` for non-main files. Use `search_project_content` or `list_project_sections` to get the exact line range.
-    4. **`update_project_file`** — ONLY if user explicitly requests a full document replacement. Never use speculatively.
+    1. **`patch_file_lines`** — preferred for small, exact line-range edits. Use anchors whenever possible.
+    2. **`replace_in_project_file`** — for one exact match only. Always use `dry_run=True` first, then repeat the exact request with `dry_run=False`.
+    3. **`update_project_section`** — for meaningful content changes within a named section. This is the preferred large-source-file rewrite path.
+    4. **`append_to_file`** — for additive content at EOF or after a named section.
+    5. **`rewrite_project_window`** — for targeted changes within auxiliary text files or carefully bounded windows.
+    6. **`update_project_file`** — ONLY outside controlled MCP mode, and only if the user explicitly requests a full document replacement.
 
     **Key principle**: the edit scope must match the change scope. Rewriting 200 lines to change 3 is always wrong.
 
@@ -603,6 +849,17 @@ mcp = FastMCP(
     - To import a ZIP archive into a Typst project, use `import_project_zip` with the ZIP as base64.
     - Changing any imported `.typ` file still requires compile to update PDF.
 
+    ### Writing Assistant data
+    - If long-document mode is enabled, prefer the structured tools over editing hidden support files directly.
+    - Use `get_longdoc_overview` first for a compact snapshot of context, outline, tasks, notes, summaries, and requirements.
+    - Context files: `list_context_files`, `read_context_file`, `update_context_file`.
+    - Outline: `read_outline`, `add_outline_item`, `update_outline_item`.
+    - Tasks: `list_tasks`, `add_task`, `complete_task`, `update_task_status`.
+    - Notes: `read_notes`, `append_to_note_section`, `replace_note_section`.
+    - Section summaries: `list_section_summaries`, `read_section_summary`, `update_section_summary`.
+    - Requirements: `list_requirements`, `add_requirement`, `update_requirement_coverage`.
+    - If a longdoc tool returns `FEATURE_DISABLED` or `PROJECT_LOCKED`, stop and follow the suggestion instead of retrying writes.
+
     ### Version history
     - `list_project_versions` returns a compacted history with `target_file` and `is_revertible`.
     - Use `file_filter` to scope history to a single file (e.g. `file_filter="chapters/intro.typ"`).
@@ -617,6 +874,7 @@ mcp = FastMCP(
     - Always read the current content of what you're about to change before writing.
     - Preserve existing formatting, indentation, and document structure.
     - Never introduce or remove blank lines outside the edit target.
+    - In controlled MCP mode, expect full-file reads/writes to be capped or rejected. Follow the suggested patch/read tools instead of retrying the blocked tool.
     - For LaTeX, never change `\\begin{document}`, preamble, or `\\end{document}` unless user explicitly asks.
     - After a window rewrite, verify line counts are consistent — a rewrite must not silently shift unrelated content.
 
@@ -632,6 +890,7 @@ mcp = FastMCP(
     ### What never to do
     - Never select a project without explicit user instruction.
     - Never read the full file to find a fragment — search first.
+    - Never ignore a structured rejection response. Follow the `suggestion` field and switch to the narrower tool it recommends.
     - Never rewrite a full section to change a few lines — use window rewrite with found line range.
     - Never rewrite the full file to change one section.
     - Never compile speculatively.
@@ -724,21 +983,48 @@ def read_project_file(
 ) -> dict[str, Any]:
     """Read a text file window from the project (`main.tex`/`main.typ` by default)."""
     resolved_file_name = file_name or _project_main_file_name(project_id)
+    controlled = _project_controlled_mode_enabled(project_id)
     if (
             start_line is None
             and end_line is None
             and start_char is None
             and end_char is None
     ):
-        probe = _call(
-            "GET",
-            f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': resolved_file_name, 'start_line': 1, 'end_line': 1})}",
-        )
-        total_lines = 1
-        if isinstance(probe, dict):
-            total_lines = max(1, int(probe.get("total_lines") or 1))
+        info = _file_line_info(project_id, resolved_file_name)
+        total_lines = max(1, int(info["line_count"] or 1))
+        if controlled and int(info["size_bytes"] or 0) > MCP_MAX_FULL_READ_BYTES:
+            return _attach_read_budget(
+                _rejection(
+                    "FILE_TOO_LARGE",
+                    f"{resolved_file_name} is {total_lines} lines ({int(info['size_bytes'])} bytes). Full reads are limited to {MCP_MAX_FULL_READ_BYTES} bytes.",
+                    "Use file_line_count to inspect the file, read_file_lines for a range, or get_project_section to read by section.",
+                    line_count=total_lines,
+                    size_bytes=int(info["size_bytes"] or 0),
+                ),
+                project_id,
+            )
+        budget_rejection = _consume_read_budget(
+            project_id,
+            total_lines,
+            suggestion="Use grep_file or read_file_lines for narrower reads, or get_project_section for section-scoped access.",
+        ) if controlled else None
+        if budget_rejection and not budget_rejection.get("warning"):
+            return budget_rejection
         params = urlencode({"file_name": resolved_file_name, "start_line": 1, "end_line": total_lines})
-        return _call("GET", f"/api/projects/{project_id}/read-window/?{params}")
+        payload = _call("GET", f"/api/projects/{project_id}/read-window/?{params}")
+        if not isinstance(payload, dict):
+            return {}
+        if budget_rejection:
+            payload["budget_warning"] = budget_rejection
+        return _attach_read_budget(payload, project_id)
+
+    if controlled and (start_line is not None or end_line is not None) and start_char is None and end_char is None:
+        return read_file_lines(
+            project_id=project_id,
+            filename=resolved_file_name,
+            start_line=1 if start_line is None else int(start_line),
+            end_line=(1 if start_line is None else int(start_line)) if end_line is None else int(end_line),
+        )
 
     query: dict[str, Any] = {"file_name": resolved_file_name}
     if start_line is not None:
@@ -750,7 +1036,183 @@ def read_project_file(
     if end_char is not None:
         query["end_char"] = int(end_char)
     params = urlencode(query)
-    return _call("GET", f"/api/projects/{project_id}/read-window/?{params}")
+    payload = _call("GET", f"/api/projects/{project_id}/read-window/?{params}")
+    if not isinstance(payload, dict):
+        return {}
+    if controlled and (start_char is not None or end_char is not None):
+        budget_rejection = _consume_read_budget(
+            project_id,
+            _char_window_line_cost(payload),
+            suggestion="Use read_file_lines or grep_file for more targeted reads.",
+        )
+        if budget_rejection and not budget_rejection.get("warning"):
+            return budget_rejection
+        if budget_rejection:
+            payload["budget_warning"] = budget_rejection
+    return _attach_read_budget(payload, project_id)
+
+
+@mcp.tool
+def find_project_files(project_id: int, pattern: str | None = None, file_type: str = "any") -> dict[str, Any]:
+    """Find project files by glob pattern and coarse file type."""
+    normalized_type = str(file_type or "any").strip().lower()
+    if normalized_type not in {"text", "image", "pdf", "any"}:
+        raise ValueError("file_type must be one of: text, image, pdf, any")
+    files = []
+    for item in _project_files_payload(project_id):
+        if not isinstance(item, dict) or bool(item.get("is_dir")):
+            continue
+        name = str(item.get("name") or "")
+        if pattern and not fnmatch.fnmatch(name, pattern):
+            continue
+        ext = str(item.get("extension") or "").lower()
+        if normalized_type == "text" and not bool(item.get("is_text")):
+            continue
+        if normalized_type == "image" and not bool(item.get("is_image")):
+            continue
+        if normalized_type == "pdf" and ext != ".pdf":
+            continue
+        line_count = None
+        if bool(item.get("is_text")):
+            line_count = _file_line_info(project_id, name)["line_count"]
+        files.append(
+            {
+                "path": name,
+                "size_bytes": int(item.get("size") or 0),
+                "line_count": line_count,
+                "modified_at": item.get("updated_at"),
+            }
+        )
+    return _attach_read_budget({"files": files}, project_id)
+
+
+@mcp.tool
+def file_line_count(project_id: int, filename: str) -> dict[str, Any]:
+    """Return line count and size metadata for a text file."""
+    info = _file_line_info(project_id, filename)
+    payload = {
+        "filename": info["file_name"],
+        "lines": info["line_count"],
+        "size_bytes": info["size_bytes"],
+    }
+    return _attach_read_budget(payload, project_id)
+
+
+@mcp.tool
+def read_file_lines(project_id: int, filename: str, start_line: int, end_line: int) -> dict[str, Any]:
+    """Read a 1-indexed inclusive line range from a project text file."""
+    safe_start = int(start_line)
+    safe_end = int(end_line)
+    if safe_start < 1 or safe_end < 1:
+        raise ValueError("line numbers are 1-based and must be positive")
+    if safe_end < safe_start:
+        raise ValueError("end_line must be >= start_line")
+    requested_lines = safe_end - safe_start + 1
+    if requested_lines > MCP_MAX_READ_LINES:
+        return _attach_read_budget(
+            _rejection(
+                "READ_LIMIT_EXCEEDED",
+                f"Requested {requested_lines} lines from {filename}, exceeding the per-read limit of {MCP_MAX_READ_LINES}.",
+                "Split the read into smaller read_file_lines calls or use get_project_section if you need a whole section.",
+                requested_lines=requested_lines,
+                max_read_lines=MCP_MAX_READ_LINES,
+            ),
+            project_id,
+        )
+    budget_rejection = _consume_read_budget(
+        project_id,
+        requested_lines,
+        suggestion="Use grep_file to locate the exact area first, then read a narrower line range.",
+    )
+    if budget_rejection and not budget_rejection.get("warning"):
+        return budget_rejection
+    payload = _read_file_lines_raw(project_id, filename, safe_start, safe_end)
+    shaped = {
+        "filename": payload.get("file_name") or filename,
+        "content": payload.get("content") or "",
+        "start_line": int(payload.get("start_line") or safe_start),
+        "end_line": int(payload.get("end_line") or safe_end),
+        "total_lines": int(payload.get("total_lines") or 0),
+        "truncated": requested_lines > int(payload.get("end_line") or safe_end) - int(payload.get("start_line") or safe_start) + 1,
+    }
+    if budget_rejection:
+        shaped["budget_warning"] = budget_rejection
+    return _attach_read_budget(shaped, project_id)
+
+
+@mcp.tool
+def grep_file(
+        project_id: int,
+        filename: str,
+        pattern: str,
+        context_lines: int = 3,
+        max_matches: int = 20,
+        use_regex: bool = False,
+) -> dict[str, Any]:
+    """Search one file with optional surrounding context lines."""
+    if not pattern:
+        raise ValueError("pattern is required")
+    safe_context = max(0, min(int(context_lines), MCP_MAX_GREP_CONTEXT))
+    safe_max_matches = max(1, min(int(max_matches), MCP_MAX_GREP_MATCHES))
+    estimated_cost = safe_max_matches * (1 + (2 * safe_context))
+    budget_rejection = _consume_read_budget(
+        project_id,
+        estimated_cost,
+        suggestion="Reduce max_matches or context_lines, or use read_file_lines after locating a narrower region.",
+    )
+    if budget_rejection and not budget_rejection.get("warning"):
+        return budget_rejection
+    info = _file_line_info(project_id, filename)
+    if not info["is_text"]:
+        return _attach_read_budget(
+            _rejection(
+                "NOT_TEXT_FILE",
+                f"{info['file_name']} is not a text file.",
+                "Use get_project_file_content for binary files or choose a text file.",
+            ),
+            project_id,
+        )
+    total_lines = max(1, int(info["line_count"]))
+    all_lines: list[str] = []
+    for start in range(1, total_lines + 1, MCP_MAX_READ_LINES):
+        end = min(total_lines, start + MCP_MAX_READ_LINES - 1)
+        payload = _read_file_lines_raw(project_id, info["file_name"], start, end)
+        all_lines.extend(str(payload.get("content") or "").splitlines())
+    lines = all_lines
+    flags = 0
+    expr = pattern
+    if not use_regex:
+        expr = re.escape(pattern)
+    try:
+        regex = re.compile(expr, flags)
+    except re.error as exc:
+        raise ValueError(f"invalid regex pattern: {exc}") from exc
+    matches = []
+    for index, line in enumerate(lines, start=1):
+        if not regex.search(line):
+            continue
+        before_start = max(1, index - safe_context)
+        after_end = min(len(lines), index + safe_context)
+        matches.append(
+            {
+                "line_number": index,
+                "line": line,
+                "before": lines[before_start - 1 : index - 1],
+                "after": lines[index:after_end],
+            }
+        )
+        if len(matches) >= safe_max_matches:
+            break
+    payload = {
+        "filename": info["file_name"],
+        "matches": matches,
+        "max_matches": safe_max_matches,
+        "context_lines": safe_context,
+        "truncated": len(matches) >= safe_max_matches,
+    }
+    if budget_rejection:
+        payload["budget_warning"] = budget_rejection
+    return _attach_read_budget(payload, project_id)
 
 
 @mcp.tool
@@ -764,6 +1226,14 @@ async def update_project_file(
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
     """Replace the whole main source file (`main.tex` or `main.typ`)."""
+    if _project_controlled_mode_enabled(project_id):
+        main_file_name = _project_main_file_name(project_id)
+        if Path(main_file_name).suffix.lower() in SOURCE_EXTENSIONS:
+            return _rejection(
+                "USE_PATCH_TOOLS",
+                f"Full-file overwrite of {main_file_name} is disabled in controlled MCP mode.",
+                "Use update_project_section to rewrite a specific section, patch_file_lines for a line-range edit, or append_to_file for additive changes.",
+            )
     summary = _require_summary(change_summary)
     payload = _call(
         "PUT",
@@ -1075,13 +1545,39 @@ def get_project_section(
     payload = _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
     if not isinstance(payload, dict):
         return {}
+    content = str(payload.get("content") or "")
+    if _project_controlled_mode_enabled(project_id) and content:
+        line_count = max(1, len(content.splitlines()))
+        budget_rejection = _consume_read_budget(
+            project_id,
+            line_count,
+            suggestion="Use read_file_lines for a narrower excerpt or grep_file to target the exact subsection.",
+        )
+        if budget_rejection and not budget_rejection.get("warning"):
+            return budget_rejection
+        if line_count > MCP_MAX_READ_LINES:
+            payload["read_warning"] = _rejection(
+                "SECTION_READ_LARGE",
+                f"Section {section_index} spans {line_count} lines, exceeding the recommended read size of {MCP_MAX_READ_LINES}.",
+                "Use read_file_lines with the section's line range if you only need part of the section.",
+                line_count=line_count,
+                max_read_lines=MCP_MAX_READ_LINES,
+                warning=True,
+            )
+        if budget_rejection:
+            payload["budget_warning"] = budget_rejection
     if not compact:
-        return payload
-    return _compact_single_section_payload(
+        return _attach_read_budget(payload, project_id)
+    shaped = _compact_single_section_payload(
         payload,
         include_content=bool(include_content),
         content_preview_chars=int(content_preview_chars),
     )
+    if "read_warning" in payload:
+        shaped["read_warning"] = payload["read_warning"]
+    if "budget_warning" in payload:
+        shaped["budget_warning"] = payload["budget_warning"]
+    return _attach_read_budget(shaped, project_id)
 
 
 @mcp.tool
@@ -1100,11 +1596,20 @@ async def update_project_section(
 ) -> dict[str, Any]:
     """Replace one section in the main source file."""
     summary = _require_summary(change_summary)
+    before_payload = _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
+    before_content = str(before_payload.get("content") or "") if isinstance(before_payload, dict) else ""
+    if _project_controlled_mode_enabled(project_id):
+        _, lines_added, lines_removed = _compute_diff_stats(before_content, content)
+        patch_rejection = _ensure_patch_size_allowed(lines_added, lines_removed)
+        if patch_rejection:
+            return patch_rejection
     payload = _call(
         "PUT",
         f"/api/projects/{project_id}/sections/{section_index}/",
         {"content": content, "change_summary": summary, "change_source": "mcp"},
     )
+    updated_content = str(payload.get("content") or "") if isinstance(payload, dict) else content
+    diff_text, lines_added, lines_removed = _compute_diff_stats(before_content, updated_content)
     if not isinstance(payload, dict):
         shaped: dict[str, Any] = {}
     elif not compact:
@@ -1115,6 +1620,9 @@ async def update_project_section(
             include_content=bool(include_content),
             content_preview_chars=int(content_preview_chars),
         )
+    shaped["diff_text"] = diff_text
+    shaped["lines_added"] = lines_added
+    shaped["lines_removed"] = lines_removed
     result = _with_optional_compile(
         project_id,
         shaped,
@@ -1136,6 +1644,8 @@ async def insert_text_at_position(
         line: int | None = None,
         column: int | None = None,
         file_name: str | None = None,
+        anchor_text: str | None = None,
+        insert_after_line: int | None = None,
         compileAlso: bool = False,
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
@@ -1143,6 +1653,30 @@ async def insert_text_at_position(
     """Insert text into the main source file using absolute char `position` or 1-based `line`/`column`."""
     summary = _require_summary(change_summary)
     resolved_file_name = file_name or _project_main_file_name(project_id)
+    controlled = _project_controlled_mode_enabled(project_id)
+    if controlled and not str(anchor_text or "").strip():
+        return _rejection(
+            "ANCHOR_REQUIRED",
+            "insert_text_at_position requires anchor_text in controlled MCP mode.",
+            "Provide anchor_text together with insert_after_line or a precise line/column so the insertion can be verified.",
+        )
+    if insert_after_line is not None:
+        line_info = _file_line_info(project_id, resolved_file_name)
+        safe_insert_after = int(insert_after_line)
+        if safe_insert_after < 1 or safe_insert_after > max(1, int(line_info["line_count"])):
+            raise ValueError("insert_after_line is out of bounds")
+        line_payload = _read_file_lines_raw(project_id, resolved_file_name, safe_insert_after, safe_insert_after)
+        anchor_line = str(line_payload.get("content") or "").splitlines()[0] if str(line_payload.get("content") or "").splitlines() else ""
+        if controlled and _normalize_line_text(anchor_line) != _normalize_line_text(anchor_text):
+            return _rejection(
+                "ANCHOR_MISMATCH",
+                f"anchor_text did not match line {safe_insert_after} in {resolved_file_name}.",
+                "Re-run grep_file to find the current anchor text, then retry with the updated line number.",
+                searched_line=safe_insert_after,
+            )
+        line = safe_insert_after + 1
+        column = 1
+        position = None
     if position is None:
         if line is None:
             raise ValueError("provide either position or line")
@@ -1153,6 +1687,24 @@ async def insert_text_at_position(
             column=resolved_column,
             file_name=resolved_file_name,
         )
+    if controlled:
+        anchor = str(anchor_text or "")
+        window_start = max(0, int(position) - max(32, len(anchor)))
+        window_end = int(position) + max(32, len(anchor))
+        anchor_window = _call(
+            "GET",
+            f"/api/projects/{project_id}/read-window/?{urlencode({'file_name': resolved_file_name, 'start_char': window_start, 'end_char': window_end})}",
+        )
+        snippet = str(anchor_window.get("content") or "") if isinstance(anchor_window, dict) else ""
+        relative_position = int(position) - window_start
+        before_snippet = snippet[:relative_position]
+        after_snippet = snippet[relative_position:]
+        if not (before_snippet.endswith(anchor) or after_snippet.startswith(anchor)):
+            return _rejection(
+                "ANCHOR_MISMATCH",
+                f"anchor_text was not found immediately before or after the insertion point in {resolved_file_name}.",
+                "Re-run grep_file to locate the current insertion point, then retry with the updated anchor_text and line.",
+            )
     payload = _call(
         "POST",
         f"/api/projects/{project_id}/insert/",
@@ -1184,6 +1736,8 @@ async def replace_in_project_file(
     """Pattern replace in the main source file; use `dry_run=True` first."""
     main_file_name = _project_main_file_name(project_id)
     file_payload = read_project_file(project_id=project_id, file_name=main_file_name)
+    if isinstance(file_payload, dict) and file_payload.get("error"):
+        return file_payload
     content = str(file_payload.get("content") or "")
     analysis = _preview_replacements(
         content,
@@ -1206,8 +1760,20 @@ async def replace_in_project_file(
         "preview": analysis["preview"],
         "preview_truncated": analysis["preview_truncated"],
     }
+    controlled = _project_controlled_mode_enabled(project_id)
+    first_match_line = analysis["preview"][0]["line"] if analysis["preview"] else None
+    if controlled and analysis["match_count"] != 1:
+        return _rejection(
+            "AMBIGUOUS_MATCH" if analysis["match_count"] > 1 else "NO_MATCH",
+            f"Pattern appears {analysis['match_count']} times in {main_file_name}. Exact-once match required.",
+            "Call grep_file to locate the specific occurrence, then use patch_file_lines with anchor_before and anchor_after.",
+            match_count=analysis["match_count"],
+            first_match_line=first_match_line,
+        )
 
     if dry_run:
+        if controlled:
+            REPLACE_DRY_RUN_STATE[_replace_preview_key(project_id, main_file_name, pattern, replacement, bool(is_regex), bool(ignore_case), int(max_replacements))] = analysis["updated_content"]
         response["detail"] = "Dry run only. Re-run with dry_run=False to apply changes."
         return response
 
@@ -1215,6 +1781,19 @@ async def replace_in_project_file(
     if analysis["replacement_count"] == 0:
         response["detail"] = "No replacements applied (0 matches)."
         return response
+    if controlled:
+        dry_run_key = _replace_preview_key(project_id, main_file_name, pattern, replacement, bool(is_regex), bool(ignore_case), int(max_replacements))
+        preview_content = REPLACE_DRY_RUN_STATE.get(dry_run_key)
+        if preview_content != analysis["updated_content"]:
+            return _rejection(
+                "DRY_RUN_REQUIRED",
+                "replace_in_project_file requires a matching dry_run=True preview before applying changes in controlled MCP mode.",
+                "Run replace_in_project_file with dry_run=True, verify the preview, then repeat the exact request with dry_run=False.",
+            )
+        diff_text, lines_added, lines_removed = _compute_diff_stats(content, analysis["updated_content"])
+        patch_rejection = _ensure_patch_size_allowed(lines_added, lines_removed)
+        if patch_rejection:
+            return patch_rejection
 
     payload = _call(
         "PUT",
@@ -1226,6 +1805,11 @@ async def replace_in_project_file(
         },
     )
     response["write_result"] = payload
+    if controlled:
+        response["diff_text"] = diff_text
+        response["lines_added"] = lines_added
+        response["lines_removed"] = lines_removed
+        REPLACE_DRY_RUN_STATE.pop(dry_run_key, None)
     response["detail"] = "Replacements applied."
     await _notify_project_write_updates(ctx, project_id, include_compile_log=False)
     return response
@@ -1238,6 +1822,7 @@ def search_project_content(
         is_regex: bool = False,
         ignore_case: bool = True,
         max_results: int = 200,
+        filename: str | None = None,
         include_main: bool = True,
         include_assets: bool = True,
         compact: bool = True,
@@ -1245,12 +1830,13 @@ def search_project_content(
         max_matches_in_response: int = 50,
 ) -> dict[str, Any]:
     """Search text across project files (main source + optional assets)."""
+    capped_max_results = min(int(max_results), MCP_MAX_SEARCH_RESULTS) if _project_controlled_mode_enabled(project_id) else int(max_results)
     params = urlencode(
         {
             "query": query,
             "is_regex": str(bool(is_regex)).lower(),
             "ignore_case": str(bool(ignore_case)).lower(),
-            "max_results": int(max_results),
+            "max_results": capped_max_results,
             "include_main": str(bool(include_main)).lower(),
             "include_assets": str(bool(include_assets)).lower(),
         }
@@ -1258,6 +1844,12 @@ def search_project_content(
     payload = _call("GET", f"/api/projects/{project_id}/search/?{params}")
     if not isinstance(payload, dict):
         return {}
+    if filename:
+        matches = payload.get("matches")
+        if isinstance(matches, list):
+            payload["matches"] = [m for m in matches if isinstance(m, dict) and str(m.get("file_name") or "") == filename]
+            payload["truncated"] = bool(payload.get("truncated")) or len(payload["matches"]) >= capped_max_results
+    payload["read_budget_remaining"] = max(0, _read_budget_remaining(project_id))
     if not compact:
         return payload
     return _compact_search_payload(
@@ -1322,6 +1914,182 @@ async def rewrite_project_window(
     shaped = _with_optional_compile(
         project_id,
         result,
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
+    await _notify_project_write_updates(ctx, project_id, include_compile_log=bool(compileAlso))
+    return shaped
+
+
+@mcp.tool
+async def patch_file_lines(
+        project_id: int,
+        filename: str,
+        start_line: int,
+        end_line: int,
+        new_content: str,
+        change_summary: str,
+        ctx: Context,
+        anchor_before: str | None = None,
+        anchor_after: str | None = None,
+        compileAlso: bool = False,
+        compileLogCompact: bool = True,
+        compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    """Replace an inclusive line range with optional anchor verification."""
+    summary = _require_summary(change_summary)
+    info = _file_line_info(project_id, filename)
+    if not info["is_text"]:
+        return _rejection(
+            "NOT_TEXT_FILE",
+            f"{info['file_name']} is not a text file.",
+            "Choose a text file or use a file upload tool for binary assets.",
+        )
+    safe_start = int(start_line)
+    safe_end = int(end_line)
+    if safe_start < 1 or safe_end < safe_start:
+        raise ValueError("line range is invalid")
+    total_lines = max(1, int(info["line_count"]))
+    if safe_end > total_lines:
+        raise ValueError("end_line out of bounds")
+    if anchor_before is not None:
+        if safe_start == 1:
+            return _rejection(
+                "ANCHOR_MISMATCH",
+                "anchor_before cannot be validated above line 1.",
+                "Remove anchor_before for a top-of-file patch or re-run grep_file to confirm the target range.",
+                searched_line=0,
+            )
+        before_line_payload = _read_file_lines_raw(project_id, info["file_name"], safe_start - 1, safe_start - 1)
+        before_line = str(before_line_payload.get("content") or "").splitlines()[0] if str(before_line_payload.get("content") or "").splitlines() else ""
+        if _normalize_line_text(before_line) != _normalize_line_text(anchor_before):
+            return _rejection(
+                "ANCHOR_MISMATCH",
+                f"anchor_before not found at line {safe_start - 1}. The file may have changed.",
+                "Re-run grep_file to find the current location of the anchor, then retry with the updated line number.",
+                searched_line=safe_start - 1,
+            )
+    if anchor_after is not None:
+        if safe_end >= total_lines:
+            return _rejection(
+                "ANCHOR_MISMATCH",
+                f"anchor_after cannot be validated below line {total_lines}.",
+                "Remove anchor_after for an end-of-file patch or re-run grep_file to confirm the target range.",
+                searched_line=total_lines + 1,
+            )
+        after_line_payload = _read_file_lines_raw(project_id, info["file_name"], safe_end + 1, safe_end + 1)
+        after_line = str(after_line_payload.get("content") or "").splitlines()[0] if str(after_line_payload.get("content") or "").splitlines() else ""
+        if _normalize_line_text(after_line) != _normalize_line_text(anchor_after):
+            return _rejection(
+                "ANCHOR_MISMATCH",
+                f"anchor_after not found at line {safe_end + 1}. The file may have changed.",
+                "Re-run grep_file to find the current location of the anchor, then retry with the updated line number.",
+                searched_line=safe_end + 1,
+            )
+    before_payload = _read_file_lines_raw(project_id, info["file_name"], safe_start, safe_end)
+    before_content = str(before_payload.get("content") or "")
+    diff_text, lines_added, lines_removed = _compute_diff_stats(before_content, new_content)
+    patch_rejection = _ensure_patch_size_allowed(lines_added, lines_removed)
+    if patch_rejection:
+        return patch_rejection
+    result = _call(
+        "POST",
+        f"/api/projects/{project_id}/write-window/",
+        {
+            "file_name": info["file_name"],
+            "replacement": new_content,
+            "start_line": safe_start,
+            "end_line": safe_end,
+            "change_summary": summary,
+            "change_source": "mcp",
+        },
+    )
+    shaped = _with_optional_compile(
+        project_id,
+        {
+            **(result if isinstance(result, dict) else {}),
+            "diff_text": diff_text,
+            "lines_added": lines_added,
+            "lines_removed": lines_removed,
+            "version_number": _latest_version_number(project_id, info["file_name"]),
+        },
+        compileAlso=compileAlso,
+        compileLogCompact=compileLogCompact,
+        compileMaxLogChars=compileMaxLogChars,
+    )
+    await _notify_project_write_updates(ctx, project_id, include_compile_log=bool(compileAlso))
+    return shaped
+
+
+@mcp.tool
+async def append_to_file(
+        project_id: int,
+        filename: str,
+        content: str,
+        change_summary: str,
+        ctx: Context,
+        anchor_section: str | None = None,
+        compileAlso: bool = False,
+        compileLogCompact: bool = True,
+        compileMaxLogChars: int = 4000,
+) -> dict[str, Any]:
+    """Append content at EOF or immediately after a named section."""
+    summary = _require_summary(change_summary)
+    info = _file_line_info(project_id, filename)
+    if not info["is_text"]:
+        return _rejection(
+            "NOT_TEXT_FILE",
+            f"{info['file_name']} is not a text file.",
+            "Choose a text file or use a file upload tool for binary assets.",
+        )
+    insertion_char = int(info["total_chars"])
+    appended_at_line = int(info["line_count"])
+    if anchor_section:
+        sections_payload = _call("GET", f"/api/projects/{project_id}/sections/")
+        sections = sections_payload.get("sections") if isinstance(sections_payload, dict) else []
+        matches = [
+            s for s in sections
+            if isinstance(s, dict)
+            and str(s.get("title") or "") == str(anchor_section)
+            and str(s.get("file_name") or _project_main_file_name(project_id)) == info["file_name"]
+        ]
+        if not matches:
+            return _rejection(
+                "SECTION_NOT_FOUND",
+                f"Section '{anchor_section}' was not found in {info['file_name']}.",
+                "Call list_project_sections or find_project_section_by_title, then retry with the exact section title.",
+            )
+        target_section = matches[-1]
+        section_index = int(target_section.get("index"))
+        section_payload = _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
+        insertion_char = int(section_payload.get("end_char") or insertion_char)
+        appended_at_line = int(section_payload.get("end_line") or appended_at_line)
+    _, lines_added, lines_removed = _compute_diff_stats("", content)
+    patch_rejection = _ensure_patch_size_allowed(lines_added, lines_removed)
+    if patch_rejection:
+        return patch_rejection
+    result = _call(
+        "POST",
+        f"/api/projects/{project_id}/write-window/",
+        {
+            "file_name": info["file_name"],
+            "replacement": content,
+            "start_char": insertion_char,
+            "end_char": insertion_char,
+            "change_summary": summary,
+            "change_source": "mcp",
+        },
+    )
+    shaped = _with_optional_compile(
+        project_id,
+        {
+            **(result if isinstance(result, dict) else {}),
+            "appended_at_line": appended_at_line,
+            "version_number": _latest_version_number(project_id, info["file_name"]),
+            "lines_added": lines_added,
+            "lines_removed": lines_removed,
+        },
         compileAlso=compileAlso,
         compileLogCompact=compileLogCompact,
         compileMaxLogChars=compileMaxLogChars,
@@ -1512,6 +2280,689 @@ async def import_project_zip(
     result = _call_upload(f"/api/projects/{project_id}/typst-import/", zip_bytes, filename="import.zip")
     await _notify_project_write_updates(ctx, project_id)
     return result if isinstance(result, dict) else {"files": result}
+
+
+@mcp.tool
+def get_longdoc_overview(project_id: int) -> dict[str, Any]:
+    """Read the compact Writing Assistant overview for a project.
+
+    The response includes active_session (current AI session or null),
+    limits (MCP budget/size limits), read_budget_remaining (lines left),
+    and resources (MCP resource URIs for this project).
+    """
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/longdoc/overview/")
+    if isinstance(payload, dict) and not payload.get("error"):
+        payload.setdefault("read_budget_remaining", max(0, _read_budget_remaining(project_id)))
+        payload.setdefault("limits", {
+            "max_read_lines": MCP_MAX_READ_LINES,
+            "max_full_read_bytes": MCP_MAX_FULL_READ_BYTES,
+            "max_patch_lines": MCP_MAX_PATCH_LINES,
+            "max_grep_matches": MCP_MAX_GREP_MATCHES,
+            "session_read_budget": MCP_SESSION_READ_BUDGET,
+            "max_session_files": MCP_MAX_SESSION_FILES,
+        })
+        payload.setdefault("resources", [
+            _resource_uri(project_id, name)
+            for name in ("overview", "context", "outline", "tasks", "notes", "summaries", "requirements", "ai-session")
+        ])
+    return payload
+
+
+@mcp.tool
+def list_context_files(project_id: int) -> dict[str, Any]:
+    """List long-document context files with metadata only."""
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/context-files/")
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    files = payload.get("context_files") if isinstance(payload, dict) else []
+    return {"context_files": files if isinstance(files, list) else []}
+
+
+@mcp.tool
+def read_context_file(project_id: int, filename: str) -> dict[str, Any]:
+    """Read one long-document context file.
+
+    Content is capped at MCP_MAX_FULL_READ_BYTES and counts against the read budget.
+    """
+    safe_name = quote(filename, safe="")
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/context-files/{safe_name}/")
+    if isinstance(payload, dict) and not payload.get("error"):
+        content = payload.get("content") or ""
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > MCP_MAX_FULL_READ_BYTES:
+            payload["content"] = content.encode("utf-8")[:MCP_MAX_FULL_READ_BYTES].decode("utf-8", errors="replace")
+            payload["truncated"] = True
+            payload["truncated_at_bytes"] = MCP_MAX_FULL_READ_BYTES
+            payload["total_bytes"] = content_bytes
+        line_count = max(1, len(content.splitlines()))
+        budget_rejection = _consume_read_budget(
+            project_id,
+            line_count,
+            suggestion="Use list_context_files to see metadata without loading file contents.",
+        )
+        if budget_rejection and MCP_READ_BUDGET_HARD:
+            return budget_rejection
+    return payload
+
+
+@mcp.tool
+async def update_context_file(
+        project_id: int,
+        filename: str,
+        change_summary: str,
+        ctx: Context,
+        content: str | None = None,
+        description: str | None = None,
+        display_name: str | None = None,
+        create_if_missing: bool = False,
+) -> dict[str, Any]:
+    """Create or update a long-document context file."""
+    summary = _require_summary(change_summary)
+    longdoc = _project_longdoc_meta(project_id)
+    if not (longdoc.get("enabled") and longdoc.get("context_enabled")):
+        return _rejection(
+            "FEATURE_DISABLED",
+            "Context files are disabled for this project.",
+            "Enable long-document mode and the Context feature before updating context files.",
+        )
+    if not longdoc.get("mcp_write_context"):
+        return _rejection(
+            "MCP_CONTEXT_WRITES_DISABLED",
+            "MCP context-file writes are disabled for this project.",
+            "Ask the user to enable MCP context writes or update the context file in the UI instead.",
+        )
+    safe_name = quote(filename, safe="")
+    payload = _call_allow_json_errors(
+        "PATCH",
+        f"/api/projects/{project_id}/context-files/{safe_name}/",
+        {
+            "content": content,
+            "description": description,
+            "display_name": display_name,
+            "create_if_missing": bool(create_if_missing),
+            "change_summary": summary,
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "context")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+def read_outline(project_id: int) -> dict[str, Any]:
+    """Read Writing Assistant outline items."""
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/outline-items/")
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    items = payload.get("outline_items") if isinstance(payload, dict) else []
+    return {"outline_items": items if isinstance(items, list) else []}
+
+
+@mcp.tool
+async def add_outline_item(
+        project_id: int,
+        title: str,
+        change_summary: str,
+        ctx: Context,
+        level: int = 1,
+        status: str = "missing",
+        order: int | None = None,
+        notes: str = "",
+) -> dict[str, Any]:
+    """Add one Writing Assistant outline item."""
+    payload = _call_allow_json_errors(
+        "POST",
+        f"/api/projects/{project_id}/outline-items/",
+        {
+            "title": title,
+            "level": int(level),
+            "status": status,
+            "order": order,
+            "notes": notes,
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "outline")
+    return payload if isinstance(payload, dict) else {"detail": "created"}
+
+
+@mcp.tool
+async def update_outline_item(
+        project_id: int,
+        item_id: int,
+        change_summary: str,
+        ctx: Context,
+        title: str | None = None,
+        level: int | None = None,
+        status: str | None = None,
+        order: int | None = None,
+        notes: str | None = None,
+) -> dict[str, Any]:
+    """Update one Writing Assistant outline item."""
+    payload = _call_allow_json_errors(
+        "PATCH",
+        f"/api/projects/{project_id}/outline-items/{int(item_id)}/",
+        {
+            **({"title": title} if title is not None else {}),
+            **({"level": int(level)} if level is not None else {}),
+            **({"status": status} if status is not None else {}),
+            **({"order": int(order)} if order is not None else {}),
+            **({"notes": notes} if notes is not None else {}),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "outline")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+def list_tasks(project_id: int) -> dict[str, Any]:
+    """List Writing Assistant tasks."""
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/tasks/")
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    items = payload.get("tasks") if isinstance(payload, dict) else []
+    return {"tasks": items if isinstance(items, list) else []}
+
+
+@mcp.tool
+async def add_task(project_id: int, description: str, change_summary: str, ctx: Context) -> dict[str, Any]:
+    """Add one Writing Assistant task."""
+    payload = _call_allow_json_errors(
+        "POST",
+        f"/api/projects/{project_id}/tasks/",
+        {
+            "description": description,
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "tasks")
+    return payload if isinstance(payload, dict) else {"detail": "created"}
+
+
+@mcp.tool
+async def complete_task(project_id: int, task_id: int, change_summary: str, ctx: Context) -> dict[str, Any]:
+    """Mark one Writing Assistant task as done."""
+    return await update_task_status(
+        project_id=project_id,
+        task_id=task_id,
+        status="done",
+        change_summary=change_summary,
+        ctx=ctx,
+    )
+
+
+@mcp.tool
+async def update_task_status(
+        project_id: int,
+        task_id: int,
+        status: str,
+        change_summary: str,
+        ctx: Context,
+        description: str | None = None,
+) -> dict[str, Any]:
+    """Update one Writing Assistant task status or description."""
+    payload = _call_allow_json_errors(
+        "PATCH",
+        f"/api/projects/{project_id}/tasks/{int(task_id)}/",
+        {
+            "status": status,
+            **({"description": description} if description is not None else {}),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "tasks")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+def read_notes(project_id: int) -> dict[str, Any]:
+    """Read Writing Assistant note sections."""
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/note-sections/")
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    items = payload.get("note_sections") if isinstance(payload, dict) else []
+    return {"note_sections": items if isinstance(items, list) else []}
+
+
+@mcp.tool
+async def append_to_note_section(
+        project_id: int,
+        heading: str,
+        text: str,
+        change_summary: str,
+        ctx: Context,
+) -> dict[str, Any]:
+    """Append text to an existing note section by heading."""
+    notes_payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/note-sections/")
+    if isinstance(notes_payload, dict) and notes_payload.get("error"):
+        return notes_payload
+    sections = notes_payload.get("note_sections") if isinstance(notes_payload, dict) else []
+    match = next((item for item in sections if isinstance(item, dict) and str(item.get("heading") or "") == heading), None)
+    if not match:
+        return _rejection(
+            "NOTE_SECTION_NOT_FOUND",
+            f"Note section '{heading}' was not found.",
+            "Call read_notes to inspect current headings, then retry with the exact heading.",
+        )
+    body = str(match.get("body") or "")
+    updated_body = f"{body}{text}" if body else text
+    payload = _call_allow_json_errors(
+        "PATCH",
+        f"/api/projects/{project_id}/note-sections/{int(match['id'])}/",
+        {
+            "body": updated_body,
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "notes")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+async def replace_note_section(
+        project_id: int,
+        section_id: int,
+        body: str,
+        change_summary: str,
+        ctx: Context,
+        heading: str | None = None,
+) -> dict[str, Any]:
+    """Replace a Writing Assistant note section body."""
+    payload = _call_allow_json_errors(
+        "PATCH",
+        f"/api/projects/{project_id}/note-sections/{int(section_id)}/",
+        {
+            "body": body,
+            **({"heading": heading} if heading is not None else {}),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "notes")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+def list_section_summaries(project_id: int) -> dict[str, Any]:
+    """List Writing Assistant section summaries."""
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/section-summaries/")
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    items = payload.get("section_summaries") if isinstance(payload, dict) else []
+    return {"section_summaries": items if isinstance(items, list) else []}
+
+
+@mcp.tool
+def read_section_summary(project_id: int, section_title: str) -> dict[str, Any]:
+    """Read one Writing Assistant section summary by exact section title."""
+    payload = _call_allow_json_errors(
+        "GET",
+        f"/api/projects/{project_id}/section-summaries/?{urlencode({'section_title': section_title})}",
+    )
+    return payload if isinstance(payload, dict) else {}
+
+
+@mcp.tool
+async def update_section_summary(
+        project_id: int,
+        section_title: str,
+        summary_text: str,
+        change_summary: str,
+        ctx: Context,
+        section_index: int | None = None,
+        source_file: str | None = None,
+) -> dict[str, Any]:
+    """Create or update one Writing Assistant section summary."""
+    payload = _call_allow_json_errors(
+        "POST",
+        f"/api/projects/{project_id}/section-summaries/",
+        {
+            "section_title": section_title,
+            "summary_text": summary_text,
+            **({"section_index": int(section_index)} if section_index is not None else {}),
+            **({"source_file": source_file} if source_file is not None else {}),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "outline", "summaries")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+def list_requirements(project_id: int) -> dict[str, Any]:
+    """List Writing Assistant requirements and coverage."""
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/requirements/")
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    items = payload.get("requirements") if isinstance(payload, dict) else []
+    return {"requirements": items if isinstance(items, list) else []}
+
+
+@mcp.tool
+async def add_requirement(
+        project_id: int,
+        req_id: str,
+        description: str,
+        change_summary: str,
+        ctx: Context,
+        coverage: str = "unchecked",
+        notes: str = "",
+        section_refs: list[str] | None = None,
+) -> dict[str, Any]:
+    """Add one Writing Assistant requirement."""
+    payload = _call_allow_json_errors(
+        "POST",
+        f"/api/projects/{project_id}/requirements/",
+        {
+            "req_id": req_id,
+            "description": description,
+            "coverage": coverage,
+            "notes": notes,
+            "section_refs": list(section_refs or []),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "requirements")
+    return payload if isinstance(payload, dict) else {"detail": "created"}
+
+
+@mcp.tool
+async def update_requirement_coverage(
+        project_id: int,
+        requirement_id: int,
+        coverage: str,
+        change_summary: str,
+        ctx: Context,
+        notes: str | None = None,
+        section_refs: list[str] | None = None,
+        description: str | None = None,
+) -> dict[str, Any]:
+    """Update requirement coverage, notes, refs, or description."""
+    payload = _call_allow_json_errors(
+        "PATCH",
+        f"/api/projects/{project_id}/requirements/{int(requirement_id)}/",
+        {
+            "coverage": coverage,
+            **({"notes": notes} if notes is not None else {}),
+            **({"section_refs": list(section_refs)} if section_refs is not None else {}),
+            **({"description": description} if description is not None else {}),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "requirements")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+def get_active_session(project_id: int) -> dict[str, Any]:
+    """Return the active AI session for a project, or null if none exists.
+
+    Use this before calling create_ai_session to check if one is already open.
+    """
+    return _call_allow_json_errors("GET", f"/api/projects/{project_id}/ai-session/")
+
+
+@mcp.tool
+async def create_ai_session(
+        project_id: int,
+        goal: str,
+        ctx: Context,
+        expires_hours: int | None = None,
+) -> dict[str, Any]:
+    """Create a new AI session for a project.
+
+    The session creates an isolated git worktree. All file writes must use
+    write_to_session. Only one session can be active per project.
+    Call get_active_session first to avoid a 423 conflict error.
+
+    IMPORTANT: You cannot accept or discard sessions — only a logged-in user
+    can do that through the web UI. Your role is to prepare changes for review.
+    """
+    payload: dict[str, Any] = {"goal": goal}
+    if expires_hours is not None:
+        payload["expires_hours"] = int(expires_hours)
+    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/", payload)
+    if isinstance(result, dict) and not result.get("error"):
+        await _notify_longdoc_updates(ctx, project_id, "overview", "ai-session")
+    return result
+
+
+@mcp.tool
+async def write_to_session(
+        project_id: int,
+        filename: str,
+        op: str,
+        change_summary: str,
+        ctx: Context,
+        content: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        new_text: str | None = None,
+        pattern: str | None = None,
+        replacement: str | None = None,
+        text: str | None = None,
+        section_title: str | None = None,
+        is_regex: bool = False,
+        ignore_case: bool = False,
+        dry_run: bool = False,
+        max_replacements: int = 1,
+) -> dict[str, Any]:
+    """Write a change to the active AI session worktree.
+
+    op must be one of:
+    - create_new_file: write a brand-new file (requires content)
+    - patch_file_lines: replace line range start_line..end_line with new_text
+    - replace_text: find-and-replace pattern with replacement (supports dry_run)
+    - append_to_file: append text at EOF or after section_title
+    - update_section: replace a complete parsed section
+
+    Full overwrites of source files are blocked; use the patch ops instead.
+    """
+    body: dict[str, Any] = {
+        "filename": filename,
+        "op": op,
+        "change_summary": change_summary,
+    }
+    for k, v in [
+        ("content", content), ("start_line", start_line), ("end_line", end_line),
+        ("new_text", new_text), ("pattern", pattern), ("replacement", replacement),
+        ("text", text), ("section_title", section_title),
+        ("is_regex", is_regex), ("ignore_case", ignore_case),
+        ("dry_run", dry_run), ("max_replacements", max_replacements),
+    ]:
+        if v is not None and v is not False and v != 1:
+            body[k] = v
+        elif k in ("is_regex", "ignore_case", "dry_run") and v:
+            body[k] = v
+        elif k == "max_replacements":
+            body[k] = int(max_replacements)
+    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/write/", body)
+    if isinstance(result, dict) and not result.get("error"):
+        await _notify_longdoc_updates(ctx, project_id, "ai-session")
+        await _notify_project_write_updates(ctx, project_id)
+    return result
+
+
+@mcp.tool
+async def compile_ai_session(project_id: int, ctx: Context) -> dict[str, Any]:
+    """Compile the active AI session worktree.
+
+    Produces a staging PDF visible only to the project owner in the web UI.
+    Session status moves to 'compiled' on success.
+    """
+    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/compile/")
+    if isinstance(result, dict) and not result.get("error"):
+        await _notify_longdoc_updates(ctx, project_id, "ai-session")
+    return result
+
+
+@mcp.tool
+def get_session_diff(project_id: int) -> dict[str, Any]:
+    """Return the unified diff of all changes in the active AI session.
+
+    Use this to summarise what has been written before finalising.
+    """
+    return _call_allow_json_errors("GET", f"/api/projects/{project_id}/ai-session/diff/")
+
+
+@mcp.tool
+async def finalize_ai_session(
+        project_id: int,
+        summary: str,
+        ctx: Context,
+        task_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    """Mark the active AI session as ready for user review (ready_for_review).
+
+    After this call the session is locked for further writes and the user will
+    be shown the diff and staging PDF for acceptance or discard.
+
+    You cannot accept or discard sessions — that requires a logged-in user.
+    """
+    body: dict[str, Any] = {"summary": summary}
+    if task_ids:
+        body["task_ids"] = [int(i) for i in task_ids]
+    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/ai-session/finalize/", body)
+    if isinstance(result, dict) and not result.get("error"):
+        await _notify_longdoc_updates(ctx, project_id, "overview", "ai-session")
+    return result
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/ai-session",
+    name="project-ai-session",
+    title="Writing Assistant AI Session",
+    description="Current AI session state including status, diff, and compile result.",
+    mime_type="application/json",
+)
+def resource_project_ai_session(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/ai-session/")
+    return payload if isinstance(payload, dict) else {"session": None}
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/overview",
+    name="project-longdoc-overview",
+    title="Writing Assistant Overview",
+    description="Compact Writing Assistant state without full content dumps.",
+    mime_type="application/json",
+)
+def resource_project_longdoc_overview(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/longdoc/overview/")
+    return payload if isinstance(payload, dict) else {}
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/context",
+    name="project-context",
+    title="Writing Assistant Context Files",
+    description="Context file metadata for a project without file contents.",
+    mime_type="application/json",
+)
+def resource_project_context(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/context-files/")
+    if isinstance(payload, dict) and isinstance(payload.get("context_files"), list):
+        return {"context_files": payload["context_files"]}
+    return payload if isinstance(payload, dict) else {"context_files": []}
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/outline",
+    name="project-longdoc-outline",
+    title="Writing Assistant Outline",
+    description="All Writing Assistant outline items as structured JSON.",
+    mime_type="application/json",
+)
+def resource_project_longdoc_outline(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/outline-items/")
+    if isinstance(payload, dict) and isinstance(payload.get("outline_items"), list):
+        return {"outline_items": payload["outline_items"]}
+    return payload if isinstance(payload, dict) else {"outline_items": []}
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/tasks",
+    name="project-longdoc-tasks",
+    title="Writing Assistant Tasks",
+    description="Writing Assistant tasks for a project.",
+    mime_type="application/json",
+)
+def resource_project_longdoc_tasks(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/tasks/")
+    if isinstance(payload, dict) and isinstance(payload.get("tasks"), list):
+        return {"tasks": payload["tasks"]}
+    return payload if isinstance(payload, dict) else {"tasks": []}
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/notes",
+    name="project-longdoc-notes",
+    title="Writing Assistant Notes",
+    description="Writing Assistant note sections for a project.",
+    mime_type="application/json",
+)
+def resource_project_longdoc_notes(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/note-sections/?compact=true")
+    if isinstance(payload, dict) and isinstance(payload.get("note_sections"), list):
+        return {"note_sections": payload["note_sections"]}
+    return payload if isinstance(payload, dict) else {"note_sections": []}
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/summaries",
+    name="project-longdoc-summaries",
+    title="Writing Assistant Section Summaries",
+    description="All structured section summaries with staleness state.",
+    mime_type="application/json",
+)
+def resource_project_longdoc_summaries(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/section-summaries/")
+    if isinstance(payload, dict) and isinstance(payload.get("section_summaries"), list):
+        return {"section_summaries": payload["section_summaries"]}
+    return payload if isinstance(payload, dict) else {"section_summaries": []}
+
+
+@mcp.resource(
+    "smarttex://projects/{project_id}/requirements",
+    name="project-longdoc-requirements",
+    title="Writing Assistant Requirements",
+    description="All requirements and their coverage state for a project.",
+    mime_type="application/json",
+)
+def resource_project_longdoc_requirements(project_id: int) -> dict[str, Any]:
+    payload = _call_allow_json_errors("GET", f"/api/projects/{int(project_id)}/requirements/")
+    if isinstance(payload, dict) and isinstance(payload.get("requirements"), list):
+        return {"requirements": payload["requirements"]}
+    return payload if isinstance(payload, dict) else {"requirements": []}
 
 
 @mcp.resource(

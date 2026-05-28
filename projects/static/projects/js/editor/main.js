@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import {
   initCodeMirror, setContent, switchLanguage,
   focusEditor, jumpToLine, view,
+  saveTabState, hasTabState, activateTab, dropTabState,
 } from "./cm.js";
 import { loadPdfViewer, pdfEmpty } from "./pdfviewer.js";
 import {
@@ -19,19 +20,26 @@ import {
 import { renderVersions, initVersionsPanel, closeDiffModal } from "./versions.js";
 import {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
-  pollCompileStatus, connectProjectUpdatesWebSocket, deleteCurrentProject,
+  pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
 } from "./compile.js";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI } from "./longdoc.js";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
 const editorConfig = window.EDITOR_CONFIG || {};
 cfg.projectId  = editorConfig.projectId  || 0;
 cfg.csrfToken  = editorConfig.csrfToken  || "";
+cfg.sessionReview = Boolean(editorConfig.sessionReview);
 
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
 const editorTabbarEl = document.getElementById("editor-tabbar");
+
+function closeWritingAssistantTab() {
+  document.getElementById("drop-zone")?.classList.remove("wa-active");
+  document.getElementById("wa-tab-btn")?.classList.remove("active");
+}
 
 export function renderEditorTabs() {
   if (!editorTabbarEl) return;
@@ -61,6 +69,7 @@ export function renderEditorTabs() {
 
     div.append(dot, nameSpan, dirtyDot, closeBtn);
     div.addEventListener("click", () => {
+      closeWritingAssistantTab();
       const f = s.openTabs.find(t => t.name === tab.name);
       if (f && f.name !== s.activeTabName) selectFile(f);
     });
@@ -83,6 +92,7 @@ function closeTab(name) {
   const idx = s.openTabs.findIndex(t => t.name === name);
   if (idx === -1) return;
   s.openTabs.splice(idx, 1);
+  dropTabState(name);
 
   if (s.activeTabName === name) {
     const next = s.openTabs[Math.min(idx, s.openTabs.length - 1)];
@@ -152,9 +162,8 @@ export async function loadMainFile() {
     s.selectedFile = { name: s.mainFileName, type: "main", is_text: true };
   }
   if (currentFileLbl) currentFileLbl.textContent = s.selectedFile.name;
-  setContent(data.content || "");
-  switchLanguage(s.mainFileName);
   s.mainFileContent   = data.content || "";
+  activateTab(s.mainFileName, s.mainFileContent, s.mainFileName);
   s.hasUnsavedChanges = false;
   setSaveHint("Завантажено", "saved");
 }
@@ -196,10 +205,18 @@ export async function loadVersions(reset = false) {
 // ── File selection (coordination layer) ───────────────────────────────────────
 
 async function selectFile(file) {
+  closeWritingAssistantTab();
+  const prevFile = s.selectedFile;
+
   // Flush unsaved changes before switching
-  if (s.hasUnsavedChanges && s.selectedFile.is_text && !s.selectedFile.is_dir) {
+  if (s.hasUnsavedChanges && prevFile.is_text && !prevFile.is_dir) {
     clearTimeout(s.saveTimer);
     await saveCurrentFile();
+  }
+
+  // Snapshot current tab's editor state so its undo history is preserved
+  if (prevFile.name && prevFile.is_text && !prevFile.is_dir) {
+    saveTabState(prevFile.name);
   }
 
   s.selectedFile = { name: file.name, type: file.type || "asset", ...file };
@@ -211,8 +228,7 @@ async function selectFile(file) {
 
   if (file.name === s.mainFileName) {
     showEditorForText();
-    setContent(s.mainFileContent);
-    switchLanguage(s.mainFileName);
+    activateTab(s.mainFileName, s.mainFileContent, s.mainFileName);
     s.hasUnsavedChanges = false;
     setSaveHint("", "");
     focusEditor();
@@ -221,12 +237,22 @@ async function selectFile(file) {
 
   if (file.is_text && !file.is_dir) {
     showEditorForText();
+
+    // If the tab was already loaded, restore its saved state (history intact)
+    if (hasTabState(file.name)) {
+      activateTab(file.name, "", file.name);
+      s.hasUnsavedChanges = false;
+      setSaveHint("", "");
+      focusEditor();
+      return;
+    }
+
+    // First visit — fetch from server and create fresh state
     setSaveHint("Завантаження…", "saving");
     try {
       const params = new URLSearchParams({ include_text: "1" });
       const data = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(file.name)}/content/?${params}`);
-      setContent(data.text_content || "");
-      switchLanguage(file.name);
+      activateTab(file.name, data.text_content || "", file.name);
       s.hasUnsavedChanges = false;
       setSaveHint("Завантажено", "saved");
       focusEditor();
@@ -234,7 +260,7 @@ async function selectFile(file) {
       setSaveHint(`Помилка: ${err.message}`, "error");
       s.selectedFile = { name: s.mainFileName, type: "main", is_text: true };
       if (currentFileLbl) currentFileLbl.textContent = s.mainFileName;
-      setContent(s.mainFileContent);
+      activateTab(s.mainFileName, s.mainFileContent, s.mainFileName);
       s.hasUnsavedChanges = false;
       renderFileList();
     }
@@ -309,6 +335,8 @@ async function init() {
   // Inject shared references to break circular deps
   setSelectFileRef(selectFile);
   setOutlineLocationRef(openOutlineLocation);
+  setLongdocProjectMetaRef(loadProjectMeta);
+  initSessionUI();
 
   // Initialize CodeMirror
   initCodeMirror(
@@ -344,7 +372,13 @@ async function init() {
   });
 
   // Compile / project actions
-  compileBtn?.addEventListener("click",    () => compileProject().catch(() => {}));
+  compileBtn?.addEventListener("click",    () => {
+    if (cfg.sessionReview) {
+      setSaveHint("Session review is read-only", "error");
+      return;
+    }
+    compileProject().catch(() => {});
+  });
   renameProjBtn?.addEventListener("click", () => { closeProjectMenu(); renameCurrentProject().catch(() => {}); });
   deleteProjBtn?.addEventListener("click", () => { closeProjectMenu(); deleteCurrentProject().catch(() => {}); });
 
@@ -362,6 +396,7 @@ async function init() {
 
   // File uploads
   fileUploadInput?.addEventListener("change", async e => {
+    if (cfg.sessionReview) return;
     for (const f of [...(e.target.files || [])]) {
       try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
     }
@@ -369,6 +404,7 @@ async function init() {
     await Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]);
   });
   zipUploadInput?.addEventListener("change", async e => {
+    if (cfg.sessionReview) return;
     const f = e.target.files?.[0]; if (!f) return;
     try { await uploadZip(f); } catch (err) { setSaveHint(`Помилка ZIP: ${err.message}`, "error"); }
     finally { e.target.value = ""; }
@@ -376,15 +412,16 @@ async function init() {
   });
 
   // New file / folder
-  newFolderBtn?.addEventListener("click",    () => createFolder().then(name => { if (name) return Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]).then(() => { const created = s.projectFiles.find(x => x.name === name.replace(/[\\/]+$/, "")); if (created) selectFile(created); }); }).catch(err => setSaveHint(`Помилка: ${err.message}`, "error")));
-  newTextFileBtn?.addEventListener("click",  () => createEmptyTextFile().then(name => { if (name) return Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]).then(() => { const created = s.projectFiles.find(x => x.name === name); if (created) selectFile(created); }); }).catch(err => setSaveHint(`Помилка: ${err.message}`, "error")));
+  newFolderBtn?.addEventListener("click",    () => { if (!cfg.sessionReview) createFolder().then(name => { if (name) return Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]).then(() => { const created = s.projectFiles.find(x => x.name === name.replace(/[\\/]+$/, "")); if (created) selectFile(created); }); }).catch(err => setSaveHint(`Помилка: ${err.message}`, "error")); });
+  newTextFileBtn?.addEventListener("click",  () => { if (!cfg.sessionReview) createEmptyTextFile().then(name => { if (name) return Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]).then(() => { const created = s.projectFiles.find(x => x.name === name); if (created) selectFile(created); }); }).catch(err => setSaveHint(`Помилка: ${err.message}`, "error")); });
 
   // Drag & drop on drop zone
   let dragCounter = 0;
-  dropZone?.addEventListener("dragenter", e => { e.preventDefault(); dragCounter++; dropZone.classList.add("drag-active"); });
-  dropZone?.addEventListener("dragleave", () => { if (--dragCounter <= 0) { dragCounter = 0; dropZone.classList.remove("drag-active"); } });
-  dropZone?.addEventListener("dragover",  e => e.preventDefault());
+  dropZone?.addEventListener("dragenter", e => { if (cfg.sessionReview) return; e.preventDefault(); dragCounter++; dropZone.classList.add("drag-active"); });
+  dropZone?.addEventListener("dragleave", () => { if (cfg.sessionReview) return; if (--dragCounter <= 0) { dragCounter = 0; dropZone.classList.remove("drag-active"); } });
+  dropZone?.addEventListener("dragover",  e => { if (!cfg.sessionReview) e.preventDefault(); });
   dropZone?.addEventListener("drop", async e => {
+    if (cfg.sessionReview) return;
     e.preventDefault(); dragCounter = 0; dropZone.classList.remove("drag-active");
     for (const f of [...(e.dataTransfer.files || [])]) {
       if (f.name.toLowerCase().endsWith(".zip")) {
@@ -398,9 +435,11 @@ async function init() {
 
   // File list drag-to-root drop
   document.getElementById("file-list")?.addEventListener("dragover", e => {
+    if (cfg.sessionReview) return;
     if (!s.draggedFilePath) return; e.preventDefault();
   });
   document.getElementById("file-list")?.addEventListener("drop", e => {
+    if (cfg.sessionReview) return;
     if (!s.draggedFilePath) return;
     const folderBtn = e.target.closest(".e-file-btn[data-is-dir='1']");
     if (folderBtn) return;
@@ -414,6 +453,7 @@ async function init() {
 
   // Clipboard paste upload
   document.addEventListener("paste", async e => {
+    if (cfg.sessionReview) return;
     const files = [...(e.clipboardData?.files || [])].filter(f => f && f.size > 0);
     if (!files.length) return;
     e.preventDefault();
@@ -435,8 +475,7 @@ async function init() {
   window.addEventListener("beforeunload", () => {
     if (s.statusPollTimer)         clearInterval(s.statusPollTimer);
     if (s.typstCompileTimer)       clearTimeout(s.typstCompileTimer);
-    if (s.projectWsReconnectTimer) clearTimeout(s.projectWsReconnectTimer);
-    if (s.projectWs) { try { s.projectWs.close(); } catch (_) {} s.projectWs = null; }
+    if (s.projectSse) { try { s.projectSse.close(); } catch (_) {} s.projectSse = null; }
   });
 
   // ── Load initial data ──
@@ -449,7 +488,7 @@ async function init() {
   renderEditorTabs();
   updateEditorTab(s.selectedFile?.name || s.mainFileName);
   setCompileState("out_of_date");
-  await Promise.all([loadFiles(), loadSections(), loadVersions(true)]);
+  await Promise.all([loadFiles(), loadSections(), loadVersions(true), loadLongdocData()]);
 
   const cd = await api(`/api/projects/${cfg.projectId}/compile/`, { method: "GET" });
   setCompileState(cd.compile_state || "out_of_date", cd.status);
@@ -465,7 +504,7 @@ async function init() {
   }
 
   renderFileList();
-  connectProjectUpdatesWebSocket();
+  connectProjectUpdatesSse();
   s.statusPollTimer = setInterval(pollCompileStatus, 5000);
 }
 

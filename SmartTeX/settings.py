@@ -17,6 +17,13 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -42,6 +49,7 @@ INSTALLED_APPS = [
     'accounts',
     'templates_lib',
     'projects',
+    'longdoc',
     'mcp',
 ]
 
@@ -209,3 +217,27 @@ EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = int(os.getenv("EMAIL_VERIFICATION_R
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
+
+LONGDOC_DEFAULTS = {
+    "enabled": _env_bool("SMARTTEX_LONGDOC_ENABLED", True),
+    "context_enabled": _env_bool("SMARTTEX_LONGDOC_CONTEXT", True),
+    "outline_enabled": _env_bool("SMARTTEX_LONGDOC_OUTLINE", True),
+    "tasks_enabled": _env_bool("SMARTTEX_LONGDOC_TASKS", True),
+    "notes_enabled": _env_bool("SMARTTEX_LONGDOC_NOTES", True),
+    "summaries_enabled": _env_bool("SMARTTEX_LONGDOC_SUMMARIES", True),
+    "requirements_enabled": _env_bool("SMARTTEX_LONGDOC_REQUIREMENTS", False),
+    "ai_sessions_enabled": _env_bool("SMARTTEX_LONGDOC_AI_SESSIONS", True),
+    "mcp_controlled_access": _env_bool("SMARTTEX_LONGDOC_MCP_CONTROLLED", True),
+    "mcp_write_context": _env_bool("SMARTTEX_LONGDOC_MCP_WRITE_CONTEXT", False),
+}
+LONGDOC_SESSION_EXPIRE_HOURS = int(os.getenv("SMARTTEX_SESSION_EXPIRE_HOURS", "72"))
+LONGDOC_MAX_CONTEXT_SIZE_KB = int(os.getenv("SMARTTEX_MAX_CONTEXT_SIZE_KB", "512"))
+MCP_MAX_READ_LINES = int(os.getenv("MCP_MAX_READ_LINES", "300"))
+MCP_MAX_GREP_MATCHES = int(os.getenv("MCP_MAX_GREP_MATCHES", "20"))
+MCP_MAX_GREP_CONTEXT = int(os.getenv("MCP_MAX_GREP_CONTEXT", "10"))
+MCP_MAX_PATCH_LINES = int(os.getenv("MCP_MAX_PATCH_LINES", "50"))
+MCP_MAX_SESSION_FILES = int(os.getenv("MCP_MAX_SESSION_FILES", "5"))
+MCP_MAX_FULL_READ_BYTES = int(os.getenv("MCP_MAX_FULL_READ_BYTES", "65536"))
+MCP_SESSION_READ_BUDGET = int(os.getenv("MCP_SESSION_READ_BUDGET", "2000"))
+MCP_READ_BUDGET_HARD = _env_bool("MCP_READ_BUDGET_HARD", False)
+MCP_MAX_SEARCH_RESULTS = int(os.getenv("MCP_MAX_SEARCH_RESULTS", "30"))

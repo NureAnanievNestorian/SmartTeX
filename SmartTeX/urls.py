@@ -29,6 +29,7 @@ urlpatterns = [
     path('', include('accounts.urls')),
     path('', include('templates_lib.urls')),
     path('api/', include('accounts.api_urls')),
+    path('api/', include('longdoc.api_urls')),
     path('api/', include('templates_lib.api_urls')),
     path('api/', include('projects.api_urls')),
 ]

@@ -15,6 +15,8 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from accounts.auth_helpers import get_api_user
 from SmartTeX.markup import MarkupType, source_filename_for_markup
+from longdoc.locks import get_locking_session
+from longdoc.services import get_longdoc_settings_or_none, initialize_longdoc_from_template
 from templates_lib.models import Template
 from templates_lib.services import normalize_template_main_file
 
@@ -97,8 +99,25 @@ def _unauthorized() -> JsonResponse:
     return JsonResponse({"detail": "Authentication required"}, status=401)
 
 
+def _check_project_lock(project: Project) -> JsonResponse | None:
+    """Return a 423 response if the project is locked by an AI session, else None."""
+    session = get_locking_session(project)
+    if session is None:
+        return None
+    return JsonResponse(
+        {
+            "error": "PROJECT_LOCKED",
+            "message": "An AI session is active. Accept or discard it before making changes.",
+            "session_id": session.id,
+        },
+        status=423,
+    )
+
+
 def _project_payload(project: Project) -> dict:
     source_file_name = main_source_filename(project)
+    longdoc_settings = get_longdoc_settings_or_none(project)
+    locking_session = get_locking_session(project) if longdoc_settings and longdoc_settings.enabled else None
     return {
         "id": project.id,
         "title": project.title,
@@ -107,6 +126,20 @@ def _project_payload(project: Project) -> dict:
         "main_file_name": source_file_name,
         "supports_synctex": project.markup_type == MarkupType.LATEX,
         "last_status": project.last_status,
+        "longdoc": {
+            "enabled": bool(longdoc_settings and longdoc_settings.enabled),
+            "context_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.context_enabled),
+            "outline_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.outline_enabled),
+            "tasks_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.tasks_enabled),
+            "notes_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.notes_enabled),
+            "summaries_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.summaries_enabled),
+            "requirements_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.requirements_enabled),
+            "ai_sessions_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.ai_sessions_enabled),
+            "mcp_controlled_access": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_controlled_access),
+            "mcp_write_context": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_write_context),
+            "locked": locking_session is not None,
+            "locking_session_id": locking_session.id if locking_session else None,
+        },
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
     }
@@ -244,6 +277,11 @@ def ai_connect_guide(request: HttpRequest):
     )
 
 
+@require_GET
+def ai_workflow_guide(request: HttpRequest):
+    return render(request, "projects/ai_workflow_guide.html")
+
+
 @login_required
 @require_GET
 def dashboard(request: HttpRequest):
@@ -275,7 +313,22 @@ def dashboard(request: HttpRequest):
 @require_GET
 def editor(request: HttpRequest, project_id: int):
     project = _project_with_owner(project_id, request.user)
-    return render(request, "projects/editor.html", {"project": project})
+    return render(request, "projects/editor.html", {"project": project, "session_review": False, "has_active_session": False})
+
+
+@login_required
+@require_GET
+def session_review(request: HttpRequest, project_id: int):
+    project = _project_with_owner(project_id, request.user)
+    return render(
+        request,
+        "projects/editor.html",
+        {
+            "project": project,
+            "session_review": True,
+            "has_active_session": get_locking_session(project) is not None,
+        },
+    )
 
 
 @csrf_exempt
@@ -346,6 +399,8 @@ def api_projects(request: HttpRequest) -> JsonResponse:
             summary=_default_change_summary("create_project", main_source_filename(project)),
             tracked_files=[main_source_filename(project)],
         )
+        if template_obj is not None:
+            initialize_longdoc_from_template(project, template_obj)
     _compile_project_after_create(project)
     return JsonResponse(_project_payload(project), status=201)
 
@@ -398,6 +453,9 @@ def api_project_file(request: HttpRequest, project_id: int) -> JsonResponse:
 
     if request.method == "GET":
         return JsonResponse({"file_name": main_source_filename(project), "content": read_source_content(project)})
+
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
 
     body = _json_body(request)
     content = body.get("content", "")
@@ -489,6 +547,8 @@ def api_project_write_window(request: HttpRequest, project_id: int) -> JsonRespo
     if not user:
         return _unauthorized()
     project = _project_with_owner(project_id, user)
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
     body = _json_body(request)
 
     replacement = body.get("replacement")
@@ -548,6 +608,9 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
 
     if request.method == "GET":
         return JsonResponse({"files": list_project_assets(project)})
+
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
 
     # Support both multipart uploads (web UI) and JSON/base64 uploads (MCP).
     raw_body = _json_body(request) if request.content_type == "application/json" else {}
@@ -717,6 +780,9 @@ def api_project_asset(request: HttpRequest, project_id: int, filename: str):
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return FileResponse(open(path, "rb"), content_type=content_type)
 
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
+
     body = _json_body(request)
     try:
         meta = _change_meta(request, body)
@@ -796,6 +862,9 @@ def api_project_asset_content(request: HttpRequest, project_id: int, filename: s
             return JsonResponse({"detail": message}, status=status)
         return JsonResponse(payload)
 
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
+
     body = _json_body(request)
     content = body.get("content")
     if not isinstance(content, str):
@@ -834,6 +903,8 @@ def api_project_asset_rename(request: HttpRequest, project_id: int, filename: st
         return _unauthorized()
 
     project = _project_with_owner(project_id, user)
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
     body = _json_body(request)
     try:
         meta = _change_meta(request, body)
@@ -917,6 +988,8 @@ def api_project_typst_import(request: HttpRequest, project_id: int) -> JsonRespo
     if not user:
         return _unauthorized()
     project = _project_with_owner(project_id, user)
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
 
     if not request.FILES.get("file"):
         return JsonResponse({"detail": "file is required"}, status=400)
@@ -956,6 +1029,9 @@ def api_project_section(request: HttpRequest, project_id: int, section_index: in
             return JsonResponse({"detail": str(exc)}, status=404)
         return JsonResponse(payload)
 
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
+
     body = _json_body(request)
     content = body.get("content")
     if not isinstance(content, str):
@@ -994,6 +1070,8 @@ def api_project_insert(request: HttpRequest, project_id: int) -> JsonResponse:
     if not user:
         return _unauthorized()
     project = _project_with_owner(project_id, user)
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
     body = _json_body(request)
     position = body.get("position")
     text = body.get("text")
@@ -1086,6 +1164,8 @@ def api_project_version_rollback(request: HttpRequest, project_id: int, version_
     if not user:
         return _unauthorized()
     project = _project_with_owner(project_id, user)
+    if lock_resp := _check_project_lock(project):
+        return lock_resp
     body = _json_body(request)
     try:
         meta = _change_meta(request, body)
