@@ -229,6 +229,11 @@ export function connectProjectUpdatesSse() {
     s.projectSse = null;
   }
 
+  if (typeof EventSource !== "function") {
+    setSaveHint("SSE недоступний у цьому браузері. Оновлення MCP перевірятимуться періодично.", "error");
+    return;
+  }
+
   const url = `/sse/projects/${cfg.projectId}/updates/`;
   const es = new EventSource(url);
   s.projectSse = es;
@@ -250,6 +255,13 @@ export function connectProjectUpdatesSse() {
       return;
     }
     handleMcpUpdate().catch(() => {});
+  });
+
+  es.addEventListener("error", () => {
+    if (es.readyState === EventSource.CLOSED) {
+      s.projectSse = null;
+      setSaveHint("SSE-оновлення проєкту закрито. Періодична перевірка лишається активною.", "error");
+    }
   });
 }
 

@@ -1558,6 +1558,77 @@ def _compiler_network_args(markup_type: str) -> list[str]:
     return ["--network", network]
 
 
+def build_compiler_cmd(
+    markup_type: str,
+    src_filename: str,
+    source_dir: Path,
+    docker_mount_source: Path,
+) -> tuple[list[str], dict, int]:
+    """Return (cmd, run_kwargs, timeout) for compiling a LaTeX/Typst project.
+
+    source_dir        – local directory used as CWD for native compilation.
+    docker_mount_source – host path mounted at /workspace inside Docker.
+    """
+    fonts_dir = str(getattr(settings, "TYPST_FONTS_DIR", "")).strip()
+    use_native_typst = markup_type == MarkupType.TYPST and bool(
+        getattr(settings, "TYPST_USE_NATIVE", False)
+    )
+
+    if use_native_typst:
+        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
+        typst_bin = str(getattr(settings, "TYPST_BINARY", "typst")).strip() or "typst"
+        cmd: list[str] = [typst_bin, "compile", "--root", "."]
+        if fonts_dir:
+            cmd += ["--font-path", fonts_dir]
+        cmd += [src_filename, "main.pdf"]
+        run_kwargs: dict = {"cwd": str(source_dir)}
+    elif markup_type == MarkupType.TYPST:
+        image = getattr(settings, "TYPST_DOCKER_IMAGE", "ghcr.io/typst/typst:latest")
+        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
+        compiler_args = ["compile", "--root", "/workspace"]
+        docker_font_args: list[str] = []
+        if fonts_dir:
+            docker_font_args = ["-v", f"{fonts_dir}:/fonts:ro"]
+            compiler_args += ["--font-path", "/fonts"]
+        compiler_args += [src_filename, "main.pdf"]
+        cmd = [
+            "docker", "run", "--rm",
+            *_compiler_network_args(markup_type),
+            "--memory=600m", "--cpus=1.0",
+            "-v", f"{docker_mount_source}:/workspace:rw",
+            "-w", "/workspace",
+            *docker_font_args,
+            image,
+            *compiler_args,
+        ]
+        run_kwargs = {}
+    else:
+        image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
+        timeout = int(getattr(settings, "LATEX_TIMEOUT_SECONDS", 60))
+        strict_errors = bool(getattr(settings, "LATEX_STRICT_ERRORS", False))
+        compiler_args = [
+            "lualatex",
+            "-interaction=nonstopmode",
+            "-synctex=1",
+            "-jobname=main",
+        ]
+        if strict_errors:
+            compiler_args.append("-halt-on-error")
+        compiler_args.append(src_filename)
+        cmd = [
+            "docker", "run", "--rm",
+            *_compiler_network_args(markup_type),
+            "--memory=600m", "--cpus=1.0",
+            "-v", f"{docker_mount_source}:/workspace:rw",
+            "-w", "/workspace",
+            image,
+            *compiler_args,
+        ]
+        run_kwargs = {}
+
+    return cmd, run_kwargs, timeout
+
+
 def _project_compile_debug_header(
     *,
     project: Project,
@@ -1636,65 +1707,13 @@ def compile_project(project: Project) -> CompileResult:
         docker_mount_source = Path(host_project_root) / "media" / "projects" / str(project.owner_id) / str(project.id)
         docker_mount_source.mkdir(parents=True, exist_ok=True)
 
-    use_native_typst = (
-        project.markup_type == MarkupType.TYPST
-        and bool(getattr(settings, "TYPST_USE_NATIVE", False))
-    )
-
     src_filename = main_source_filename(project)
-    fonts_dir = str(getattr(settings, "TYPST_FONTS_DIR", "")).strip()
-
-    if use_native_typst:
-        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
-        typst_bin = str(getattr(settings, "TYPST_BINARY", "typst")).strip() or "typst"
-        cmd = [typst_bin, "compile", "--root", "."]
-        if fonts_dir:
-            cmd += ["--font-path", fonts_dir]
-        cmd += [src_filename, "main.pdf"]
-        run_kwargs: dict = {"cwd": str(workdir)}
-    elif project.markup_type == MarkupType.TYPST:
-        image = getattr(settings, "TYPST_DOCKER_IMAGE", "ghcr.io/typst/typst:latest")
-        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
-        compiler_args = ["compile", "--root", "/workspace"]
-        docker_font_args: list = []
-        if fonts_dir:
-            docker_font_args = ["-v", f"{fonts_dir}:/fonts:ro"]
-            compiler_args += ["--font-path", "/fonts"]
-        compiler_args += [src_filename, "main.pdf"]
-        cmd = [
-            "docker", "run", "--rm",
-            *_compiler_network_args(project.markup_type),
-            "--memory=600m", "--cpus=1.0",
-            "-v", f"{docker_mount_source}:/workspace:rw",
-            "-w", "/workspace",
-            *docker_font_args,
-            image,
-            *compiler_args,
-        ]
-        run_kwargs = {}
-    else:
-        image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
-        timeout = int(getattr(settings, "LATEX_TIMEOUT_SECONDS", 60))
-        strict_errors = bool(getattr(settings, "LATEX_STRICT_ERRORS", False))
-        compiler_args = [
-            "lualatex",
-            "-interaction=nonstopmode",
-            "-synctex=1",
-            "-jobname=main",
-        ]
-        if strict_errors:
-            compiler_args.append("-halt-on-error")
-        compiler_args.append(src_filename)
-        cmd = [
-            "docker", "run", "--rm",
-            *_compiler_network_args(project.markup_type),
-            "--memory=600m", "--cpus=1.0",
-            "-v", f"{docker_mount_source}:/workspace:rw",
-            "-w", "/workspace",
-            image,
-            *compiler_args,
-        ]
-        run_kwargs = {}
+    use_native_typst = project.markup_type == MarkupType.TYPST and bool(
+        getattr(settings, "TYPST_USE_NATIVE", False)
+    )
+    cmd, run_kwargs, timeout = build_compiler_cmd(
+        project.markup_type, src_filename, workdir, docker_mount_source
+    )
 
     debug_header = _project_compile_debug_header(
         project=project,

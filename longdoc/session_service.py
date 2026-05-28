@@ -35,11 +35,11 @@ from SmartTeX.markup import MarkupType
 from projects.models import Project
 from projects.services import (
     COMPILE_SEMAPHORE,
-    _compiler_network_args,
     _git_env,
     _git_executable,
     _run_project_git,
     _split_source_sections,
+    build_compiler_cmd,
     ensure_project_git_repo,
     main_source_filename,
     parse_compile_diagnostics,
@@ -497,62 +497,12 @@ def compile_session(session: AISession) -> dict[str, Any]:
     else:
         docker_mount_source = worktree
 
+    cmd, run_kwargs, timeout = build_compiler_cmd(
+        project.markup_type, src_filename, worktree, docker_mount_source
+    )
     use_native_typst = project.markup_type == MarkupType.TYPST and bool(
         getattr(settings, "TYPST_USE_NATIVE", False)
     )
-    fonts_dir = str(getattr(settings, "TYPST_FONTS_DIR", "")).strip()
-
-    if use_native_typst:
-        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
-        typst_bin = str(getattr(settings, "TYPST_BINARY", "typst")).strip() or "typst"
-        cmd: list[str] = [typst_bin, "compile", "--root", "."]
-        if fonts_dir:
-            cmd += ["--font-path", fonts_dir]
-        cmd += [src_filename, "main.pdf"]
-        run_kwargs: dict[str, Any] = {"cwd": str(worktree)}
-    elif project.markup_type == MarkupType.TYPST:
-        image = getattr(settings, "TYPST_DOCKER_IMAGE", "ghcr.io/typst/typst:latest")
-        timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
-        compiler_args = ["compile", "--root", "/workspace"]
-        docker_font_args: list[str] = []
-        if fonts_dir:
-            docker_font_args = ["-v", f"{fonts_dir}:/fonts:ro"]
-            compiler_args += ["--font-path", "/fonts"]
-        compiler_args += [src_filename, "main.pdf"]
-        cmd = [
-            "docker", "run", "--rm",
-            *_compiler_network_args(project.markup_type),
-            "--memory=600m", "--cpus=1.0",
-            "-v", f"{docker_mount_source}:/workspace:rw",
-            "-w", "/workspace",
-            *docker_font_args,
-            image,
-            *compiler_args,
-        ]
-        run_kwargs = {}
-    else:
-        image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
-        timeout = int(getattr(settings, "LATEX_TIMEOUT_SECONDS", 60))
-        strict_errors = bool(getattr(settings, "LATEX_STRICT_ERRORS", False))
-        compiler_args = [
-            "lualatex",
-            "-interaction=nonstopmode",
-            "-synctex=1",
-            "-jobname=main",
-        ]
-        if strict_errors:
-            compiler_args.append("-halt-on-error")
-        compiler_args.append(src_filename)
-        cmd = [
-            "docker", "run", "--rm",
-            *_compiler_network_args(project.markup_type),
-            "--memory=600m", "--cpus=1.0",
-            "-v", f"{docker_mount_source}:/workspace:rw",
-            "-w", "/workspace",
-            image,
-            *compiler_args,
-        ]
-        run_kwargs = {}
 
     acquired = COMPILE_SEMAPHORE.acquire(timeout=timeout)
     if not acquired:

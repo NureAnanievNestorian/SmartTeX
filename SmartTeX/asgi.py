@@ -18,6 +18,9 @@ django_asgi_app = get_asgi_application()
 
 
 async def application(scope, receive, send):
+    if scope["type"] == "websocket":
+        await send({"type": "websocket.close", "code": 1008})
+        return
     if scope["type"] == "http" and str(scope.get("path", "")).startswith("/sse/projects/"):
         await sse_project_updates(scope, receive, send)
         return
