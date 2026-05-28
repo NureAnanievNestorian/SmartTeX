@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Count, Sum
 from django.http import FileResponse, HttpRequest, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -178,6 +179,51 @@ def api_longdoc_overview(request: HttpRequest, project_id: int) -> JsonResponse:
     except Exception as exc:
         return _error_response(exc)
     return JsonResponse(overview_payload(project))
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def api_project_ai_request_log(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    from small_model.models import SmallModelUsageLog
+
+    limit = min(max(int(request.GET.get("limit", "40") or 40), 1), 100)
+    rows = list(
+        SmallModelUsageLog.objects.filter(project=project)
+        .order_by("-created_at")[:limit]
+        .values(
+            "created_at",
+            "task_type",
+            "status",
+            "provider",
+            "model_name",
+            "input_tokens_estimate",
+            "output_tokens_estimate",
+            "latency_ms",
+            "error_code",
+        )
+    )
+    summary = {
+        "total_requests": SmallModelUsageLog.objects.filter(project=project).count(),
+        "total_input_tokens": SmallModelUsageLog.objects.filter(project=project).aggregate(v=Sum("input_tokens_estimate"))["v"] or 0,
+        "total_output_tokens": SmallModelUsageLog.objects.filter(project=project).aggregate(v=Sum("output_tokens_estimate"))["v"] or 0,
+        "by_status": list(
+            SmallModelUsageLog.objects.filter(project=project)
+            .values("status")
+            .annotate(count=Count("id"))
+            .order_by("-count", "status")
+        ),
+        "by_task": list(
+            SmallModelUsageLog.objects.filter(project=project)
+            .values("task_type")
+            .annotate(count=Count("id"))
+            .order_by("-count", "task_type")
+        ),
+    }
+    return JsonResponse({"summary": summary, "items": rows})
 
 
 @csrf_exempt

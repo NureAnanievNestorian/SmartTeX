@@ -20,6 +20,7 @@ from .views import (
     api_note_sections,
     api_outline_item_detail,
     api_outline_items,
+    api_project_ai_request_log,
     api_preview_patch,
     api_requirement_detail,
     api_requirements,
@@ -30,6 +31,7 @@ from .views import (
 urlpatterns = [
     path("projects/<int:project_id>/longdoc/settings/", api_longdoc_settings),
     path("projects/<int:project_id>/longdoc/overview/", api_longdoc_overview),
+    path("projects/<int:project_id>/ai-request-log/", api_project_ai_request_log),
     path("projects/<int:project_id>/context-files/", api_context_files),
     re_path(r"^projects/(?P<project_id>\d+)/context-files/(?P<filename>.+)/$", api_context_file_detail),
     path("projects/<int:project_id>/outline-items/", api_outline_items),

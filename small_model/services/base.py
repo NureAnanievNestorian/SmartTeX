@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Any
 
 from django.conf import settings
+from django.core.cache import cache
 
 from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess
 from small_model.provider import SmallModelResponse, estimate_tokens
@@ -39,6 +41,23 @@ class SmallModelCallMixin:
         input_payload: dict[str, Any],
         response_schema: dict[str, Any],
     ) -> SmallModelResponse:
+        access = UserSmallModelAccess.objects.filter(user=user).first()
+        provider_name = access.provider if access else None
+        provider = get_provider(provider_name)
+        provider_model_name = getattr(provider, "model_name", "") or getattr(settings, "GEMINI_SMALL_MODEL_NAME", "")
+        cache_ttl = int(getattr(settings, "SMALL_MODEL_CACHE_TTL_SECONDS", 300))
+        cache_key = self._cache_key(
+            task_type=self.task_type,
+            provider_name=provider_name or getattr(provider, "provider_name", ""),
+            model_name=str(provider_model_name),
+            project_id=getattr(project, "id", 0),
+            system_instruction=system_instruction,
+            input_payload=input_payload,
+        )
+        if cache_ttl > 0:
+            cached = cache.get(cache_key)
+            if cached:
+                return SmallModelResponse(**cached)
         quota = SmallModelQuotaService.check_quota(user)
         if not quota.quota_ok:
             return SmallModelResponse(
@@ -60,9 +79,6 @@ class SmallModelCallMixin:
         response: SmallModelResponse | None = None
         try:
             try:
-                access = UserSmallModelAccess.objects.filter(user=user).first()
-                provider_name = access.provider if access else None
-                provider = get_provider(provider_name)
                 timeout = int(getattr(settings, "GEMINI_TIMEOUT_SECONDS", 15))
                 response = provider.generate_json(
                     task_type=self.task_type,
@@ -86,6 +102,10 @@ class SmallModelCallMixin:
             return response
         finally:
             if response is not None:
+                if response.success and cache_ttl > 0:
+                    cache.set(cache_key, self._serialize_response(response), cache_ttl)
+                elif not response.success and response.input_tokens_estimate <= 0 and response.output_tokens_estimate <= 0:
+                    SmallModelQuotaService.release_request(user)
                 SmallModelQuotaService.consume_tokens(
                     user,
                     response.input_tokens_estimate,
@@ -106,3 +126,41 @@ class SmallModelCallMixin:
                     input_prompt=logged_input,
                     output_text=logged_output,
                 )
+
+    def _cache_key(
+        self,
+        *,
+        task_type: str,
+        provider_name: str,
+        model_name: str,
+        project_id: int,
+        system_instruction: str,
+        input_payload: dict[str, Any],
+    ) -> str:
+        raw = json.dumps(
+            {
+                "task_type": task_type,
+                "provider": provider_name,
+                "model": model_name,
+                "project_id": project_id,
+                "system_instruction": system_instruction,
+                "input_payload": input_payload,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return "smcl:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _serialize_response(self, response: SmallModelResponse) -> dict[str, Any]:
+        return {
+            "success": response.success,
+            "parsed_json": response.parsed_json,
+            "raw_text": response.raw_text,
+            "provider_name": response.provider_name,
+            "model_name": response.model_name,
+            "input_tokens_estimate": response.input_tokens_estimate,
+            "output_tokens_estimate": response.output_tokens_estimate,
+            "latency_ms": response.latency_ms,
+            "error_code": response.error_code,
+            "error_message": response.error_message,
+        }

@@ -18,6 +18,7 @@ from longdoc.proposal_service import serialize_change_proposal
 from .models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelFeatureGrant, UserSmallModelQuota
 from .provider import SmallModelResponse
 from .services.circuit_breaker import CircuitBreakerService
+from .services.compile_log_triage import CompileLogTriageService
 from .services.diff_utils import build_diff_review_input
 from .services.do_not_touch import validate_do_not_touch
 from .services.policy_engine import ProposalPolicyEngine
@@ -184,3 +185,101 @@ class SmallModelControlLayerTests(TestCase):
 
         self.assertEqual(result["decision"], "narrow_scope")
         self.assertEqual(result["smcl_unavailable_streak"], 2)
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_pre_proposal_uses_single_provider_call(self) -> None:
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
+        UserSmallModelFeatureGrant.objects.create(access=access, feature_key="edit_intent_classifier")
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            edit_intent_classifier_enabled=True,
+        )
+        provider = mock.Mock()
+        provider.provider_name = "mock"
+        provider.model_name = "mock"
+        provider.generate_json.return_value = SmallModelResponse(
+            success=True,
+            parsed_json={
+                "task_brief": "tight scope",
+                "relevant_files": [],
+                "relevant_section_ids": [],
+                "relevant_summaries": [],
+                "do_not_touch_files": [],
+                "do_not_touch_section_ids": [],
+                "recommended_read_strategy": "range_only",
+                "max_read_lines": 40,
+                "edit_mode": "paragraph_edit",
+                "allowed_ops": ["patch_file_lines"],
+                "forbidden_ops": ["update_project_file"],
+                "max_files": 1,
+                "max_changed_lines": 10,
+                "read_strategy": "range_only",
+                "compile_required": True,
+                "requires_user_clarification": False,
+                "clarification_reason": None,
+            },
+            provider_name="mock",
+            model_name="mock",
+            input_tokens_estimate=10,
+            output_tokens_estimate=10,
+        )
+
+        with mock.patch("small_model.services.base.get_provider", return_value=provider):
+            result = ProposalPolicyEngine.pre_proposal_check(self.user, self.project, "Tighten one paragraph.")
+
+        self.assertEqual(provider.generate_json.call_count, 1)
+        self.assertEqual(result.action, "allow")
+        self.assertIn("context_compressor", result.metadata)
+        self.assertEqual(result.metadata["edit_intent"]["max_changed_lines"], 10)
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_compile_triage_skips_provider_for_obvious_log(self) -> None:
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
+        UserSmallModelFeatureGrant.objects.create(access=access, feature_key="compile_log_triage")
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            compile_log_triage_enabled=True,
+        )
+
+        with mock.patch("small_model.services.base.get_provider", side_effect=AssertionError("provider should not be called")):
+            result = CompileLogTriageService().triage(
+                user=self.user,
+                project=self.project,
+                compile_log="! Undefined control sequence.",
+            )
+
+        self.assertEqual(result["error_category"], "missing_import")
+        self.assertFalse(result["safe_to_retry"])
+
+    def test_post_compile_check_skips_breaker_provider_for_first_non_retryable_failure(self) -> None:
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            goal="Compile failure",
+            status=ChangeProposal.Status.VALIDATING,
+            expires_at=timezone.now() + timedelta(days=1),
+            patch_ops=[{"filename": "main.tex", "op": "replace_text"}],
+        )
+
+        with mock.patch(
+            "small_model.services.policy_engine.CompileLogTriageService.is_enabled",
+            return_value=(True, None, None),
+        ), mock.patch(
+            "small_model.services.policy_engine.CompileLogTriageService.triage",
+            return_value={"error_origin": "patch_error", "safe_to_retry": False, "retry_scope": "do_not_retry"},
+        ), mock.patch(
+            "small_model.services.policy_engine.CircuitBreakerService.evaluate",
+            side_effect=AssertionError("breaker provider path should not be used"),
+        ):
+            result = ProposalPolicyEngine.post_compile_check(
+                self.user,
+                self.project,
+                proposal,
+                {"status": "error", "log": "! Undefined control sequence", "diagnostics": []},
+            )
+
+        self.assertEqual(result.action, "allow")
+        self.assertEqual(result.risk_level, "medium")

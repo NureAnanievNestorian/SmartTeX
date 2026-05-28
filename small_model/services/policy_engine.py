@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from small_model.services.context_compressor import ContextCompressorService
 from small_model.services.circuit_breaker import CircuitBreakerService
 from small_model.services.compile_log_triage import CompileLogTriageService
 from small_model.services.diff_safety_reviewer import DiffSafetyReviewService
 from small_model.services.diff_utils import warning
-from small_model.services.edit_intent_classifier import CONSERVATIVE_PARAGRAPH, EditIntentClassifierService
+from small_model.services.edit_intent_classifier import CONSERVATIVE_PARAGRAPH
+from small_model.services.pre_proposal import PreProposalAnalysisService
 
 
 @dataclass(slots=True)
@@ -25,8 +25,9 @@ class PolicyResult:
 class ProposalPolicyEngine:
     @staticmethod
     def pre_proposal_check(user, project, user_request: str) -> PolicyResult:
-        compressor = ContextCompressorService().run(user=user, project=project, user_request=user_request)
-        classifier = EditIntentClassifierService().run(user=user, project=project, user_request=user_request)
+        combined = PreProposalAnalysisService().run(user=user, project=project, user_request=user_request)
+        compressor = combined.get("context_compressor") or {}
+        classifier = combined.get("edit_intent") or {}
         metadata: dict[str, Any] = {}
         if compressor:
             metadata["context_compressor"] = compressor
@@ -96,6 +97,7 @@ class ProposalPolicyEngine:
             if triage_enabled
             else {}
         )
+        breaker = {"decision": "continue", "reason": "", "deterministic": True}
         circuit_payload = {
             "proposal_id": proposal.id,
             "attempt_number": int(metadata.get("compile_attempts") or 1),
@@ -108,7 +110,15 @@ class ProposalPolicyEngine:
             "compile_log_triage_result": triage,
             "smcl_unavailable_streak": int(metadata.get("smcl_unavailable_streak") or 0),
         }
-        breaker = CircuitBreakerService().evaluate(user=user, project=project, payload=circuit_payload)
+        breaker_service = CircuitBreakerService()
+        breaker = breaker_service.evaluate_deterministic(
+            compile_failures=circuit_payload["compile_failures"],
+            tool_calls=list((circuit_payload.get("repeated_tool_calls") or {}).keys()),
+            files_touched_total=circuit_payload["files_touched_total"],
+            max_files=circuit_payload["max_files"],
+            diff_size_history=circuit_payload["diff_size_history"],
+            rejected_patches=circuit_payload["rejected_patches"],
+        )
 
         result_metadata = {
             "compile_log_triage": triage,
@@ -135,6 +145,30 @@ class ProposalPolicyEngine:
                 risk_level="high",
                 metadata=result_metadata,
             )
+        if breaker.get("decision") in {"stop_and_ask_user", "narrow_scope"}:
+            result_metadata["circuit_breaker"] = breaker
+            return PolicyResult(
+                action=str(breaker.get("decision")),
+                reason=str(breaker.get("reason") or "Compile-fix loop risk detected."),
+                smcl_used=not bool(breaker.get("deterministic")),
+                fallback_used=bool(breaker.get("deterministic")),
+                warnings=warnings,
+                risk_level="high" if breaker.get("decision") == "stop_and_ask_user" else "medium",
+                metadata=result_metadata,
+            )
+        should_run_breaker_model = (
+            bool(triage_enabled)
+            and not triage.get("safe_to_retry", False)
+            and triage.get("retry_scope") not in {"do_not_retry", ""}
+        ) or (
+            circuit_payload["compile_failures"] >= 2
+            or circuit_payload["rejected_patches"] > 0
+            or bool(circuit_payload["repeated_tool_calls"])
+            or len(circuit_payload["diff_size_history"]) >= 2
+        )
+        if should_run_breaker_model:
+            breaker = breaker_service.evaluate(user=user, project=project, payload=circuit_payload)
+            result_metadata["circuit_breaker"] = breaker
         if breaker.get("decision") in {"stop_and_ask_user", "narrow_scope"}:
             return PolicyResult(
                 action=str(breaker.get("decision")),

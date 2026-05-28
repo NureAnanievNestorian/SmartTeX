@@ -23,7 +23,7 @@ import {
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
 } from "./compile.js?v=20260528-sse2";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI } from "./longdoc.js?v=20260528-sse2";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260528-sse2";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
@@ -468,6 +468,10 @@ async function init() {
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && document.getElementById("diff-modal-overlay")?.classList.contains("open")) {
       closeDiffModal();
+      return;
+    }
+    if (e.key === "Escape" && document.getElementById("ai-log-overlay")?.classList.contains("open")) {
+      closeAiLogModal();
     }
   });
 

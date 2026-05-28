@@ -54,6 +54,23 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                     "deterministic_diff_stats",
                 )
             )
+        if stats["total_changed_lines"] > max_changed:
+            return {
+                "action": "reject",
+                "reason": "Diff exceeds the deterministic patch budget.",
+                "risk_level": "high",
+                "warnings": deterministic_warnings,
+                "review_payload": {
+                    "diff_stats": stats,
+                    "changed_files": review_input.changed_files,
+                    "touched_headings": review_input.touched_headings,
+                    "deleted_labels_or_refs": review_input.deleted_labels_or_refs,
+                    "changed_imports_or_includes": review_input.changed_imports_or_includes,
+                    "unified_diff": review_input.unified_diff,
+                },
+            }
+        if deterministic_warnings and not self._should_consult_provider(stats, review_input, max_changed):
+            return {"action": "warn", "reason": None, "risk_level": "medium", "warnings": deterministic_warnings, "review_payload": {}}
 
         if stats["diff_char_length"] > 12288 and stats["total_changed_lines"] > max_changed * 2:
             return {
@@ -100,6 +117,18 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                 "review_payload": payload,
             }
         return {"action": "warn" if warnings else "allow", "reason": None, "risk_level": risk, "warnings": warnings, "review_payload": payload}
+
+    def _should_consult_provider(self, stats, review_input, max_changed):
+        total_changed = int(stats.get("total_changed_lines") or 0)
+        files_changed = int(stats.get("files_changed") or 0)
+        hunks = int(stats.get("hunks") or 0)
+        if total_changed >= max(4, max_changed // 2):
+            return True
+        if files_changed > 1 or hunks > 2:
+            return True
+        if len(review_input.touched_headings) > 2:
+            return True
+        return False
 
     def _payload(self, goal, edit_mode, patch_budget, review_input):
         return {

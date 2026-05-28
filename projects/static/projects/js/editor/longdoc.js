@@ -127,6 +127,125 @@ function switchAssistantTab(tabName) {
   setAssistantOpen(true);
 }
 
+export function openAssistantSettings() {
+  switchAssistantTab("settings");
+}
+
+function aiTaskLabel(value) {
+  const labels = {
+    pre_proposal_analyze: "Pre proposal",
+    context_compress: "Context",
+    edit_intent_classify: "Intent",
+    diff_safety_review: "Diff review",
+    compile_log_triage: "Compile triage",
+    circuit_breaker_evaluate: "Circuit breaker",
+  };
+  return labels[value] || String(value || "").replace(/_/g, " ");
+}
+
+function aiStatusLabel(value) {
+  const labels = {
+    success: "Success",
+    quota_exceeded: "Quota",
+    timeout: "Timeout",
+    invalid_json: "Invalid JSON",
+    provider_error: "Provider error",
+  };
+  return labels[value] || String(value || "").replace(/_/g, " ");
+}
+
+function fmtLogDate(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso || "";
+  return d.toLocaleString("uk-UA", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function renderAiLogModal(payload) {
+  const body = document.getElementById("ai-log-body");
+  if (!body) return;
+  const summary = payload?.summary || {};
+  const items = payload?.items || [];
+  const totalTokens = Number(summary.total_input_tokens || 0) + Number(summary.total_output_tokens || 0);
+  const renderPills = (rows, key, formatter) => {
+    if (!rows?.length) return `<div class="ai-log-empty">Даних ще немає.</div>`;
+    return `<div class="ai-log-pills">${rows.map(row => `
+      <span class="ai-log-pill">
+        ${escHtml(formatter(row[key] || ""))}
+        <small>${escHtml(String(row.count || 0))}</small>
+      </span>
+    `).join("")}</div>`;
+  };
+  body.innerHTML = `
+    <section class="ai-log-summary">
+      <div class="ai-log-stat"><strong>${escHtml(String(summary.total_requests || 0))}</strong><span>Requests</span></div>
+      <div class="ai-log-stat"><strong>${escHtml(String(summary.total_input_tokens || 0))}</strong><span>Input tokens</span></div>
+      <div class="ai-log-stat"><strong>${escHtml(String(summary.total_output_tokens || 0))}</strong><span>Output tokens</span></div>
+      <div class="ai-log-stat"><strong>${escHtml(String(totalTokens))}</strong><span>Total tokens</span></div>
+    </section>
+    <section class="ai-log-groups">
+      <div class="ai-log-group">
+        <h4>By task</h4>
+        ${renderPills(summary.by_task, "task_type", aiTaskLabel)}
+      </div>
+      <div class="ai-log-group">
+        <h4>By status</h4>
+        ${renderPills(summary.by_status, "status", aiStatusLabel)}
+      </div>
+    </section>
+    <section class="ai-log-table-wrap">
+      ${items.length ? `
+        <table class="ai-log-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Task</th>
+              <th>Status</th>
+              <th>Tokens</th>
+              <th>Latency</th>
+              <th>Provider</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td>${escHtml(fmtLogDate(item.created_at))}</td>
+                <td><span class="ai-log-task">${escHtml(aiTaskLabel(item.task_type))}</span></td>
+                <td><span class="ai-log-status ${escHtml(item.status)}">${escHtml(aiStatusLabel(item.status))}</span>${item.error_code ? `<div class="e-longdoc-muted">${escHtml(item.error_code)}</div>` : ""}</td>
+                <td>${escHtml(String((item.input_tokens_estimate || 0) + (item.output_tokens_estimate || 0)))} <span class="e-longdoc-muted">(${escHtml(String(item.input_tokens_estimate || 0))} in / ${escHtml(String(item.output_tokens_estimate || 0))} out)</span></td>
+                <td>${escHtml(String(item.latency_ms || 0))} ms</td>
+                <td>${escHtml(item.provider || "")}${item.model_name ? `<div class="e-longdoc-muted">${escHtml(item.model_name)}</div>` : ""}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<div class="ai-log-empty">Для цього проєкту ще немає AI request log.</div>`}
+    </section>
+  `;
+}
+
+export async function openAiLogModal() {
+  const overlay = document.getElementById("ai-log-overlay");
+  const body = document.getElementById("ai-log-body");
+  if (!overlay || !body) return;
+  overlay.classList.add("open");
+  body.innerHTML = `<div class="ai-log-empty">Завантаження...</div>`;
+  try {
+    const payload = await api(`/api/projects/${cfg.projectId}/ai-request-log/?limit=40`, { method: "GET" });
+    renderAiLogModal(payload);
+  } catch (err) {
+    body.innerHTML = `<div class="ai-log-empty">Помилка завантаження: ${escHtml(err.message || String(err))}</div>`;
+  }
+}
+
+export function closeAiLogModal() {
+  document.getElementById("ai-log-overlay")?.classList.remove("open");
+}
+
 async function openSourceFile(filename) {
   const name = String(filename || "").trim();
   if (!name) return;
@@ -1316,6 +1435,12 @@ export function initSessionUI() {
   document.getElementById("session-diff-discard-btn")?.addEventListener("click", discardSession);
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();
+  });
+  document.getElementById("open-project-settings-btn")?.addEventListener("click", openAssistantSettings);
+  document.getElementById("open-ai-log-btn")?.addEventListener("click", openAiLogModal);
+  document.getElementById("ai-log-close-btn")?.addEventListener("click", closeAiLogModal);
+  document.getElementById("ai-log-overlay")?.addEventListener("click", e => {
+    if (e.target === e.currentTarget) closeAiLogModal();
   });
   document.querySelectorAll(".e-pdf-tab[data-pdf-tab]").forEach(btn => {
     btn.addEventListener("click", () => switchPdfTab(btn.dataset.pdfTab));

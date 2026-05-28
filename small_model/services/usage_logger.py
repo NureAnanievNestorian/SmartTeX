@@ -39,6 +39,7 @@ class SmallModelUsageLogger:
                 output_tokens_estimate=response.output_tokens_estimate,
                 latency_ms=response.latency_ms,
                 error_code=response.error_code or "",
+                error_message=response.error_message or "",
                 input_prompt=input_prompt,
                 output_text=output_text,
             )

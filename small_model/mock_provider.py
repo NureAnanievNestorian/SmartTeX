@@ -9,10 +9,30 @@ from .task_types import (
     TASK_CONTEXT_COMPRESS,
     TASK_DIFF_SAFETY_REVIEW,
     TASK_EDIT_INTENT_CLASSIFY,
+    TASK_PRE_PROPOSAL_ANALYZE,
 )
 
 
 DEFAULT_RESPONSES: dict[str, dict[str, Any]] = {
+    TASK_PRE_PROPOSAL_ANALYZE: {
+        "task_brief": "",
+        "relevant_files": [],
+        "relevant_section_ids": [],
+        "relevant_summaries": [],
+        "do_not_touch_files": [],
+        "do_not_touch_section_ids": [],
+        "recommended_read_strategy": "range_only",
+        "max_read_lines": 100,
+        "edit_mode": "paragraph_edit",
+        "allowed_ops": ["patch_file_lines", "replace_in_project_file", "propose_document_change"],
+        "forbidden_ops": ["update_project_section", "update_project_file"],
+        "max_files": 1,
+        "max_changed_lines": 15,
+        "read_strategy": "range_only",
+        "compile_required": True,
+        "requires_user_clarification": False,
+        "clarification_reason": None,
+    },
     TASK_CONTEXT_COMPRESS: {
         "task_brief": "",
         "relevant_files": [],

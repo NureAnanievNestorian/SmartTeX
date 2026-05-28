@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from projects.models import Project, ProjectVersion
 from projects.services import write_source_content
+from small_model.models import SmallModelUsageLog
 from templates_lib.models import Template, TemplateContextFile, TemplateLongDocDefaults, TemplateNoteSection, TemplateOutlineItem, TemplateRequirement, TemplateTask
 
 from .audit import audit_assistant_change
@@ -433,6 +434,40 @@ class LongdocPackage3Tests(TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "FEATURE_DISABLED")
+
+    def test_ai_request_log_endpoint_returns_project_scoped_compact_rows(self) -> None:
+        SmallModelUsageLog.objects.create(
+            user=self.user,
+            project=self.project,
+            provider="gemini",
+            model_name="gemini-2.0-flash-lite",
+            task_type="diff_safety_review",
+            status="success",
+            input_tokens_estimate=120,
+            output_tokens_estimate=24,
+            latency_ms=180,
+        )
+        SmallModelUsageLog.objects.create(
+            user=self.user,
+            project=self.project,
+            provider="gemini",
+            model_name="gemini-2.0-flash-lite",
+            task_type="compile_log_triage",
+            status="timeout",
+            input_tokens_estimate=80,
+            output_tokens_estimate=0,
+            latency_ms=15000,
+            error_code="TIMEOUT",
+        )
+
+        response = self.client.get(f"/api/projects/{self.project.id}/ai-request-log/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["total_requests"], 2)
+        self.assertEqual(payload["summary"]["total_input_tokens"], 200)
+        self.assertEqual(len(payload["items"]), 2)
+        self.assertEqual(payload["items"][0]["project_id"] if "project_id" in payload["items"][0] else None, None)
 
 
 class LongdocPackage4Tests(TestCase):
