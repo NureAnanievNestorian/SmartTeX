@@ -454,6 +454,16 @@ def _controlled_source_write_rejection(project_id: int, filename: str | None = N
     )
 
 
+def _controlled_folder_write_rejection(project_id: int) -> dict[str, Any] | None:
+    if not _project_controlled_mode_enabled(project_id):
+        return None
+    return _rejection(
+        "USE_PROPOSAL_WORKFLOW",
+        "Direct folder creation on the main branch is disabled in controlled MCP mode.",
+        "Submit a propose_document_change with a create_new_file patch op — the parent folders are created in staging.",
+    )
+
+
 def _project_longdoc_feature_enabled(project_id: int, feature_name: str) -> bool:
     longdoc = _project_longdoc_meta(project_id)
     return bool(longdoc.get("enabled") and longdoc.get(feature_name))
@@ -857,11 +867,18 @@ mcp = FastMCP(
     - Sections returned by `list_project_sections` include `file_name` — use it to target the right file for edits.
     - To inspect all project entries (files and folders), use `list_project_files`.
     - To read an auxiliary text file, use `get_project_file_content(include_text=True)`.
-    - To create a new text file, use `create_project_text_file`.
-    - To create a new folder, use `create_project_folder`.
+    - To create a new text file, use `create_project_text_file` (non-source files only in controlled mode).
+    - To create a new folder, use `create_project_folder` (disabled in controlled mode — use a proposal with a `create_new_file` op at the nested path instead).
     - To rename/delete entries, use `rename_project_file` / `delete_project_file`.
     - To edit an existing auxiliary text file, use `rewrite_project_window` with explicit `file_name`.
-    - To import a ZIP archive into a Typst project, use `import_project_zip` with the ZIP as base64.
+    - To import a *user-supplied* ZIP archive into a Typst project, use `import_project_zip` with the ZIP as base64. Never use it as a workaround for write rejections — bundling generated files into a ZIP to bypass `USE_PROPOSAL_WORKFLOW` is not allowed; use `propose_document_change` with multiple `create_new_file` ops instead.
+
+    ### Controlled MCP mode write routing
+    In controlled mode, direct writes to source files (`.tex`, `.typ`) and to folders on the main branch are rejected with `USE_PROPOSAL_WORKFLOW`. The single correct response is `propose_document_change` with the appropriate patch ops:
+    - new source file (any nested path) → `create_new_file` op (parent folders auto-created in staging)
+    - existing source file edit → `update_section` / `replace_text` / `patch_lines` ops
+    - multiple files → ONE proposal carrying multiple ops, not several proposals and not a ZIP import
+    Non-source assets (images, `.bib`, `.cls`, `.sty`) remain creatable directly. If a direct-write tool returns `USE_PROPOSAL_WORKFLOW`, do not look for another tool that bypasses it — the gate is intentional.
     - Changing any imported `.typ` file still requires compile to update PDF.
 
     ### Writing Assistant data
@@ -1240,7 +1257,14 @@ async def update_project_file(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
-    """Replace the whole main source file (`main.tex` or `main.typ`)."""
+    """Replace the whole main source file (`main.tex` or `main.typ`).
+
+    DISABLED in controlled MCP mode (returns USE_PROPOSAL_WORKFLOW). To modify an
+    existing source file under controlled mode, use `propose_document_change`
+    (which routes the change through staging + review). Outside controlled mode,
+    only use this for an explicit full-document replacement — for targeted edits
+    prefer `patch_file_lines`, `replace_in_project_file`, or `update_project_section`.
+    """
     rejection = _controlled_source_write_rejection(project_id)
     if rejection:
         return rejection
@@ -1335,7 +1359,18 @@ async def create_project_text_file(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
-    """Create a new text file (supports nested paths like `chapters/intro.typ`)."""
+    """Create a new text file (supports nested paths like `chapters/intro.typ`).
+
+    DISABLED for source files (`.tex`, `.typ`) in controlled MCP mode — returns
+    USE_PROPOSAL_WORKFLOW. To create a new source file under controlled mode,
+    submit `propose_document_change` with a `create_new_file` patch op (parent
+    folders are created implicitly). Non-source text files (e.g. `.bib`, `.cls`,
+    `.sty`) are accepted directly even in controlled mode.
+
+    Prefer this tool over `import_project_zip` for batch-creating files: call it
+    once per file. `import_project_zip` is intended only for genuine
+    user-supplied archives, not as a workaround for write rejections.
+    """
     rejection = _controlled_source_write_rejection(project_id, filename)
     if rejection:
         return rejection
@@ -1371,7 +1406,16 @@ async def create_project_folder(
         compileLogCompact: bool = True,
         compileMaxLogChars: int = 4000,
 ) -> dict[str, Any]:
-    """Create a new folder in the project (supports nested paths like `chapters/appendix`)."""
+    """Create a new folder in the project (supports nested paths like `chapters/appendix`).
+
+    DISABLED in controlled MCP mode — returns USE_PROPOSAL_WORKFLOW. Folder
+    creation on the main branch is not allowed; route it through
+    `propose_document_change` with a `create_new_file` patch op whose filename
+    targets the desired nested path (parent folders are created in staging).
+    """
+    rejection = _controlled_folder_write_rejection(project_id)
+    if rejection:
+        return rejection
     summary = _require_summary(change_summary)
     payload = _call(
         "POST",
@@ -2300,10 +2344,17 @@ async def import_project_zip(
         zip_base64: str,
         ctx: Context,
 ) -> dict[str, Any]:
-    """Import a ZIP archive into a Typst project, replacing or adding files.
+    """Import a user-supplied ZIP archive into a Typst project.
+
+    Intended ONLY for archives the user actually brought (existing Typst project,
+    asset bundle, etc.). DO NOT use this to batch-create files you generated
+    yourself as a way to avoid per-file write rejections — create files one by
+    one with `create_project_text_file`, or for source files in controlled mode
+    submit a single `propose_document_change` with multiple `create_new_file`
+    patch ops. The import bypasses the proposal/review flow and rewrites files
+    directly even in controlled MCP mode.
 
     Pass the ZIP file contents as a base64-encoded string in `zip_base64`.
-    The endpoint extracts text and binary assets into the project directory.
     Returns the list of files that were created or updated.
     """
     import base64
@@ -2420,11 +2471,23 @@ async def propose_document_change(
         addresses_task_id: int | None = None,
         addresses_outline_item_id: int | None = None,
 ) -> dict[str, Any]:
-    """Submit a suggested document change.
+    """Submit a suggested document change for user review.
+
+    THIS IS THE CANONICAL WAY TO MODIFY SOURCE FILES IN CONTROLLED MCP MODE.
+    If `update_project_file`, `create_project_text_file`, `patch_file_lines`,
+    `replace_in_project_file`, `rewrite_project_window`, `append_to_file`, or
+    similar direct-write tools return `USE_PROPOSAL_WORKFLOW`, route the same
+    change through this tool instead — do not look for another tool that
+    happens to bypass the rejection.
+
+    Supports multi-file changes in a single proposal: pass several patch ops
+    (`create_new_file`, `update_section`, `replace_text`, `patch_lines`, ...)
+    in one call rather than issuing many small proposals or, worse, packing
+    files into `import_project_zip`.
 
     SmartTeX creates the hidden staging session, applies patches, validates the
-    document graph, compiles, creates the review diff, and returns proposal status.
-    Do not call legacy AI-session tools for normal writing changes.
+    document graph, compiles, creates the review diff, and returns proposal
+    status. Do not call legacy AI-session tools for normal writing changes.
     """
     payload: dict[str, Any] = {
         "goal": goal,
