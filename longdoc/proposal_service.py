@@ -55,7 +55,10 @@ def _resolve_relative_include(parent_filename: str, include_target: str) -> str:
     # Normalize "./" and similar
     return Path(resolved).as_posix()
 
+import secrets
+
 from django.conf import settings
+from django.core.cache import cache
 from django.db import IntegrityError
 from django.utils import timezone
 
@@ -148,6 +151,96 @@ def _max_proposal_lines() -> int:
 
 def _max_new_file_lines() -> int:
     return int(getattr(settings, "MCP_MAX_NEW_FILE_LINES", 200))
+
+
+# ── validation-token cache ────────────────────────────────────────────────
+#
+# When validate_document_change returns valid:true we cache the normalized ops
+# under a short-lived token so the agent can submit the same change via
+# propose_document_change(validation_token=...) without re-sending the full
+# patch_ops payload. The token is bound to the project's current HEAD sha, so
+# any change to the project (another agent writing, user accepting a different
+# proposal) automatically invalidates it.
+
+_VALIDATION_TOKEN_TTL = 600  # 10 minutes
+
+
+def _validation_token_cache_key(token: str) -> str:
+    return f"longdoc:validation_token:{token}"
+
+
+def _project_head_sha(project) -> str:
+    from projects.services import _run_project_git
+    try:
+        proc = _run_project_git(project, ["rev-parse", "HEAD"], check=False)
+    except Exception:
+        return ""
+    return (proc.stdout or "").strip()
+
+
+def _mint_validation_token(
+    project,
+    *,
+    goal: str,
+    normalized_ops: list[dict[str, Any]],
+) -> str | None:
+    head_sha = _project_head_sha(project)
+    if not head_sha:
+        return None
+    token = secrets.token_urlsafe(16)
+    cache.set(
+        _validation_token_cache_key(token),
+        {
+            "project_id": project.id,
+            "goal": goal,
+            "normalized_ops": normalized_ops,
+            "head_sha": head_sha,
+        },
+        timeout=_VALIDATION_TOKEN_TTL,
+    )
+    return token
+
+
+def _consume_validation_token(project, token: str) -> dict[str, Any]:
+    """Look up a validation token and return its cached payload.
+
+    Raises SessionWriteError with a stable error code on miss / stale / mismatch
+    so the agent can recover deterministically (revalidate, then retry).
+    """
+    key = _validation_token_cache_key(token)
+    cached = cache.get(key)
+    if not cached:
+        raise SessionWriteError(
+            "INVALID_VALIDATION_TOKEN",
+            "validation_token is unknown or expired.",
+            status_code=409,
+            suggestion=(
+                f"Call validate_document_change again to obtain a fresh token "
+                f"(tokens live for {_VALIDATION_TOKEN_TTL // 60} minutes)."
+            ),
+        )
+    if cached.get("project_id") != project.id:
+        raise SessionWriteError(
+            "INVALID_VALIDATION_TOKEN",
+            "validation_token belongs to a different project.",
+            status_code=409,
+            suggestion="Use the project_id that was passed to validate_document_change.",
+        )
+    current_sha = _project_head_sha(project)
+    if not current_sha or cached.get("head_sha") != current_sha:
+        # HEAD moved — the cached ops may now reference stale line numbers.
+        cache.delete(key)
+        raise SessionWriteError(
+            "STALE_VALIDATION_TOKEN",
+            "Project HEAD changed since the token was issued.",
+            status_code=409,
+            suggestion=(
+                "The project was modified after validation. Call "
+                "validate_document_change again with the current file contents."
+            ),
+            details={"head_sha_when_validated": cached.get("head_sha"), "head_sha_now": current_sha},
+        )
+    return cached
 
 
 def _line_count(value: Any) -> int:
@@ -518,11 +611,46 @@ def propose_document_change(
     project,
     *,
     goal: str,
-    patch_ops: list[dict[str, Any]],
+    patch_ops: list[dict[str, Any]] | None = None,
     addresses_task_id: int | None = None,
     addresses_outline_item_id: int | None = None,
     created_by: str = ChangeProposal.CreatedBy.MCP,
+    validation_token: str | None = None,
 ) -> ChangeProposal:
+    auto_discarded_previous_failed_proposal_id: int | None = None
+    used_validation_token: str | None = None
+    # Short-circuit: if the agent passes a token from a recent successful
+    # validate_document_change, use the cached normalized_ops verbatim. This
+    # both shaves a large duplicated payload off the prompt and protects
+    # against accidental drift between validate and propose. Mismatch / staleness
+    # raise stable error codes so the agent can re-validate and retry.
+    if validation_token:
+        cached = _consume_validation_token(project, validation_token)
+        cached_ops = cached.get("normalized_ops") or []
+        if patch_ops:
+            # Detect actual drift from what was validated. We compare on a
+            # canonical view so cosmetic dict-ordering doesn't trigger false
+            # positives.
+            import json as _json
+            if _json.dumps(list(patch_ops), sort_keys=True) != _json.dumps(cached_ops, sort_keys=True):
+                raise SessionWriteError(
+                    "VALIDATION_TOKEN_OPS_MISMATCH",
+                    "patch_ops provided alongside validation_token do not match the validated ops.",
+                    status_code=409,
+                    suggestion=(
+                        "Either omit patch_ops when passing validation_token, or call "
+                        "validate_document_change again on the modified ops to obtain a fresh token."
+                    ),
+                )
+        patch_ops = cached_ops
+        if not goal:
+            goal = str(cached.get("goal") or "")
+        used_validation_token = validation_token
+    elif not patch_ops:
+        raise SessionWriteError(
+            "INVALID_PATCH_OPS",
+            "patch_ops is required when validation_token is not provided.",
+        )
     auto_discarded_previous_failed_proposal_id: int | None = None
     if get_locking_session(project) is not None or get_locking_change_proposal(project) is not None:
         session = get_locking_session(project)
@@ -917,13 +1045,27 @@ def validate_document_change(
         if session is not None:
             raise ProjectLockedError(project=project, session=session)
         proposal = get_locking_change_proposal(project)
-        raise SessionWriteError(
-            "PROJECT_LOCKED",
-            f"Project {project.id} already has suggested change #{proposal.id} in status {proposal.status}: {proposal.goal}",
-            status_code=423,
-            suggestion=f"Ask the user to review/discard proposal #{proposal.id} before validating another change.",
-            details={"proposal_id": proposal.id, "proposal_goal": proposal.goal, "proposal_status": proposal.status},
+        # validate_document_change is a dry-run — it creates a throwaway
+        # worktree and never mutates the project. Allow it to proceed even if
+        # an MCP-created proposal already failed validation/compile, so the
+        # agent can iterate on smaller ops instead of being forced to discard
+        # the failed proposal just to dry-run. User-owned or pending/ready
+        # proposals still block (those represent state the user must act on).
+        permit = (
+            proposal.created_by == ChangeProposal.CreatedBy.MCP
+            and proposal.status in (
+                ChangeProposal.Status.FAILED_VALIDATION,
+                ChangeProposal.Status.FAILED_COMPILE,
+            )
         )
+        if not permit:
+            raise SessionWriteError(
+                "PROJECT_LOCKED",
+                f"Project {project.id} already has suggested change #{proposal.id} in status {proposal.status}: {proposal.goal}",
+                status_code=423,
+                suggestion=f"Ask the user to review/discard proposal #{proposal.id} before validating another change.",
+                details={"proposal_id": proposal.id, "proposal_goal": proposal.goal, "proposal_status": proposal.status},
+            )
 
     user = project.owner
     normalized_ops, normalizations = _normalize_patch_ops(patch_ops, allow_aliases=True)
@@ -1006,33 +1148,51 @@ def validate_document_change(
 
         diff_text = generate_diff(session)
         diff_text, diff_truncated = _truncate_diff_text(diff_text)
+        final_goal = str(goal or "").strip() or "Suggested change"
+        validation_token = _mint_validation_token(
+            project,
+            goal=final_goal,
+            normalized_ops=normalized_ops,
+        )
         payload: dict[str, Any] = {
             "valid": True,
             "will_apply": True,
-            "goal": str(goal or "").strip() or "Suggested change",
+            "goal": final_goal,
             "normalizations": normalizations,
             "compile": compile_result,
             "diff_text": diff_text,
             "changed_files": _changed_files_from_batch(session),
             "proposal_not_created": True,
         }
+        if validation_token:
+            payload["validation_token"] = validation_token
+            payload["validation_token_ttl_seconds"] = _VALIDATION_TOKEN_TTL
         if diff_truncated:
             payload["diff_truncated"] = True
+        token_hint = (
+            " Prefer passing `validation_token` to propose_document_change instead of "
+            "re-sending patch_ops — it skips duplicate payload and proves nothing drifted."
+            if validation_token
+            else ""
+        )
         if normalizations:
             # Op shape was rewritten (alias rename, reorder). Agent must use
-            # these instead of its original patch_ops.
+            # these instead of its original patch_ops — or just pass the token.
             payload["normalized_patch_ops"] = normalized_ops
             payload["suggestion"] = (
                 "Validation changed the op shape — submit the returned normalized_patch_ops with "
-                "propose_document_change (do not reuse your original patch_ops)."
+                "propose_document_change (do not reuse your original patch_ops)." + token_hint
             )
         else:
             # Nothing was rewritten. Agent already has its ops; mirror only a
             # compact summary so the response stays small.
             payload["patch_ops_summary"] = _summarize_patch_ops(normalized_ops)
             payload["suggestion"] = (
-                "No normalizations applied. Resubmit your original patch_ops to "
-                "propose_document_change to create the user-visible suggestion."
+                "No normalizations applied. Pass validation_token to propose_document_change "
+                "(preferred), or resubmit your original patch_ops."
+                if validation_token
+                else "No normalizations applied. Resubmit your original patch_ops to "
+                     "propose_document_change to create the user-visible suggestion."
             )
         return payload
     finally:

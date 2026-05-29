@@ -650,12 +650,14 @@ def api_change_proposals(request: HttpRequest, project_id: int) -> JsonResponse:
     if not (settings_obj.enabled and settings_obj.ai_sessions_enabled):
         return JsonResponse({"error": "FEATURE_DISABLED", "message": "Suggested changes are disabled for this project."}, status=403)
     try:
+        raw_patch_ops = body.get("patch_ops")
         proposal = propose_document_change(
             project,
             goal=str(body.get("goal") or "").strip(),
-            patch_ops=list(body.get("patch_ops") or []),
+            patch_ops=list(raw_patch_ops) if raw_patch_ops else None,
             addresses_task_id=body.get("addresses_task_id"),
             addresses_outline_item_id=body.get("addresses_outline_item_id"),
+            validation_token=(str(body.get("validation_token")) if body.get("validation_token") else None),
         )
     except Exception as exc:
         return _proposal_error_response(exc)

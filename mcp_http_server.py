@@ -2578,8 +2578,9 @@ def find_edit_targets(
 async def propose_document_change(
         project_id: int,
         goal: str,
-        patch_ops: list[dict[str, Any]],
         ctx: Context,
+        patch_ops: list[dict[str, Any]] | None = None,
+        validation_token: str | None = None,
         addresses_task_id: int | None = None,
         addresses_outline_item_id: int | None = None,
 ) -> dict[str, Any]:
@@ -2639,13 +2640,20 @@ async def propose_document_change(
     status. Do not call legacy AI-session tools for normal writing changes.
 
     For complex multi-op edits, call `validate_document_change` first. If it
-    returns `valid: true`, submit the returned `normalized_patch_ops` here; this
-    avoids creating a failed user-visible proposal when line numbers drift.
+    returns `valid: true` with a `validation_token`, prefer passing
+    `validation_token=<token>` here (and omit `patch_ops`) — the server has the
+    validated ops cached, so you skip resending a large payload AND prove that
+    nothing drifted between validate and propose. Tokens expire after ~10 min
+    and become STALE_VALIDATION_TOKEN if the project HEAD moves; in either
+    case revalidate and retry.
     """
-    payload: dict[str, Any] = {
-        "goal": goal,
-        "patch_ops": list(patch_ops or []),
-    }
+    payload: dict[str, Any] = {"goal": goal}
+    if validation_token:
+        payload["validation_token"] = str(validation_token)
+        if patch_ops:
+            payload["patch_ops"] = list(patch_ops)
+    elif patch_ops:
+        payload["patch_ops"] = list(patch_ops)
     if addresses_task_id is not None:
         payload["addresses_task_id"] = int(addresses_task_id)
     if addresses_outline_item_id is not None:
