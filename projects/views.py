@@ -346,7 +346,12 @@ def dashboard(request: HttpRequest):
 @require_GET
 def editor(request: HttpRequest, project_id: int):
     project = _project_with_owner(project_id, request.user)
-    return render(request, "projects/editor.html", {"project": project, "session_review": False, "has_active_session": False})
+    return render(request, "projects/editor.html", {
+        "project": project,
+        "session_review": False,
+        "has_active_session": False,
+        "user_is_staff": request.user.is_staff,
+    })
 
 
 @login_required
@@ -1316,6 +1321,29 @@ def api_project_pdf(request: HttpRequest, project_id: int):
         content_type="application/pdf",
         filename=project_pdf_download_name(project),
     )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_create_template(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    if not user.is_staff:
+        return JsonResponse({"detail": "Admin only."}, status=403)
+
+    project = _project_with_owner(project_id, user)
+    body = _json_body(request)
+    title = str(body.get("title") or "").strip() or project.title
+    category = str(body.get("category") or "other").strip()
+
+    from templates_lib.models import Template as TemplateModel
+    from templates_lib.services import create_template_from_project
+    if category not in dict(TemplateModel.Category.choices):
+        category = TemplateModel.Category.OTHER
+
+    template = create_template_from_project(project, title=title, category=category)
+    return JsonResponse({"id": template.id, "title": template.title}, status=201)
 
 
 @csrf_exempt

@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 
 from SmartTeX.markup import MarkupType, source_filename_for_markup
 
-from .models import Template
+from .models import Template, TemplateContextFile, TemplateNoteSection, TemplateOutlineItem, TemplateRequirement, TemplateTask
 
 logger = logging.getLogger(__name__)
 
@@ -448,3 +449,146 @@ def compile_template_preview(template: Template) -> TemplateCompileResult:
         return TemplateCompileResult(status="error", log=log_text)
     finally:
         COMPILE_SEMAPHORE.release()
+
+
+# ---------------------------------------------------------------------------
+# Create template from project
+# ---------------------------------------------------------------------------
+
+_LONGDOC_SETTINGS_FIELDS = (
+    "enabled",
+    "context_enabled",
+    "outline_enabled",
+    "tasks_enabled",
+    "notes_enabled",
+    "summaries_enabled",
+    "requirements_enabled",
+    "ai_sessions_enabled",
+)
+
+
+def create_template_from_project(
+    project,
+    *,
+    title: str,
+    category: str = Template.Category.OTHER,
+) -> Template:
+    """
+    Create a new Template from an existing project.
+
+    Copies:
+    - Project files (including .smarttex/context/) as the template ZIP
+    - LongDoc settings (enabled flags) → template longdoc_* fields
+    - Outline items, requirements, tasks, note sections, context files
+    """
+    from projects.services import build_project_zip
+    from longdoc.services import (
+        get_longdoc_settings_or_none,
+        longdoc_context_dir,
+    )
+    from longdoc.models import (
+        ProjectContextFile,
+        ProjectNoteSection,
+        ProjectOutlineItem,
+        ProjectRequirement,
+        ProjectTask,
+    )
+
+    slug = title.strip()[:80].replace(" ", "_").replace("/", "-") or "template"
+    zip_name = f"{slug}.zip"
+
+    zip_buf = build_project_zip(project)
+    zip_bytes = zip_buf.read()
+
+    template = Template(
+        title=title.strip() or project.title,
+        category=category,
+        markup_type=project.markup_type,
+        main_file=project.main_file or "",
+        is_active=True,
+    )
+
+    # Copy longdoc enabled flags from project settings
+    longdoc = get_longdoc_settings_or_none(project)
+    if longdoc is not None:
+        for field in _LONGDOC_SETTINGS_FIELDS:
+            setattr(template, f"longdoc_{field}", getattr(longdoc, field))
+
+    template.zip_file.save(zip_name, ContentFile(zip_bytes), save=False)
+    template.save()
+
+    # Outline items
+    outline_rows = list(ProjectOutlineItem.objects.filter(project=project).order_by("order"))
+    if outline_rows:
+        TemplateOutlineItem.objects.bulk_create([
+            TemplateOutlineItem(
+                template=template,
+                order=item.order,
+                title=item.title,
+                level=item.level,
+                status=item.status,
+                expected_pages=item.expected_pages,
+                notes=item.notes,
+            )
+            for item in outline_rows
+        ])
+
+    # Requirements
+    req_rows = list(ProjectRequirement.objects.filter(project=project).order_by("req_id"))
+    if req_rows:
+        TemplateRequirement.objects.bulk_create([
+            TemplateRequirement(
+                template=template,
+                req_id=item.req_id,
+                description=item.description,
+            )
+            for item in req_rows
+        ])
+
+    # Tasks (open ones only — completed tasks are project history)
+    task_rows = list(ProjectTask.objects.filter(project=project, status=ProjectTask.Status.OPEN).order_by("id"))
+    if task_rows:
+        TemplateTask.objects.bulk_create([
+            TemplateTask(template=template, description=item.description)
+            for item in task_rows
+        ])
+
+    # Note sections
+    note_rows = list(ProjectNoteSection.objects.filter(project=project).order_by("order", "id"))
+    if note_rows:
+        TemplateNoteSection.objects.bulk_create([
+            TemplateNoteSection(
+                template=template,
+                heading=item.heading,
+                body=item.body,
+                order=item.order,
+            )
+            for item in note_rows
+        ])
+
+    # Context files — read from disk and store as DB records
+    # (they are also in the ZIP under .smarttex/context/, but DB records allow
+    #  editing in the admin without re-uploading the ZIP)
+    context_dir = longdoc_context_dir(project)
+    ctx_rows = list(ProjectContextFile.objects.filter(project=project).order_by("filename"))
+    for item in ctx_rows:
+        path = context_dir / item.filename
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        except OSError:
+            content = ""
+        TemplateContextFile.objects.get_or_create(
+            template=template,
+            filename=item.filename,
+            defaults={
+                "display_name": item.display_name,
+                "description": item.description,
+                "content": content,
+            },
+        )
+
+    logger.info(
+        "Created template from project",
+        extra={"template_id": template.id, "project_id": project.id, "title": template.title},
+    )
+    return template

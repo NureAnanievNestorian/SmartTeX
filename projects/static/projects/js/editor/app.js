@@ -31,7 +31,7 @@ const { renderVersions, initVersionsPanel, closeDiffModal } = versions;
 const {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
-  renameCurrentProject, setOutlineLocationRef,
+  renameCurrentProject, setOutlineLocationRef, openCreateTemplateDialog,
 } = compile;
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
@@ -231,10 +231,11 @@ const refreshPdfBtn    = document.getElementById("refresh-pdf");
 const refreshOutlineBtn= document.getElementById("refresh-outline");
 const refreshVersionsBtn=document.getElementById("refresh-versions");
 const compileBtn       = document.getElementById("compile-btn");
-const renameProjBtn    = document.getElementById("rename-project-btn");
-const deleteProjBtn    = document.getElementById("delete-project-btn");
-const projectMenuBtn   = document.getElementById("project-menu-btn");
-const projectMenuEl    = document.getElementById("project-menu");
+const renameProjBtn      = document.getElementById("rename-project-btn");
+const deleteProjBtn      = document.getElementById("delete-project-btn");
+const createTemplateBtnEl = document.getElementById("create-template-btn");
+const projectMenuBtn     = document.getElementById("project-menu-btn");
+const projectMenuEl      = document.getElementById("project-menu");
 const newFolderBtn     = document.getElementById("new-folder-btn");
 const newTextFileBtn   = document.getElementById("new-text-file-btn");
 const dropZone         = document.getElementById("drop-zone");
@@ -588,6 +589,7 @@ export function initEditorApp() {
   });
   renameProjBtn?.addEventListener("click", () => { closeProjectMenu(); renameCurrentProject().catch(() => {}); });
   deleteProjBtn?.addEventListener("click", () => { closeProjectMenu(); deleteCurrentProject().catch(() => {}); });
+  createTemplateBtnEl?.addEventListener("click", () => { closeProjectMenu(); openCreateTemplateDialog(); });
 
   // PDF actions
   refreshPdfBtn?.addEventListener("click", () => {

@@ -388,3 +388,53 @@ export async function renameCurrentProject() {
     setSaveHint(`Помилка: ${err.message}`, "error");
   }
 }
+
+export function openCreateTemplateDialog() {
+  const overlay  = document.getElementById("create-template-overlay");
+  const input    = document.getElementById("ct-title-input");
+  const msg      = document.getElementById("ct-dialog-msg");
+  const submit   = document.getElementById("ct-dialog-submit");
+  const cancel   = document.getElementById("ct-dialog-cancel");
+  const closeBtn = document.getElementById("ct-dialog-close");
+  if (!overlay) return;
+
+  if (msg)    msg.textContent = "";
+  if (input)  input.value = "";
+  if (submit) submit.disabled = false;
+  overlay.style.display = "flex";
+  input?.focus();
+
+  function close() {
+    overlay.style.display = "none";
+    submit?.removeEventListener("click", onSubmit);
+    cancel?.removeEventListener("click", close);
+    closeBtn?.removeEventListener("click", close);
+    overlay.removeEventListener("click", onOverlayClick);
+  }
+
+  function onOverlayClick(e) { if (e.target === overlay) close(); }
+
+  async function onSubmit() {
+    const title    = (input?.value || "").trim() || String(projectTitleEl?.textContent || "").trim();
+    const category = document.getElementById("ct-category-select")?.value || "other";
+    if (submit) submit.disabled = true;
+    if (msg)    msg.textContent = "Створення…";
+    try {
+      const result = await api(`/api/projects/${cfg.projectId}/create-template/`, {
+        method: "POST",
+        body: JSON.stringify({ title, category }),
+      });
+      if (msg) msg.textContent = `Шаблон «${result?.title || title}» створено успішно.`;
+      if (submit) submit.textContent = "Готово";
+      setTimeout(close, 1800);
+    } catch (err) {
+      if (msg) msg.textContent = `Помилка: ${err.message}`;
+      if (submit) submit.disabled = false;
+    }
+  }
+
+  submit?.addEventListener("click", onSubmit);
+  cancel?.addEventListener("click", close);
+  closeBtn?.addEventListener("click", close);
+  overlay.addEventListener("click", onOverlayClick);
+}
