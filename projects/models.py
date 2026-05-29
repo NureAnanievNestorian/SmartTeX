@@ -17,6 +17,10 @@ class Project(models.Model):
     markup_type = models.CharField(max_length=10, choices=MarkupType.choices, default=MarkupType.LATEX)
     main_file = models.CharField(max_length=255, blank=True, default="")
     last_status = models.CharField(max_length=16, choices=CompileStatus.choices, default=CompileStatus.PENDING)
+    github_sync_enabled = models.BooleanField(default=False)
+    github_repo_url = models.CharField(max_length=512, blank=True, default="")
+    github_pat = models.CharField(max_length=256, blank=True, default="")
+    github_sync_interval_minutes = models.PositiveIntegerField(default=30)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

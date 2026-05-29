@@ -216,6 +216,21 @@ def ensure_project_git_repo(project: Project) -> None:
     _run_project_git(project, ["init", "--quiet"])
     _run_project_git(project, ["config", "core.quotePath", "false"])
     _run_project_git(project, ["config", "commit.gpgsign", "false"])
+    gitignore = project_dir(project) / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(".smarttex/sessions/\n.smarttex-git/\nmain.pdf\nmain.log\n*.aux\n*.out\n*.toc\n*.fls\n*.fdb_latexmk\n*.synctex.gz\n*.xdv\n*.bbl\n*.blg\n*.nav\n*.snm\n*.vrb\n", encoding="utf-8")
+
+
+def _is_smarttex_trackable(parts: tuple) -> bool:
+    """Return True for .smarttex/ files that should be committed to git."""
+    if not parts or parts[0] != ".smarttex":
+        return False
+    # Exclude internal-only subdirs: sessions, and the bare .smarttex root dir entry
+    if len(parts) < 2:
+        return False
+    if parts[1] == "sessions":
+        return False
+    return True
 
 
 def list_git_trackable_text_files(project: Project) -> list[str]:
@@ -224,7 +239,15 @@ def list_git_trackable_text_files(project: Project) -> list[str]:
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part.startswith(".") for part in path.relative_to(root).parts):
+        parts = path.relative_to(root).parts
+        is_hidden = any(part.startswith(".") for part in parts)
+        if is_hidden:
+            # Include .smarttex/* (except sessions) and known root dotfiles
+            if _is_smarttex_trackable(parts):
+                if path.suffix.lower() in TEXT_EXTENSIONS:
+                    paths.add(str(path.relative_to(root)).replace("\\", "/"))
+            elif len(parts) == 1 and parts[0] in VISIBLE_ROOT_DOTFILES:
+                paths.add(parts[0])
             continue
         rel = str(path.relative_to(root)).replace("\\", "/")
         if rel == main_source_filename(project):
@@ -271,13 +294,84 @@ def commit_project_text_changes(
         )
         _run_project_git(project, ["commit", "--quiet", "-m", message, "--", *normalized])
         proc = _run_project_git(project, ["rev-parse", "HEAD"])
-        return GitCommitInfo(before_commit=before_commit, commit_hash=(proc.stdout or "").strip() or None)
+        commit_hash = (proc.stdout or "").strip() or None
+        if commit_hash:
+            schedule_github_sync(project)
+        return GitCommitInfo(before_commit=before_commit, commit_hash=commit_hash)
     except Exception:
         logger.exception(
             "Failed to commit text changes",
             extra={"project_id": project.id, "operation": operation, "source": source, "target_files": normalized},
         )
         raise
+
+
+GITHUB_SYNC_INTERVAL_SECONDS = 30 * 60
+GITHUB_SYNC_INTERVAL_MIN = 5
+GITHUB_SYNC_INTERVAL_MAX = 24 * 60
+_github_sync_timers: dict[int, threading.Timer] = {}
+_github_sync_lock = threading.Lock()
+
+
+def _build_github_push_url(repo_url: str, pat: str) -> str:
+    url = repo_url.strip()
+    if url.startswith("https://"):
+        url = "https://x-access-token:" + pat + "@" + url[len("https://"):]
+    return url
+
+
+def _do_github_push(project_id: int) -> None:
+    try:
+        from django.apps import apps
+        Project = apps.get_model("projects", "Project")
+        project = Project.objects.get(id=project_id)
+    except Exception:
+        return
+    if not project.github_sync_enabled or not project.github_repo_url or not project.github_pat:
+        return
+    try:
+        push_to_github(project)
+    except Exception:
+        logger.exception("Scheduled GitHub push failed", extra={"project_id": project_id})
+
+
+def push_to_github(project: "Project") -> None:
+    if not _git_executable():
+        raise RuntimeError("git executable is not available")
+    if not _project_git_is_healthy(project):
+        raise RuntimeError("Project git repo is not initialised")
+    push_url = _build_github_push_url(project.github_repo_url, project.github_pat)
+    proc = _run_project_git(project, ["push", push_url, "HEAD:main", "--force"], check=False)
+    if proc.returncode != 0:
+        msg = (proc.stderr or proc.stdout or "git push failed").strip()
+        raise RuntimeError(msg)
+    logger.info("GitHub push succeeded", extra={"project_id": project.id})
+
+
+def schedule_github_sync(project: "Project") -> None:
+    if not project.github_sync_enabled or not project.github_repo_url or not project.github_pat:
+        return
+    project_id = project.id
+    interval_minutes = max(
+        GITHUB_SYNC_INTERVAL_MIN,
+        min(int(getattr(project, "github_sync_interval_minutes", 30) or 30), GITHUB_SYNC_INTERVAL_MAX),
+    )
+    interval_seconds = interval_minutes * 60
+    with _github_sync_lock:
+        existing = _github_sync_timers.pop(project_id, None)
+        if existing is not None:
+            existing.cancel()
+        timer = threading.Timer(interval_seconds, _do_github_push, args=(project_id,))
+        timer.daemon = True
+        timer.start()
+        _github_sync_timers[project_id] = timer
+
+
+def cancel_github_sync(project: "Project") -> None:
+    with _github_sync_lock:
+        timer = _github_sync_timers.pop(project.id, None)
+        if timer is not None:
+            timer.cancel()
 
 
 def read_git_version_diff(project: Project, commit_hash: str, target_file: str, context_lines: int = 2) -> str:

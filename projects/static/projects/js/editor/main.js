@@ -23,7 +23,7 @@ import {
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
 } from "./compile.js?v=20260529-ui7";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-ui7";
+import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js?v=20260529-gh1";
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 

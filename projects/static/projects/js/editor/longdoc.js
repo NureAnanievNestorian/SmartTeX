@@ -520,6 +520,13 @@ function renderSettingsPanel() {
       ["circuit_breaker_enabled", "Circuit Breaker", "Зупиняє повторні невдалі спроби."],
     ]],
   ];
+
+  const gh = s.projectMeta?.github || {};
+  const ghSyncEnabled = Boolean(gh.sync_enabled);
+  const ghRepoUrl = String(gh.repo_url || "");
+  const ghPatSet = Boolean(gh.pat_set);
+  const ghIntervalMinutes = Number(gh.sync_interval_minutes) || 30;
+
   settingsPanelEl.innerHTML = `
     <div class="e-workspace-head">
       <div>
@@ -549,6 +556,38 @@ function renderSettingsPanel() {
         </section>
       `).join("")}
       <div class="e-longdoc-actions">${button("Зберегти налаштування", "save-settings", "primary")}</div>
+
+      <section class="e-settings-section" style="margin-top:10px">
+        <h3>GitHub Sync</h3>
+        <div class="e-settings-list">
+          <label class="e-setting-row">
+            <span>
+              <strong>Увімкнути синхронізацію</strong>
+              <small>Автоматично пушити зміни до GitHub після кожного збереження.</small>
+            </span>
+            <input type="checkbox" id="gh-sync-enabled" ${ghSyncEnabled ? "checked" : ""}>
+          </label>
+        </div>
+        <div class="e-modal-form" style="margin-top:10px">
+          <div class="e-form-field">
+            <label for="gh-repo-url">Repository URL</label>
+            <input type="text" id="gh-repo-url" placeholder="https://github.com/user/repo" value="${escHtml(ghRepoUrl)}">
+          </div>
+          <div class="e-form-field">
+            <label for="gh-pat">Personal Access Token${ghPatSet ? " (вже збережено — залиште порожнім щоб не змінювати)" : ""}</label>
+            <input type="password" id="gh-pat" placeholder="${ghPatSet ? "••••••••" : "ghp_…"}">
+          </div>
+          <div class="e-form-field">
+            <label for="gh-interval">Інтервал автосинхронізації (хвилини)</label>
+            <input type="number" id="gh-interval" min="5" max="1440" value="${ghIntervalMinutes}">
+          </div>
+        </div>
+        <div class="e-longdoc-actions" style="margin-top:10px; gap:8px">
+          ${button("Зберегти GitHub", "save-github", "primary")}
+          ${button("Push зараз", "push-github")}
+        </div>
+        <div id="gh-status" class="e-longdoc-meta" style="margin-top:6px"></div>
+      </section>
     </div>
   `;
   bindActions(settingsPanelEl, {
@@ -563,6 +602,38 @@ function renderSettingsPanel() {
       });
       await refreshProjectMeta();
       await loadLongdocData();
+    },
+    "save-github": async () => {
+      const statusEl = settingsPanelEl.querySelector("#gh-status");
+      const repoUrl = settingsPanelEl.querySelector("#gh-repo-url")?.value.trim() || "";
+      const pat = settingsPanelEl.querySelector("#gh-pat")?.value || "";
+      const syncEnabled = Boolean(settingsPanelEl.querySelector("#gh-sync-enabled")?.checked);
+      const intervalMinutes = parseInt(settingsPanelEl.querySelector("#gh-interval")?.value || "30", 10);
+      const body = {
+        github_repo_url: repoUrl,
+        github_sync_enabled: syncEnabled,
+        github_sync_interval_minutes: Number.isFinite(intervalMinutes) ? intervalMinutes : 30,
+      };
+      if (pat) body.github_pat = pat;
+      if (statusEl) statusEl.textContent = "Зберігаємо…";
+      try {
+        await api(`/api/projects/${cfg.projectId}/`, { method: "PATCH", body: JSON.stringify(body) });
+        await refreshProjectMeta();
+        if (statusEl) statusEl.textContent = "Збережено.";
+        renderSettingsPanel();
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Помилка: ${err.message}`;
+      }
+    },
+    "push-github": async () => {
+      const statusEl = settingsPanelEl.querySelector("#gh-status");
+      if (statusEl) statusEl.textContent = "Пушимо…";
+      try {
+        await api(`/api/projects/${cfg.projectId}/github-sync/`, { method: "POST" });
+        if (statusEl) statusEl.textContent = "Push успішно виконано.";
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Помилка: ${err.message}`;
+      }
     },
   });
 }

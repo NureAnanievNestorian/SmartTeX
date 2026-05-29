@@ -27,6 +27,7 @@ from .services import (
     ALLOWED_UPLOAD_EXTENSIONS,
     build_project_zip,
     build_version_diff,
+    cancel_github_sync,
     compile_state_for_status,
     commit_project_text_changes,
     compile_project,
@@ -52,6 +53,7 @@ from .services import (
     pdf_version,
     project_asset_path,
     project_dir,
+    push_to_github,
     read_compile_log,
     read_project_asset_content,
     write_project_asset_text,
@@ -164,6 +166,12 @@ def _project_payload(project: Project, user=None) -> dict:
             "requests_remaining_today": quota.requests_remaining_today if quota is not None else 0,
             "tokens_remaining_today": quota.tokens_remaining_today if quota is not None else 0,
             "quota_warning_visible": quota_warning_visible,
+        },
+        "github": {
+            "sync_enabled": project.github_sync_enabled,
+            "repo_url": project.github_repo_url,
+            "pat_set": bool(project.github_pat),
+            "sync_interval_minutes": project.github_sync_interval_minutes,
         },
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
@@ -459,6 +467,26 @@ def api_project_detail(request: HttpRequest, project_id: int) -> JsonResponse:
                     return JsonResponse({"error": "file not found"}, status=400)
             project.main_file = new_main
             update_fields.append("main_file")
+        if "github_repo_url" in body:
+            project.github_repo_url = str(body["github_repo_url"] or "").strip()
+            update_fields.append("github_repo_url")
+        if "github_pat" in body:
+            project.github_pat = str(body["github_pat"] or "").strip()
+            update_fields.append("github_pat")
+        if "github_sync_enabled" in body:
+            project.github_sync_enabled = bool(body["github_sync_enabled"])
+            update_fields.append("github_sync_enabled")
+            if not project.github_sync_enabled:
+                cancel_github_sync(project)
+        if "github_sync_interval_minutes" in body:
+            try:
+                minutes = int(body["github_sync_interval_minutes"])
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "github_sync_interval_minutes must be an integer"}, status=400)
+            from .services import GITHUB_SYNC_INTERVAL_MIN, GITHUB_SYNC_INTERVAL_MAX
+            minutes = max(GITHUB_SYNC_INTERVAL_MIN, min(minutes, GITHUB_SYNC_INTERVAL_MAX))
+            project.github_sync_interval_minutes = minutes
+            update_fields.append("github_sync_interval_minutes")
         project.save(update_fields=update_fields)
         return JsonResponse(_project_payload(project, user))
 
@@ -1301,6 +1329,22 @@ def api_project_download_zip(request: HttpRequest, project_id: int):
     archive = build_project_zip(project)
     filename_base = project_pdf_download_name(project).rsplit(".", 1)[0] or "project"
     return FileResponse(archive, content_type="application/zip", filename=f"{filename_base}.zip")
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_github_sync(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if not project.github_repo_url or not project.github_pat:
+        return JsonResponse({"error": "GitHub repo URL and PAT must be configured"}, status=400)
+    try:
+        push_to_github(project)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
+    return JsonResponse({"ok": True})
 
 
 @csrf_exempt
