@@ -1,10 +1,12 @@
 import * as state from "./state.js";
 import * as apiMod from "./api.js";
 import * as ui from "./ui.js";
+import * as cm from "./cm.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
 const { escHtml, fmtDate, setSaveHint, setCompileState, renderDiff, showConfirm } = ui;
+const { dropTabState, activateTab } = cm;
 
 const versionsListEl       = document.getElementById("versions-list");
 const diffModalOverlay     = document.getElementById("diff-modal-overlay");
@@ -189,6 +191,14 @@ export async function rollbackVersion(vid) {
     closeDiffModal();
     const { loadMainFile, loadSections, loadVersions } = await import("./app.js");
     await loadMainFile();
+    if (file && s.selectedFile?.name === file && s.selectedFile?.type !== "main") {
+      try {
+        const params = new URLSearchParams({ include_text: "1" });
+        const data = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(file)}/content/?${params}`);
+        dropTabState(file);
+        activateTab(file, data.text_content || "", file);
+      } catch (_) {}
+    }
     await Promise.all([loadSections(), loadVersions(true)]);
     setSaveHint(`Відновлено до версії #${vnum}`, "saved");
     setCompileState("out_of_date", "pending");

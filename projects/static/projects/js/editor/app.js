@@ -182,7 +182,7 @@ function syncTabContent(name, text, filename) {
     } catch (_) {}
     return;
   }
-  activateTab(name, text, filename || name, true);
+  activateTab(name, text, filename || name, true, true);
 }
 
 // ── Loaders ───────────────────────────────────────────────────────────────────
