@@ -199,7 +199,11 @@ export function activateTab(name, content, filename, forceFresh = false, cacheOn
   if (!view) return false;
   const saved = forceFresh ? null : _tabStates.get(name);
   if (saved && !forceFresh) {
-    if (!cacheOnly) view.setState(saved);
+    if (!cacheOnly) {
+      _settingContent = true;
+      view.setState(saved);
+      _settingContent = false;
+    }
     return true;
   }
   _settingContent = true;

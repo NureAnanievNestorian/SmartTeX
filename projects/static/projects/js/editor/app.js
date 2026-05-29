@@ -99,30 +99,125 @@ function addTab(file) {
     s.openTabs.push({ ...file });
   }
   s.activeTabName = file.name;
+  persistTabs();
 }
 
 function closeTab(name) {
   const idx = s.openTabs.findIndex(t => t.name === name);
   if (idx === -1) return;
+  if (name === s.activeTabName) captureActiveScroll();
   s.openTabs.splice(idx, 1);
   dropTabState(name);
+  _tabScrolls.delete(name);
 
   if (s.activeTabName === name) {
     const next = s.openTabs[Math.min(idx, s.openTabs.length - 1)];
     if (next) {
       selectFile(next);
     } else {
-      // All tabs closed — show empty state
       s.activeTabName = "";
       s.selectedFile = { name: "", type: "", is_text: false };
       showEmptyEditor();
       renderEditorTabs();
       renderFileList();
+      persistTabs();
     }
   } else {
     renderEditorTabs();
     renderFileList();
+    persistTabs();
   }
+}
+
+// ── Tab persistence (localStorage) ────────────────────────────────────────────
+
+const _tabScrolls = new Map();
+let _suppressScrollCapture = false;
+
+function tabsStorageKey() {
+  return `smarttex.editor.tabs.${cfg.projectId}`;
+}
+
+function captureActiveScroll() {
+  if (!s.activeTabName) return;
+  const top = cm.view?.scrollDOM?.scrollTop;
+  if (typeof top === "number") _tabScrolls.set(s.activeTabName, top);
+}
+
+function applyTabScroll(name) {
+  const top = _tabScrolls.get(name);
+  if (typeof top !== "number") return;
+  _suppressScrollCapture = true;
+  requestAnimationFrame(() => {
+    if (cm.view?.scrollDOM) cm.view.scrollDOM.scrollTop = top;
+    requestAnimationFrame(() => { _suppressScrollCapture = false; });
+  });
+}
+
+function attachScrollListener() {
+  const el = cm.view?.scrollDOM;
+  if (!el) return;
+  el.addEventListener("scroll", () => {
+    if (_suppressScrollCapture) return;
+    if (!s.activeTabName) return;
+    _tabScrolls.set(s.activeTabName, el.scrollTop);
+  }, { passive: true });
+}
+
+function persistTabs() {
+  if (!cfg.projectId) return;
+  try {
+    const payload = {
+      openTabs: s.openTabs.map(t => ({
+        name: t.name,
+        type: t.type || "asset",
+        scrollTop: _tabScrolls.get(t.name) || 0,
+      })),
+      activeTabName: s.activeTabName || "",
+    };
+    localStorage.setItem(tabsStorageKey(), JSON.stringify(payload));
+  } catch (_) {}
+}
+
+function readStoredTabs() {
+  if (!cfg.projectId) return null;
+  try {
+    const raw = localStorage.getItem(tabsStorageKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.openTabs)) return null;
+    return parsed;
+  } catch (_) { return null; }
+}
+
+function resolveStoredTab(stored) {
+  const name = String(stored?.name || "");
+  if (!name) return null;
+  if (typeof stored.scrollTop === "number") _tabScrolls.set(name, stored.scrollTop);
+  if (name === s.mainFileName) {
+    return { name, type: "main", is_text: true };
+  }
+  const f = s.projectFiles.find(x => x.name === name);
+  if (!f) return null;
+  return { ...f };
+}
+
+async function restoreTabsFromStorage() {
+  const stored = readStoredTabs();
+  if (!stored) return false;
+  const tabs = stored.openTabs
+    .map(resolveStoredTab)
+    .filter(Boolean);
+  if (!tabs.length) return false;
+
+  s.openTabs = tabs;
+  const activeName = tabs.find(t => t.name === stored.activeTabName)?.name || tabs[0].name;
+  s.activeTabName = activeName;
+  renderEditorTabs();
+
+  const activeFile = tabs.find(t => t.name === activeName);
+  await selectFile(activeFile);
+  return true;
 }
 
 // ── DOM refs used only in main.js ─────────────────────────────────────────────
@@ -182,7 +277,7 @@ function syncTabContent(name, text, filename) {
     } catch (_) {}
     return;
   }
-  activateTab(name, text, filename || name, true, true);
+  activateTab(name, text, filename || name, true, !!s.activeTabName);
 }
 
 // ── Loaders ───────────────────────────────────────────────────────────────────
@@ -292,10 +387,14 @@ async function selectFile(file) {
     await saveCurrentFile();
   }
 
-  // Snapshot current tab's editor state so its undo history is preserved
-  if (prevFile.name && prevFile.is_text && !prevFile.is_dir) {
+  // Snapshot current tab's editor state so its undo history is preserved.
+  // Only save if the tab was already initialised — if it was still loading (no cached
+  // state yet) the editor is showing a different file's content, so saving now would
+  // corrupt the cache with stale content.
+  if (prevFile.name && prevFile.is_text && !prevFile.is_dir && hasTabState(prevFile.name)) {
     saveTabState(prevFile.name);
   }
+  captureActiveScroll();
 
   s.selectedFile = { name: file.name, type: file.type || "asset", ...file };
   if (currentFileLbl) currentFileLbl.textContent = file.name;
@@ -306,10 +405,26 @@ async function selectFile(file) {
 
   if (file.name === s.mainFileName) {
     showEditorForText();
-    activateTab(s.mainFileName, s.mainFileContent, s.mainFileName);
-    s.hasUnsavedChanges = false;
-    setSaveHint("", "");
-    focusEditor();
+    if (hasTabState(s.mainFileName)) {
+      activateTab(s.mainFileName, s.mainFileContent, s.mainFileName);
+      s.hasUnsavedChanges = false;
+      setSaveHint("", "");
+      applyTabScroll(file.name);
+      focusEditor();
+      return;
+    }
+    setSaveHint("Завантаження…", "saving");
+    try {
+      await loadMainFile();
+      if (s.activeTabName !== file.name) return;
+      s.hasUnsavedChanges = false;
+      setSaveHint("Завантажено", "saved");
+      applyTabScroll(file.name);
+      focusEditor();
+    } catch (err) {
+      if (s.activeTabName !== file.name) return;
+      setSaveHint(`Помилка: ${err.message}`, "error");
+    }
     return;
   }
 
@@ -321,6 +436,7 @@ async function selectFile(file) {
       activateTab(file.name, "", file.name);
       s.hasUnsavedChanges = false;
       setSaveHint("", "");
+      applyTabScroll(file.name);
       focusEditor();
       return;
     }
@@ -330,11 +446,19 @@ async function selectFile(file) {
     try {
       const params = new URLSearchParams({ include_text: "1" });
       const data = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(file.name)}/content/?${params}`);
+      // User may have switched to another tab while the fetch was in flight.
+      // Don't clobber the currently-visible editor; just warm the cache instead.
+      if (s.activeTabName !== file.name) {
+        activateTab(file.name, data.text_content || "", file.name, true, true);
+        return;
+      }
       activateTab(file.name, data.text_content || "", file.name);
       s.hasUnsavedChanges = false;
       setSaveHint("Завантажено", "saved");
+      applyTabScroll(file.name);
       focusEditor();
     } catch (err) {
+      if (s.activeTabName !== file.name) return;
       setSaveHint(`Помилка: ${err.message}`, "error");
       s.selectedFile = { name: s.mainFileName, type: "main", is_text: true };
       if (currentFileLbl) currentFileLbl.textContent = s.mainFileName;
@@ -426,6 +550,7 @@ export function initEditorApp() {
     onEditorInput,
     () => { if (cm.view) updateLineCol(cm.view); }
   );
+  attachScrollListener();
 
   // Initialize UI subsystems
   initDialogs();
@@ -558,7 +683,13 @@ export function initEditorApp() {
   });
 
   // Beforeunload cleanup
+  window.addEventListener("pagehide", () => {
+    captureActiveScroll();
+    persistTabs();
+  });
   window.addEventListener("beforeunload", () => {
+    captureActiveScroll();
+    persistTabs();
     if (s.statusPollTimer)         clearInterval(s.statusPollTimer);
     if (s.typstCompileTimer)       clearTimeout(s.typstCompileTimer);
     if (s.projectSse) { try { s.projectSse.close(); } catch (_) {} s.projectSse = null; }
@@ -566,15 +697,19 @@ export function initEditorApp() {
 
   // ── Load initial data ──
   await loadProjectMeta();
-  await loadMainFile();
-  // Seed initial tab
-  const mainFileObj = { name: s.mainFileName, type: "main", is_text: true };
-  s.openTabs = [mainFileObj];
-  s.activeTabName = s.mainFileName;
-  renderEditorTabs();
-  updateEditorTab(s.selectedFile?.name || s.mainFileName);
-  setCompileState("out_of_date");
   await Promise.all([loadFiles(), loadSections(), loadVersions(true), longdoc.loadLongdocData?.()]);
+  setCompileState("out_of_date");
+
+  const restored = await restoreTabsFromStorage();
+  if (!restored) {
+    s.openTabs = [];
+    s.activeTabName = "";
+    s.selectedFile = { name: "", type: "", is_text: false };
+    if (currentFileLbl) currentFileLbl.textContent = "";
+    updateEditorTab("");
+    showEmptyEditor();
+    renderEditorTabs();
+  }
 
   const cd = await api(`/api/projects/${cfg.projectId}/compile/`, { method: "GET" });
   if (cd.log) { logEl.textContent = cd.log; openLog(); }

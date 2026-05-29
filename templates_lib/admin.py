@@ -3,21 +3,11 @@ from django.contrib import admin
 from .models import (
     Template,
     TemplateContextFile,
-    TemplateLongDocDefaults,
     TemplateNoteSection,
     TemplateOutlineItem,
     TemplateRequirement,
     TemplateTask,
 )
-
-
-class TemplateLongDocDefaultsInline(admin.StackedInline):
-    model = TemplateLongDocDefaults
-    extra = 0
-    max_num = 1
-    can_delete = True
-    verbose_name = "Long-document defaults"
-    verbose_name_plural = "Long-document defaults"
 
 
 class TemplateOutlineItemInline(admin.TabularInline):
@@ -62,12 +52,26 @@ class TemplateAdmin(admin.ModelAdmin):
         ("Multifile ZIP (optional)", {
             "description": "Upload a .zip archive to seed new projects with multiple files. "
                            "Files in the ZIP will be extracted into the project alongside the main file. "
-                           "Set Main file when the archive entry point is not main.tex/main.typ, for example report/main.tex or thesis.typ.",
+                           "A .smarttex/context/ folder inside the ZIP will be imported as project context files. "
+                           "Set Main file when the archive entry point is not main.tex/main.typ.",
             "fields": ("zip_file", "main_file"),
+        }),
+        ("Long-document defaults", {
+            "description": "Override Writing Assistant feature flags for projects created from this template. "
+                           "Leave blank to use the system default.",
+            "fields": (
+                "longdoc_enabled",
+                "longdoc_context_enabled",
+                "longdoc_outline_enabled",
+                "longdoc_tasks_enabled",
+                "longdoc_notes_enabled",
+                "longdoc_summaries_enabled",
+                "longdoc_requirements_enabled",
+                "longdoc_ai_sessions_enabled",
+            ),
         }),
     )
     inlines = [
-        TemplateLongDocDefaultsInline,
         TemplateOutlineItemInline,
         TemplateRequirementInline,
         TemplateTaskInline,
@@ -81,4 +85,11 @@ class TemplateAdmin(admin.ModelAdmin):
 
     @admin.display(boolean=True, description="LongDoc")
     def has_longdoc(self, obj):
-        return hasattr(obj, "longdoc_defaults")
+        return any(
+            getattr(obj, f) is not None
+            for f in (
+                "longdoc_enabled", "longdoc_context_enabled", "longdoc_outline_enabled",
+                "longdoc_tasks_enabled", "longdoc_notes_enabled", "longdoc_summaries_enabled",
+                "longdoc_requirements_enabled", "longdoc_ai_sessions_enabled",
+            )
+        ) or obj.outline_items.exists() or obj.tasks.exists() or obj.note_sections.exists() or obj.context_files.exists()

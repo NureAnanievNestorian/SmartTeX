@@ -1283,33 +1283,65 @@ def assert_longdoc_feature(project, feature_name: str, *, require_write: bool = 
     return settings_obj
 
 
+_LONGDOC_FIELD_SYSTEM_DEFAULTS: dict[str, bool] = {
+    "enabled": True,
+    "context_enabled": True,
+    "outline_enabled": True,
+    "tasks_enabled": True,
+    "notes_enabled": True,
+    "summaries_enabled": True,
+    "requirements_enabled": False,
+    "ai_sessions_enabled": True,
+}
+
+# Mapping: ProjectLongDocSettings field → Template.longdoc_* field
+_TEMPLATE_LONGDOC_FIELDS = {
+    "enabled": "longdoc_enabled",
+    "context_enabled": "longdoc_context_enabled",
+    "outline_enabled": "longdoc_outline_enabled",
+    "tasks_enabled": "longdoc_tasks_enabled",
+    "notes_enabled": "longdoc_notes_enabled",
+    "summaries_enabled": "longdoc_summaries_enabled",
+    "requirements_enabled": "longdoc_requirements_enabled",
+    "ai_sessions_enabled": "longdoc_ai_sessions_enabled",
+}
+
+
+def _has_longdoc_template_data(template) -> bool:
+    return (
+        any(getattr(template, tfield, None) is not None for tfield in _TEMPLATE_LONGDOC_FIELDS.values())
+        or template.outline_items.exists()
+        or template.tasks.exists()
+        or template.note_sections.exists()
+        or template.context_files.exists()
+    )
+
+
 def initialize_longdoc_from_template(project, template) -> ProjectLongDocSettings | None:
     """
     Initialize long-document data on a newly-created project from a template.
 
-    If the template has a TemplateLongDocDefaults record, this function:
-    - Creates ProjectLongDocSettings from the template's defaults.
-    - Copies outline items, requirements, tasks, note sections.
-    - Writes context file content to disk and creates ProjectContextFile records.
+    Uses the template's longdoc_* fields for ProjectLongDocSettings (null = system default).
+    Copies outline items, requirements, tasks, note sections, and DB context files.
+    Also extracts .smarttex/context/ files from the template ZIP as additional context files.
 
-    Safe to call when no long-doc template data exists — returns None without side effects.
+    Returns None (no side effects) when the template has no longdoc data at all.
     """
-    try:
-        defaults = template.longdoc_defaults
-    except Exception:
+    from templates_lib.services import extract_smarttex_context_from_zip
+
+    has_zip_context = bool(template.zip_file)  # checked lazily below
+
+    if not _has_longdoc_template_data(template) and not has_zip_context:
         return None
 
-    settings_obj = ProjectLongDocSettings.objects.create(
-        project=project,
-        enabled=defaults.enabled,
-        context_enabled=defaults.context_enabled,
-        outline_enabled=defaults.outline_enabled,
-        tasks_enabled=defaults.tasks_enabled,
-        notes_enabled=defaults.notes_enabled,
-        summaries_enabled=defaults.summaries_enabled,
-        requirements_enabled=defaults.requirements_enabled,
-        ai_sessions_enabled=defaults.ai_sessions_enabled,
-    )
+    # Build settings config: system defaults overridden by template fields
+    config = dict(_LONGDOC_FIELD_SYSTEM_DEFAULTS)
+    for proj_field, tmpl_field in _TEMPLATE_LONGDOC_FIELDS.items():
+        val = getattr(template, tmpl_field, None)
+        if val is not None:
+            config[proj_field] = val
+
+    settings_obj = ProjectLongDocSettings.objects.create(project=project, **config)
 
     outline_rows = list(template.outline_items.order_by("order"))
     if outline_rows:
@@ -1362,32 +1394,46 @@ def initialize_longdoc_from_template(project, template) -> ProjectLongDocSetting
     else:
         ensure_default_note_sections(project)
 
+    context_root = ensure_context_dir(project)
+
     context_rows = list(template.context_files.order_by("filename"))
-    if context_rows:
-        context_root = ensure_context_dir(project)
-        for item in context_rows:
-            try:
-                rel = _safe_context_rel_path(item.filename)
-            except ValueError:
-                continue
-            target = (context_root / rel).resolve()
-            if context_root.resolve() not in target.parents and context_root.resolve() != target.parent:
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                target.write_text(item.content, encoding="utf-8")
-            except OSError:
-                continue
-            ProjectContextFile.objects.get_or_create(
-                project=project,
-                filename=str(rel).replace("\\", "/"),
-                defaults={
-                    "display_name": item.display_name.strip() or _context_display_name(item.filename),
-                    "description": item.description.strip(),
-                    "is_read_only": False,
-                    "size_bytes": target.stat().st_size,
-                },
-            )
+    for item in context_rows:
+        try:
+            rel = _safe_context_rel_path(item.filename)
+        except ValueError:
+            continue
+        target = (context_root / rel).resolve()
+        if context_root.resolve() not in target.parents and context_root.resolve() != target.parent:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_text(item.content, encoding="utf-8")
+        except OSError:
+            continue
+        ProjectContextFile.objects.get_or_create(
+            project=project,
+            filename=str(rel).replace("\\", "/"),
+            defaults={
+                "display_name": item.display_name.strip() or _context_display_name(item.filename),
+                "description": item.description.strip(),
+                "is_read_only": False,
+                "size_bytes": target.stat().st_size,
+            },
+        )
+
+    # Also extract .smarttex/context/ files from the template ZIP (does not overwrite DB entries)
+    for entry in extract_smarttex_context_from_zip(template, context_root):
+        filename = entry["filename"]
+        ProjectContextFile.objects.get_or_create(
+            project=project,
+            filename=filename,
+            defaults={
+                "display_name": _context_display_name(filename),
+                "description": "",
+                "is_read_only": False,
+                "size_bytes": entry["size"],
+            },
+        )
 
     return settings_obj
 

@@ -779,6 +779,9 @@ def extract_project_zip(project: Project, zip_bytes: bytes, *, allow_main_overri
     return created
 
 
+_ZIP_EXCLUDED_NAMES = {".gitignore"}
+
+
 def build_project_zip(project: Project) -> io.BytesIO:
     root = ensure_project_dir(project)
     buffer = io.BytesIO()
@@ -790,9 +793,9 @@ def build_project_zip(project: Project) -> io.BytesIO:
                 continue
             if _is_system_artifact_file(path):
                 continue
-            rel_path = str(path.relative_to(root)).replace("\\", "/")
-            if any(part.startswith(".") for part in Path(rel_path).parts):
+            if path.name in _ZIP_EXCLUDED_NAMES:
                 continue
+            rel_path = str(path.relative_to(root)).replace("\\", "/")
             zf.write(path, arcname=rel_path)
     buffer.seek(0)
     return buffer

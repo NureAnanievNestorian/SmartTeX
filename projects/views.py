@@ -1503,5 +1503,8 @@ def create_project_from_dashboard(request: HttpRequest):
         except (ValueError, OSError):
             pass
 
+    if template_obj is not None:
+        initialize_longdoc_from_template(project, template_obj)
+
     _compile_project_after_create(project)
     return redirect("projects:editor", project_id=project.id)

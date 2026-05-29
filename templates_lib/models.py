@@ -21,30 +21,21 @@ class Template(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Long-document defaults — null means "use system default"
+    longdoc_enabled = models.BooleanField(null=True, blank=True, default=None)
+    longdoc_context_enabled = models.BooleanField(null=True, blank=True, default=None)
+    longdoc_outline_enabled = models.BooleanField(null=True, blank=True, default=None)
+    longdoc_tasks_enabled = models.BooleanField(null=True, blank=True, default=None)
+    longdoc_notes_enabled = models.BooleanField(null=True, blank=True, default=None)
+    longdoc_summaries_enabled = models.BooleanField(null=True, blank=True, default=None)
+    longdoc_requirements_enabled = models.BooleanField(null=True, blank=True, default=None)
+    longdoc_ai_sessions_enabled = models.BooleanField(null=True, blank=True, default=None)
+
     class Meta:
         ordering = ["-updated_at"]
 
     def __str__(self) -> str:
         return self.title
-
-
-class TemplateLongDocDefaults(models.Model):
-    template = models.OneToOneField(Template, on_delete=models.CASCADE, related_name="longdoc_defaults")
-    enabled = models.BooleanField(default=True)
-    context_enabled = models.BooleanField(default=True)
-    outline_enabled = models.BooleanField(default=True)
-    tasks_enabled = models.BooleanField(default=True)
-    notes_enabled = models.BooleanField(default=True)
-    summaries_enabled = models.BooleanField(default=True)
-    requirements_enabled = models.BooleanField(default=False)
-    ai_sessions_enabled = models.BooleanField(default=True)
-
-    class Meta:
-        verbose_name = "Template long-document defaults"
-        verbose_name_plural = "Template long-document defaults"
-
-    def __str__(self) -> str:
-        return f"LongDoc defaults for {self.template}"
 
 
 class TemplateOutlineItem(models.Model):

@@ -36,7 +36,7 @@ function syncTabContent(name, text, filename) {
     } catch (_) {}
     return;
   }
-  activateTab(name, text, filename || name, true, true);
+  activateTab(name, text, filename || name, true, !!s.activeTabName);
 }
 
 // ── Compile state helpers ─────────────────────────────────────────────────────

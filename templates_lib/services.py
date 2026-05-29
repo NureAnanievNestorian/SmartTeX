@@ -21,6 +21,9 @@ TEMPLATE_TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md
 TEMPLATE_ASSET_EXTENSIONS = TEMPLATE_TEXT_EXTENSIONS | {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".pdf"}
 MAX_TEMPLATE_ZIP_PREVIEW_BYTES = int(getattr(settings, "MAX_TEMPLATE_ZIP_PREVIEW_BYTES", 64 * 1024 * 1024))
 
+SMARTTEX_CONTEXT_PREFIX = ".smarttex/context/"
+_CONTEXT_TEXT_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".tex", ".typ", ".bib", ".csl"}
+
 
 
 @dataclass
@@ -35,6 +38,59 @@ def _compiler_network_args(markup_type: str) -> list[str]:
     else:
         network = "none"
     return ["--network", network]
+
+
+def extract_smarttex_context_from_zip(template: Template, context_root: "Path") -> list[dict]:
+    """
+    Extract .smarttex/context/ files from the template ZIP into *context_root*.
+
+    Returns a list of dicts with ``filename`` and ``size`` for each written file.
+    Silently returns [] when the ZIP is absent, has no context files, or on any error.
+    """
+    if not template.zip_file:
+        return []
+    try:
+        template.zip_file.open("rb")
+        with zipfile.ZipFile(template.zip_file) as zf:
+            entries = [i for i in zf.infolist() if not i.is_dir()]
+            strip_prefix = _strip_common_zip_prefix(entries)
+            created: list[dict] = []
+            for info in entries:
+                raw_name = info.filename
+                if strip_prefix and raw_name.startswith(strip_prefix):
+                    raw_name = raw_name[len(strip_prefix):]
+                # Must be under .smarttex/context/
+                if not raw_name.startswith(SMARTTEX_CONTEXT_PREFIX):
+                    continue
+                rel_name = raw_name[len(SMARTTEX_CONTEXT_PREFIX):]
+                rel_name = rel_name.strip("/")
+                if not rel_name:
+                    continue
+                parts = Path(rel_name).parts
+                if not parts or any(p in {"", ".", ".."} for p in parts):
+                    continue
+                # No nested hidden dirs
+                if any(p.startswith(".") for p in parts):
+                    continue
+                ext = Path(parts[-1]).suffix.lower()
+                if ext not in _CONTEXT_TEXT_EXTENSIONS:
+                    continue
+
+                data = zf.read(info.filename)
+                root = context_root.resolve()
+                target = (root / Path(rel_name)).resolve()
+                if root != target and root not in target.parents:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    target.write_text(data.decode("utf-8"), encoding="utf-8")
+                except UnicodeDecodeError:
+                    target.write_bytes(data)
+                created.append({"filename": rel_name, "size": len(data)})
+            return created
+    except Exception:
+        logger.debug("Could not extract .smarttex/context from template ZIP", extra={"template_id": template.id})
+        return []
 
 
 def template_preview_dir(template: Template) -> Path:
