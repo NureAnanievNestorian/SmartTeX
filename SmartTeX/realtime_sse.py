@@ -72,6 +72,41 @@ def _latest_project_version_for_owner(project_id: int, owner_id: int) -> dict[st
     return {"id": int(row["id"]), "source": str(row.get("source") or "")}
 
 
+def _compile_signature_for_owner(project_id: int, owner_id: int) -> dict[str, Any] | None:
+    from projects.models import Project
+    from projects.services import pdf_file_path
+
+    project = Project.objects.filter(id=project_id, owner_id=owner_id).only("id", "last_status").first()
+    if project is None:
+        return None
+    path = pdf_file_path(project)
+    pdf_mtime = int(path.stat().st_mtime_ns) if path.exists() else 0
+    return {"status": str(project.last_status or ""), "pdf_mtime": pdf_mtime}
+
+
+def _compile_event_for_owner(project_id: int, owner_id: int) -> dict[str, Any] | None:
+    from projects.models import Project
+    from projects.services import (
+        compile_state_for_status, has_pdf, pdf_relative_url, pdf_version,
+        read_compile_log, parse_compile_diagnostics,
+    )
+
+    project = Project.objects.filter(id=project_id, owner_id=owner_id).first()
+    if project is None:
+        return None
+    log = read_compile_log(project)
+    return {
+        "type": "compile_updated",
+        "project_id": project_id,
+        "status": str(project.last_status or ""),
+        "compile_state": compile_state_for_status(project.last_status or "", request_mode="read"),
+        "pdf_url": pdf_relative_url(project) if has_pdf(project) else None,
+        "pdf_version": pdf_version(project),
+        "log": log,
+        "diagnostics": parse_compile_diagnostics(project, log),
+    }
+
+
 def _active_proposal_signature_for_owner(project_id: int, owner_id: int) -> dict[str, Any] | None:
     from longdoc.proposal_service import get_active_change_proposal
     from projects.models import Project
@@ -112,7 +147,8 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
 
     latest_project = await sync_to_async(_latest_project_version_for_owner)(project_id, user_id)
     proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
-    if latest_project is None or proposal_signature is None:
+    compile_signature = await sync_to_async(_compile_signature_for_owner)(project_id, user_id)
+    if latest_project is None or proposal_signature is None or compile_signature is None:
         await send({"type": "http.response.start", "status": 403, "headers": []})
         await send({"type": "http.response.body", "body": b"Forbidden"})
         return
@@ -145,6 +181,7 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
 
     last_seen_project = int(latest_project["id"])
     last_seen_proposal = dict(proposal_signature)
+    last_seen_compile = dict(compile_signature)
     while True:
         try:
             event = await asyncio.wait_for(receive(), timeout=1.5)
@@ -155,8 +192,14 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
 
         latest_project = await sync_to_async(_latest_project_version_for_owner)(project_id, user_id)
         proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
-        if latest_project is None or proposal_signature is None:
+        compile_signature = await sync_to_async(_compile_signature_for_owner)(project_id, user_id)
+        if latest_project is None or proposal_signature is None or compile_signature is None:
             break
+        if compile_signature != last_seen_compile:
+            last_seen_compile = dict(compile_signature)
+            compile_event = await sync_to_async(_compile_event_for_owner)(project_id, user_id)
+            if compile_event is not None:
+                await send_event(compile_event)
         if int(latest_project["id"]) > last_seen_project:
             last_seen_project = int(latest_project["id"])
             await send_event({

@@ -312,6 +312,17 @@ export function connectProjectUpdatesSse() {
       s.lastSeenMcpVersionId = Number(data.latest_project_version_id || 0);
       return;
     }
+    if (data.type === "compile_updated") {
+      setCompileState(data.compile_state || "out_of_date", data.status);
+      updateCompileArtifacts(data.log || "", data);
+      if (data.pdf_url && data.pdf_version && data.pdf_version !== s.lastPdfVersion) {
+        s.lastPdfVersion = data.pdf_version;
+        if (openPdfLink) openPdfLink.href = data.pdf_url;
+        loadPdfViewer(`${data.pdf_url}?t=${s.lastPdfVersion}`).catch(() => {});
+      }
+      if (!data.pdf_url) pdfEmpty.style.display = "flex";
+      return;
+    }
     if (data.type === "proposal_updated") {
       import("./longdoc.js").then(m => m.loadLongdocData?.()).catch(() => {});
       import("./app.js").then(m => m.loadProjectMeta?.()).catch(() => {});

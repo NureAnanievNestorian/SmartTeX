@@ -1865,7 +1865,7 @@ def compile_project(project: Project) -> CompileResult:
 
     logger.info(
         "Starting project compile",
-        extra={"project_id": project.id, "main_file": src_filename, "workdir": str(workdir)},
+        extra={"project_id": project.id, "main_file": src_filename, "workdir": str(workdir), "use_native_typst": use_native_typst},
     )
 
     existing_pdf = pdf_file_path(project)

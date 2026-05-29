@@ -582,7 +582,6 @@ export function initEditorApp() {
 
   renderFileList();
   connectProjectUpdatesSse();
-  s.statusPollTimer = setInterval(pollCompileStatus, 5000);
   })().catch(err => {
     _initPromise = null;
     setSaveHint(`Помилка ініціалізації: ${err.message}`, "error");
