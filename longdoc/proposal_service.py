@@ -558,6 +558,224 @@ def propose_document_change(
         return proposal
 
 
+
+# ── Whole-proposal preview/validation ──────────────────────────────────────
+
+
+def _patch_lines_span(op: dict[str, Any]) -> int:
+    start = int(op.get("start_line") or 0)
+    end = int(op.get("end_line") or 0)
+    return max(0, end - start + 1)
+
+
+def _patch_lines_delta(op: dict[str, Any]) -> int:
+    if str(op.get("op") or "") != "patch_file_lines":
+        return 0
+    return _line_count(op.get("new_content")) - _patch_lines_span(op)
+
+
+def _line_patch_drift_context(ops: list[dict[str, Any]], failed_index: int, filename: str) -> list[dict[str, Any]]:
+    context: list[dict[str, Any]] = []
+    for idx, op in enumerate(ops[: max(0, failed_index - 1)], start=1):
+        if str(op.get("op") or "") != "patch_file_lines" or str(op.get("filename") or "") != filename:
+            continue
+        context.append(
+            {
+                "op_index": idx,
+                "start_line": op.get("start_line"),
+                "end_line": op.get("end_line"),
+                "old_span_lines": _patch_lines_span(op),
+                "new_content_lines": _line_count(op.get("new_content")),
+                "line_delta": _patch_lines_delta(op),
+            }
+        )
+    return context[-8:]
+
+
+def _normalize_patch_line_order(
+    ops: list[dict[str, Any]],
+    *,
+    auto_reorder_line_patches: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Optionally reorder independent line-range edits bottom-up per file.
+
+    This is deliberately conservative: only patch_file_lines ops are reordered,
+    and only when all non-line ops are left in their original relative order.
+    The returned operation list is suitable for a follow-up real proposal call.
+    """
+    if not auto_reorder_line_patches:
+        return ops, []
+
+    line_groups: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for idx, op in enumerate(ops):
+        if str(op.get("op") or "") == "patch_file_lines":
+            line_groups.setdefault(str(op.get("filename") or ""), []).append((idx, op))
+
+    sorted_groups: dict[str, list[dict[str, Any]]] = {}
+    normalizations: list[dict[str, Any]] = []
+    for filename, items in line_groups.items():
+        original = [op for _, op in items]
+        sorted_ops = sorted(
+            original,
+            key=lambda item: (int(item.get("start_line") or 0), int(item.get("end_line") or 0)),
+            reverse=True,
+        )
+        sorted_groups[filename] = list(sorted_ops)
+        if original != sorted_ops and len(original) > 1:
+            normalizations.append(
+                {
+                    "type": "reorder_patch_file_lines_bottom_up",
+                    "filename": filename,
+                    "reason": "Avoid line-number drift when multiple patch_file_lines ops edit the same file.",
+                    "original_order": [
+                        {"start_line": op.get("start_line"), "end_line": op.get("end_line")} for op in original
+                    ],
+                    "new_order": [
+                        {"start_line": op.get("start_line"), "end_line": op.get("end_line")} for op in sorted_ops
+                    ],
+                }
+            )
+
+    cursors = {filename: 0 for filename in sorted_groups}
+    reordered: list[dict[str, Any]] = []
+    for op in ops:
+        if str(op.get("op") or "") != "patch_file_lines":
+            reordered.append(op)
+            continue
+        filename = str(op.get("filename") or "")
+        cursor = cursors[filename]
+        reordered.append(sorted_groups[filename][cursor])
+        cursors[filename] = cursor + 1
+    return reordered, normalizations
+
+
+def validate_document_change(
+    project,
+    *,
+    goal: str,
+    patch_ops: list[dict[str, Any]],
+    compile_preview: bool = True,
+    auto_reorder_line_patches: bool = True,
+) -> dict[str, Any]:
+    """Validate a whole proposal in a throwaway staging session.
+
+    Unlike propose_document_change(), this does not create a ChangeProposal and
+    does not leave a user-visible failed suggestion behind. It is intended for
+    MCP agents to dry-run a complete multi-op edit plan before submitting the
+    real proposal for user review.
+    """
+    if get_locking_session(project) is not None or get_locking_change_proposal(project) is not None:
+        session = get_locking_session(project)
+        if session is not None:
+            raise ProjectLockedError(project=project, session=session)
+        proposal = get_locking_change_proposal(project)
+        raise SessionWriteError(
+            "PROJECT_LOCKED",
+            f"Project {project.id} already has suggested change #{proposal.id} in status {proposal.status}: {proposal.goal}",
+            status_code=423,
+            suggestion=f"Ask the user to review/discard proposal #{proposal.id} before validating another change.",
+            details={"proposal_id": proposal.id, "proposal_goal": proposal.goal, "proposal_status": proposal.status},
+        )
+
+    user = project.owner
+    normalized_ops = _normalize_patch_ops(patch_ops)
+    normalized_ops, normalizations = _normalize_patch_line_order(
+        normalized_ops,
+        auto_reorder_line_patches=bool(auto_reorder_line_patches),
+    )
+    validate_do_not_touch(project, normalized_ops)
+
+    pre_policy = ProposalPolicyEngine.pre_proposal_check(user, project, str(goal or ""))
+    if pre_policy.action == "stop":
+        raise SessionWriteError(
+            "SMCL_SCOPE_CLARIFICATION_REQUIRED",
+            pre_policy.reason or "Please clarify the requested edit scope.",
+            status_code=409,
+            suggestion="Clarify the scope and submit a narrower validation request.",
+        )
+
+    session = None
+    compile_result: dict[str, Any] | None = None
+    diff_text = ""
+    try:
+        baseline_graph = inspect_document_graph(project)
+        session = create_session(
+            project,
+            str(goal or "").strip() or "Validate suggested change",
+            skip_lock_check=True,
+        )
+
+        applied_ops: list[dict[str, Any]] = []
+        for idx, op in enumerate(normalized_ops, start=1):
+            try:
+                result = _apply_patch_op(session, op)
+            except SessionWriteError as exc:
+                details = {
+                    **exc.payload(),
+                    "valid": False,
+                    "failed_stage": "apply_patch_op",
+                    "failed_op_index": idx,
+                    "failed_op": op,
+                }
+                if str(op.get("op") or "") == "patch_file_lines":
+                    details["previous_patch_file_lines_on_same_file"] = _line_patch_drift_context(
+                        normalized_ops,
+                        idx,
+                        str(op.get("filename") or ""),
+                    )
+                    details["suggestion"] = details.get("suggestion") or (
+                        "Line numbers may have drifted after earlier edits. Reorder patch_file_lines for this file bottom-up or use anchors."
+                    )
+                return details
+            applied_ops.append({"op_index": idx, "result": result})
+
+        proposed_graph = inspect_document_graph(project, root=Path(session.worktree_path))
+        graph_errors = introduced_graph_errors(baseline_graph, proposed_graph)
+        if graph_errors:
+            return {
+                "valid": False,
+                "failed_stage": "document_graph",
+                "graph_validation_errors": graph_errors,
+                "applied_ops": applied_ops,
+                "normalized_patch_ops": normalized_ops,
+                "normalizations": normalizations,
+            }
+
+        if compile_preview:
+            compile_result = compile_session(session)
+            session.refresh_from_db()
+            if compile_result.get("status") != "success" or session.compile_status != AISession.CompileStatus.SUCCESS:
+                return {
+                    "valid": False,
+                    "failed_stage": "compile",
+                    "compile": compile_result,
+                    "compile_error_summary": _serialize_compile_failure(compile_result),
+                    "applied_ops": applied_ops,
+                    "normalized_patch_ops": normalized_ops,
+                    "normalizations": normalizations,
+                }
+
+        diff_text = generate_diff(session)
+        return {
+            "valid": True,
+            "will_apply": True,
+            "goal": str(goal or "").strip() or "Suggested change",
+            "normalized_patch_ops": normalized_ops,
+            "normalizations": normalizations,
+            "compile": compile_result,
+            "diff_text": diff_text,
+            "applied_ops": applied_ops,
+            "changed_files": _changed_files_from_batch(session),
+            "proposal_not_created": True,
+            "suggestion": "Submit the returned normalized_patch_ops with propose_document_change when you are ready to create the user-visible suggestion.",
+        }
+    finally:
+        if session is not None:
+            try:
+                discard_session(session)
+            except Exception:
+                pass
+
 def cancel_change_proposal(proposal: ChangeProposal) -> ChangeProposal:
     if proposal.status not in (
         ChangeProposal.Status.DRAFT,

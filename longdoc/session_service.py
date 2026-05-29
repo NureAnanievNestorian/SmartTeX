@@ -22,7 +22,7 @@ import difflib
 import logging
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -64,11 +64,14 @@ class SessionWriteError(RuntimeError):
     message: str
     status_code: int = 400
     suggestion: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
 
     def payload(self) -> dict[str, Any]:
         p: dict[str, Any] = {"error": self.error, "message": self.message}
         if self.suggestion:
             p["suggestion"] = self.suggestion
+        if self.details:
+            p.update(self.details)
         return p
 
 

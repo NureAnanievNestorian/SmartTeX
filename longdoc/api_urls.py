@@ -25,6 +25,7 @@ from .views import (
     api_requirement_detail,
     api_requirements,
     api_section_summaries,
+    api_validate_document_change,
 )
 
 
@@ -43,6 +44,7 @@ urlpatterns = [
     path("projects/<int:project_id>/section-summaries/", api_section_summaries),
     path("projects/<int:project_id>/requirements/", api_requirements),
     path("projects/<int:project_id>/requirements/<int:requirement_id>/", api_requirement_detail),
+    path("projects/<int:project_id>/change-proposals/validate/", api_validate_document_change),
     path("projects/<int:project_id>/change-proposals/", api_change_proposals),
     path("projects/<int:project_id>/change-proposals/status/", api_change_proposal_status),
     path("projects/<int:project_id>/change-proposals/cancel/", api_change_proposal_cancel),

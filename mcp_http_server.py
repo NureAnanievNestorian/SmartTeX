@@ -2600,6 +2600,10 @@ async def propose_document_change(
     SmartTeX creates the hidden staging session, applies patches, validates the
     document graph, compiles, creates the review diff, and returns proposal
     status. Do not call legacy AI-session tools for normal writing changes.
+
+    For complex multi-op edits, call `validate_document_change` first. If it
+    returns `valid: true`, submit the returned `normalized_patch_ops` here; this
+    avoids creating a failed user-visible proposal when line numbers drift.
     """
     payload: dict[str, Any] = {
         "goal": goal,
@@ -2613,6 +2617,38 @@ async def propose_document_change(
     if isinstance(result, dict) and not result.get("error"):
         await _notify_longdoc_updates(ctx, project_id, "overview", "change-proposal")
     return result
+
+
+@mcp.tool
+def validate_document_change(
+        project_id: int,
+        goal: str,
+        patch_ops: list[dict[str, Any]],
+        compile: bool = True,
+        auto_reorder_line_patches: bool = True,
+) -> dict[str, Any]:
+    """Dry-run a complete suggested-change plan without creating a proposal.
+
+    Use this before `propose_document_change` for multi-file or multi-op edits.
+    The server applies all operations in a throwaway staging session, validates
+    the document graph, optionally compiles, returns the diff and diagnostics,
+    then discards the staging session.
+
+    If `auto_reorder_line_patches` is true, line-range edits for the same file
+    may be normalized bottom-up to avoid line-number drift. When validation
+    succeeds, pass the returned `normalized_patch_ops` to
+    `propose_document_change`.
+    """
+    return _call_allow_json_errors(
+        "POST",
+        f"/api/projects/{project_id}/change-proposals/validate/",
+        {
+            "goal": goal,
+            "patch_ops": list(patch_ops or []),
+            "compile": bool(compile),
+            "auto_reorder_line_patches": bool(auto_reorder_line_patches),
+        },
+    )
 
 
 @mcp.tool

@@ -597,6 +597,40 @@ def _serialize_proposal_response(project) -> dict:
     return {"proposal": serialize_change_proposal(get_active_change_proposal(project))}
 
 
+
+@csrf_exempt
+@require_POST
+def api_validate_document_change(request: HttpRequest, project_id: int) -> JsonResponse:
+    from longdoc.proposal_service import validate_document_change
+
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    body = _json_body(request)
+    settings_obj, _ = get_or_create_longdoc_settings(project)
+    if not (settings_obj.enabled and settings_obj.ai_sessions_enabled):
+        return JsonResponse(
+            {
+                "error": "FEATURE_DISABLED",
+                "message": "Suggested changes are disabled for this project.",
+                "suggestion": "Ask the user to enable Long-document mode and Suggested changes in project settings before validating proposal changes.",
+            },
+            status=403,
+        )
+    try:
+        return JsonResponse(
+            validate_document_change(
+                project,
+                goal=str(body.get("goal") or "").strip(),
+                patch_ops=list(body.get("patch_ops") or []),
+                compile_preview=bool(body.get("compile", True)),
+                auto_reorder_line_patches=bool(body.get("auto_reorder_line_patches", True)),
+            )
+        )
+    except Exception as exc:
+        return _proposal_error_response(exc)
+
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def api_change_proposals(request: HttpRequest, project_id: int) -> JsonResponse:
