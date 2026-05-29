@@ -922,7 +922,7 @@ mcp = FastMCP(
     ### Controlled MCP mode write routing
     In controlled mode, direct writes to source files (`.tex`, `.typ`) and to folders on the main branch are rejected with `USE_PROPOSAL_WORKFLOW`. The single correct response is `propose_document_change` with the appropriate patch ops:
     - new source file (any nested path) → `create_new_file` op (parent folders auto-created in staging)
-    - existing source file edit → `update_section` / `replace_text` / `patch_lines` ops
+    - existing source file edit → `update_section` / `replace_text` / `patch_file_lines` ops
     - multiple files → ONE proposal carrying multiple ops, not several proposals and not a ZIP import
     Non-source assets (images, `.bib`, `.cls`, `.sty`) remain creatable directly. If a direct-write tool returns `USE_PROPOSAL_WORKFLOW`, do not look for another tool that bypasses it — the gate is intentional.
     - Changing any imported `.typ` file still requires compile to update PDF.
@@ -2592,10 +2592,47 @@ async def propose_document_change(
     change through this tool instead — do not look for another tool that
     happens to bypass the rejection.
 
-    Supports multi-file changes in a single proposal: pass several patch ops
-    (`create_new_file`, `update_section`, `replace_text`, `patch_lines`, ...)
-    in one call rather than issuing many small proposals or, worse, packing
-    files into `import_project_zip`.
+    Allowed proposal operations (exact `op` strings — anything else is rejected
+    with UNKNOWN_OP and the response will include `allowed_ops`, `did_you_mean`,
+    and `patch_op_schema`):
+
+      • `create_new_file` — required: filename, content.
+        Example:
+          {"op": "create_new_file",
+           "filename": "coursework-v2-template/template/sections/introduction.typ",
+           "content": "= Вступ\\n\\n..."}
+
+      • `patch_file_lines` — required: filename, start_line, end_line, new_content.
+        Use this for line-range edits, and also for full-file rewrites
+        (start_line=1, end_line=<current file length>, new_content=<whole file>).
+        Example:
+          {"op": "patch_file_lines",
+           "filename": "coursework-v2-template/template/main.typ",
+           "start_line": 1, "end_line": 143,
+           "new_content": "..."}
+
+      • `replace_text` — required: filename, old_text, new_text (exact-once match).
+      • `append_to_file` — required: filename, content.
+      • `update_section` — required: filename, section_index, new_content.
+
+      • `include_file` — required: filename (parent file to modify),
+        include_target (path of the file to be included), and EXACTLY ONE of
+        anchor_after or anchor_before. Inserts an `#include` / `\\input`
+        directive into the parent file. It is NOT a declaration that an include
+        already exists. If a `patch_file_lines` op on the same parent already
+        adds the include directive, `include_file` is not required.
+        Example:
+          {"op": "include_file",
+           "filename": "coursework-v2-template/template/main.typ",
+           "include_target": "coursework-v2-template/template/sections/introduction.typ",
+           "anchor_after": "#show: coursework-v2.with("}
+
+    Names like `patch_lines` or `replace_file` are NOT valid here. The server
+    will reject them with UNKNOWN_OP plus a `did_you_mean` suggestion.
+
+    Supports multi-file changes in a single proposal: pass several patch ops in
+    one call rather than issuing many small proposals or packing files into
+    `import_project_zip`.
 
     SmartTeX creates the hidden staging session, applies patches, validates the
     document graph, compiles, creates the review diff, and returns proposal
@@ -2632,12 +2669,22 @@ def validate_document_change(
     Use this before `propose_document_change` for multi-file or multi-op edits.
     The server applies all operations in a throwaway staging session, validates
     the document graph, optionally compiles, returns the diff and diagnostics,
-    then discards the staging session.
+    then discards the staging session. NO user-visible proposal is created on
+    failure — fix the ops based on the returned errors and retry.
+
+    Allowed proposal ops are the same as `propose_document_change`:
+    `create_new_file`, `patch_file_lines`, `replace_text`, `append_to_file`,
+    `update_section`, `include_file`. Anything else is rejected with
+    UNKNOWN_OP; the response includes `allowed_ops`, `did_you_mean`, and a
+    `patch_op_schema` describing required fields per op.
+
+    Obvious typos are normalized here (but NOT in `propose_document_change`):
+    e.g. `patch_lines` → `patch_file_lines`. Every such fix is reported in
+    `normalizations`. Use the returned `normalized_patch_ops` when calling
+    `propose_document_change`.
 
     If `auto_reorder_line_patches` is true, line-range edits for the same file
-    may be normalized bottom-up to avoid line-number drift. When validation
-    succeeds, pass the returned `normalized_patch_ops` to
-    `propose_document_change`.
+    may be normalized bottom-up to avoid line-number drift.
     """
     return _call_allow_json_errors(
         "POST",

@@ -8,16 +8,35 @@ from typing import Any
 
 _TEXTUAL_PATCH_OPS = {"patch_file_lines", "replace_text", "update_section", "append_to_file"}
 _TEXTUAL_CONTENT_KEYS = ("new_content", "content", "new_text")
-_TYPST_INCLUDE_RE = re.compile(r'#(?:include|import)\s+"([^"\n]+)"')
+# Typst: matches both `#include "x"` (word boundary fires between `#` and `i`)
+# and the expression form `include "x"` (e.g. `#let x = include "sections/x.typ"`).
+_TYPST_INCLUDE_RE = re.compile(r'\b(?:include|import)\s+"([^"\n]+)"')
 _LATEX_INCLUDE_RE = re.compile(r'\\(?:input|include|subfile)\s*\{\s*([^}\n]+?)\s*\}')
+
+
+def _strip_line_comment(line: str) -> str:
+    # Typst `//`
+    cut = line.find("//")
+    if cut >= 0:
+        line = line[:cut]
+    # LaTeX `%` (skip escaped \%).
+    i = 0
+    while i < len(line):
+        if line[i] == "%" and (i == 0 or line[i - 1] != "\\"):
+            line = line[:i]
+            break
+        i += 1
+    return line
 
 
 def _extract_include_targets(text: str) -> list[str]:
     if not isinstance(text, str) or not text:
         return []
     matches: list[str] = []
-    matches.extend(_TYPST_INCLUDE_RE.findall(text))
-    matches.extend(_LATEX_INCLUDE_RE.findall(text))
+    for raw_line in text.splitlines():
+        line = _strip_line_comment(raw_line)
+        matches.extend(_TYPST_INCLUDE_RE.findall(line))
+        matches.extend(_LATEX_INCLUDE_RE.findall(line))
     return matches
 
 
@@ -70,6 +89,46 @@ PROPOSAL_PATCH_OPS = {
 }
 SOURCE_EXTENSIONS = {".tex", ".typ"}
 
+# Machine-readable schema for proposal patch ops. Returned in error payloads
+# so the agent can recover deterministically instead of guessing field shapes.
+PATCH_OP_SCHEMA: dict[str, dict[str, Any]] = {
+    "patch_file_lines": {
+        "required": ["op", "filename", "start_line", "end_line", "new_content"],
+        "description": "Replace a contiguous line range in an existing file.",
+    },
+    "replace_text": {
+        "required": ["op", "filename", "old_text", "new_text"],
+        "description": "Exact-once textual replacement in an existing file.",
+    },
+    "append_to_file": {
+        "required": ["op", "filename", "content"],
+        "description": "Append content to EOF (or after anchor_section) of an existing file.",
+    },
+    "update_section": {
+        "required": ["op", "filename", "section_index", "new_content"],
+        "description": "Replace a parsed section by index in an existing source file.",
+    },
+    "create_new_file": {
+        "required": ["op", "filename", "content"],
+        "description": "Create a new file. New source files must also be wired into the document graph in the same proposal.",
+    },
+    "include_file": {
+        "required": ["op", "filename", "include_target", "anchor_after OR anchor_before"],
+        "description": (
+            "Insert an #include / \\input directive for include_target into the parent file `filename` "
+            "at the given anchor. This is NOT a declaration that an include already exists — it modifies "
+            "the parent file. If a patch_file_lines op already adds a #include / \\input directive for "
+            "the new file, include_file is not required."
+        ),
+    },
+}
+
+# Obvious typos / legacy names. Only honored by validate_document_change (not
+# propose_document_change) and always reported in `normalizations`.
+OP_ALIASES: dict[str, str] = {
+    "patch_lines": "patch_file_lines",
+}
+
 
 def _proposal_expire_hours() -> int:
     return int(getattr(settings, "SESSION_EXPIRE_HOURS", getattr(settings, "LONGDOC_SESSION_EXPIRE_HOURS", 72)))
@@ -115,10 +174,97 @@ def _estimate_changed_lines(op: dict[str, Any]) -> int:
     return 0
 
 
-def _normalize_patch_ops(patch_ops: Any) -> list[dict[str, Any]]:
+def _unknown_op_error(op: str) -> SessionWriteError:
+    allowed = sorted(PROPOSAL_PATCH_OPS)
+    candidates = difflib.get_close_matches(op, allowed, n=1, cutoff=0.5)
+    did_you_mean = candidates[0] if candidates else OP_ALIASES.get(op)
+    suggestion = (
+        f"Use one of allowed_ops. Did you mean `{did_you_mean}`?"
+        if did_you_mean
+        else "Use one of allowed_ops. For line-range edits use patch_file_lines; "
+             "for full-file rewrites use patch_file_lines with start_line=1 and end_line=<file length>."
+    )
+    details: dict[str, Any] = {
+        "allowed_ops": allowed,
+        "patch_op_schema": PATCH_OP_SCHEMA,
+    }
+    if did_you_mean:
+        details["did_you_mean"] = did_you_mean
+    return SessionWriteError(
+        "UNKNOWN_OP",
+        f"Unknown proposal operation: {op}",
+        suggestion=suggestion,
+        details=details,
+    )
+
+
+def _validate_include_file_fields(raw: dict[str, Any], idx: int) -> None:
+    """Field-specific validation for include_file BEFORE filename path checks.
+
+    Returns rich machine-readable errors so the agent can fix exactly the wrong
+    field instead of guessing at the op shape.
+    """
+    missing: list[str] = []
+    if not str(raw.get("filename") or "").strip():
+        missing.append("filename")
+    if not str(raw.get("include_target") or "").strip():
+        missing.append("include_target")
+    after = bool(str(raw.get("anchor_after") or "").strip()) if raw.get("anchor_after") is not None else False
+    before = bool(str(raw.get("anchor_before") or "").strip()) if raw.get("anchor_before") is not None else False
+    example = {
+        "op": "include_file",
+        "filename": "main.typ",
+        "include_target": "sections/introduction.typ",
+        "anchor_after": "#show: coursework-v2.with(",
+    }
+    if missing:
+        raise SessionWriteError(
+            "INVALID_INCLUDE_FILE_OP",
+            f"include_file op #{idx} is missing required field(s): {', '.join(missing)}.",
+            suggestion=(
+                "include_file inserts an #include / \\input directive for include_target into the parent "
+                "file `filename`. It is not a declaration that an include already exists."
+            ),
+            details={
+                "missing_fields": missing,
+                "required_fields": ["filename", "include_target", "anchor_after OR anchor_before"],
+                "example": example,
+                "patch_op_schema": {"include_file": PATCH_OP_SCHEMA["include_file"]},
+            },
+        )
+    if after and before:
+        raise SessionWriteError(
+            "INVALID_INCLUDE_ANCHOR",
+            "include_file requires exactly one of anchor_after or anchor_before.",
+            suggestion="Pick a single insertion side and remove the other anchor.",
+            details={
+                "provided": {"anchor_after": True, "anchor_before": True},
+                "required_fields": ["filename", "include_target", "anchor_after OR anchor_before"],
+                "example": example,
+            },
+        )
+    if not after and not before:
+        raise SessionWriteError(
+            "INVALID_INCLUDE_ANCHOR",
+            "include_file requires exactly one of anchor_after or anchor_before.",
+            suggestion="Read the parent file and choose one exact line as the insertion anchor.",
+            details={
+                "provided": {"anchor_after": False, "anchor_before": False},
+                "required_fields": ["filename", "include_target", "anchor_after OR anchor_before"],
+                "example": example,
+            },
+        )
+
+
+def _normalize_patch_ops(
+    patch_ops: Any,
+    *,
+    allow_aliases: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not isinstance(patch_ops, list) or not patch_ops:
         raise SessionWriteError("INVALID_PATCH_OPS", "patch_ops must be a non-empty list.")
     normalized: list[dict[str, Any]] = []
+    normalizations: list[dict[str, Any]] = []
     changed_files: set[str] = set()
     created_source_files: set[str] = set()
     included_files: set[str] = set()
@@ -129,7 +275,26 @@ def _normalize_patch_ops(patch_ops: Any) -> list[dict[str, Any]]:
             raise SessionWriteError("INVALID_PATCH_OP", f"patch_ops[{idx}] must be an object.")
         op = str(raw.get("op") or "").strip()
         if op not in PROPOSAL_PATCH_OPS:
-            raise SessionWriteError("UNKNOWN_OP", f"Unknown proposal operation: {op}")
+            if allow_aliases and op in OP_ALIASES:
+                new_op = OP_ALIASES[op]
+                normalizations.append(
+                    {
+                        "type": "rename_op_alias",
+                        "op_index": idx,
+                        "from": op,
+                        "to": new_op,
+                        "reason": f"Renamed op `{op}` to `{new_op}`.",
+                    }
+                )
+                raw = {**raw, "op": new_op}
+                op = new_op
+            else:
+                raise _unknown_op_error(op)
+        # For include_file, validate fields BEFORE path-normalizing so missing
+        # filename/include_target/anchor produce field-specific errors rather
+        # than the generic INVALID_FILENAME from _safe_session_rel_path.
+        if op == "include_file":
+            _validate_include_file_fields(raw, idx)
         rel = _safe_session_rel_path(str(raw.get("filename") or ""))
         item = {**raw, "filename": rel.as_posix(), "op": op}
         changed_files.add(item["filename"])
@@ -161,22 +326,10 @@ def _normalize_patch_ops(patch_ops: Any) -> list[dict[str, Any]]:
                 created_source_files.add(item["filename"])
 
         if op == "include_file":
+            # Field-level validation already ran in _validate_include_file_fields
+            # before path normalization.
             target = _safe_session_rel_path(str(item.get("include_target") or "")).as_posix()
             item["include_target"] = target
-            after = item.get("anchor_after")
-            before = item.get("anchor_before")
-            if not after and not before:
-                raise SessionWriteError(
-                    "INVALID_INCLUDE_ANCHOR",
-                    "include_file requires either anchor_after or anchor_before, but neither was provided.",
-                    suggestion="Read the parent file with read_file_lines, pick one exact line as the anchor, and set anchor_after (insert after that line) or anchor_before (insert above it).",
-                )
-            if after and before:
-                raise SessionWriteError(
-                    "INVALID_INCLUDE_ANCHOR",
-                    "include_file accepts only one of anchor_after / anchor_before, but both were provided.",
-                    suggestion="Pick a single insertion side and remove the other anchor.",
-                )
             included_files.add(target)
 
         normalized.append(item)
@@ -212,12 +365,30 @@ def _normalize_patch_ops(patch_ops: Any) -> list[dict[str, Any]]:
     missing_includes = sorted(created_source_files - included_files)
     if missing_includes:
         fname = missing_includes[0]
+        detected = sorted(included_files)
         raise SessionWriteError(
             "SOURCE_FILE_NOT_INCLUDED",
-            f"New source file {fname} must be included by an include_file operation in the same proposal.",
-            suggestion="Add include_file with an exact anchor, or patch an existing compiled source file instead.",
+            f"New source file {fname} must be included by the same proposal.",
+            suggestion=(
+                "Patch an existing compiled source file to add a #include / \\input directive for the new "
+                "file, or add an include_file op with filename, include_target, and exactly one of "
+                "anchor_after / anchor_before."
+            ),
+            details={
+                "missing_includes": missing_includes,
+                "detected_includes": detected,
+                "hint": (
+                    "Typst expression includes such as `#let x = include \"file.typ\"` are recognized by "
+                    "the include detector — make sure the path inside the quotes matches the new file's "
+                    "path relative to the parent file."
+                ),
+                "patch_op_schema": {
+                    "include_file": PATCH_OP_SCHEMA["include_file"],
+                    "patch_file_lines": PATCH_OP_SCHEMA["patch_file_lines"],
+                },
+            },
         )
-    return normalized
+    return normalized, normalizations
 
 
 def _include_directive(project, include_target: str) -> str:
@@ -366,8 +537,9 @@ def propose_document_change(
     user = project.owner
     # Deterministic, cheap validation first — avoid burning an LLM call on a
     # proposal that will be rejected by static limits (file count, line count,
-    # per-op size, unknown ops, missing includes).
-    normalized_ops = _normalize_patch_ops(patch_ops)
+    # per-op size, unknown ops, missing includes). propose_document_change does
+    # NOT honor op aliases; the agent must submit the canonical op name.
+    normalized_ops, _normalizations = _normalize_patch_ops(patch_ops, allow_aliases=False)
     validate_do_not_touch(project, normalized_ops)
 
     pre_policy = ProposalPolicyEngine.pre_proposal_check(user, project, str(goal or ""))
@@ -678,11 +850,12 @@ def validate_document_change(
         )
 
     user = project.owner
-    normalized_ops = _normalize_patch_ops(patch_ops)
-    normalized_ops, normalizations = _normalize_patch_line_order(
+    normalized_ops, normalizations = _normalize_patch_ops(patch_ops, allow_aliases=True)
+    normalized_ops, reorder_normalizations = _normalize_patch_line_order(
         normalized_ops,
         auto_reorder_line_patches=bool(auto_reorder_line_patches),
     )
+    normalizations = list(normalizations) + list(reorder_normalizations)
     validate_do_not_touch(project, normalized_ops)
 
     pre_policy = ProposalPolicyEngine.pre_proposal_check(user, project, str(goal or ""))
@@ -800,7 +973,8 @@ def cancel_change_proposal(proposal: ChangeProposal) -> ChangeProposal:
 
 
 def preview_patch(project, op: dict[str, Any]) -> dict[str, Any]:
-    normalized = _normalize_patch_ops([op])[0]
+    normalized_ops, _ = _normalize_patch_ops([op])
+    normalized = normalized_ops[0]
     filename = normalized["filename"]
     from projects.services import project_dir
 
