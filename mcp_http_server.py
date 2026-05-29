@@ -2356,7 +2356,19 @@ async def import_project_zip(
 
     Pass the ZIP file contents as a base64-encoded string in `zip_base64`.
     Returns the list of files that were created or updated.
+
+    DISABLED in controlled MCP mode — returns USE_PROPOSAL_WORKFLOW. Under
+    controlled mode, all source-file additions must go through
+    `propose_document_change`; if a user genuinely needs to import an external
+    archive, they should do it via the project UI or temporarily disable
+    controlled mode.
     """
+    if _project_controlled_mode_enabled(project_id):
+        return _rejection(
+            "USE_PROPOSAL_WORKFLOW",
+            "ZIP import to the main branch is disabled in controlled MCP mode.",
+            "Submit a propose_document_change with create_new_file ops for each file, or import the archive via the project UI.",
+        )
     import base64
     try:
         zip_bytes = base64.b64decode(zip_base64)
