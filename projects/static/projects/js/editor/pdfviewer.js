@@ -1,7 +1,7 @@
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
-import { jumpToLine } from "./cm.js?v=20260529-ui7";
+import { jumpToLine } from "./cm.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";

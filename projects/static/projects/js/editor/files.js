@@ -4,7 +4,7 @@ import {
   escHtml, fmtBytes, editorWrapEl, assetView, assetBox,
   setSaveHint, updateEditorTab,
 } from "./ui.js";
-import { setContent, switchLanguage, focusEditor, refreshLayout } from "./cm.js?v=20260529-ui7";
+import { setContent, switchLanguage, focusEditor, refreshLayout } from "./cm.js";
 
 // selectFile is set from main.js to avoid circular dep at init time
 let _selectFile = null;
@@ -285,14 +285,21 @@ export async function moveFileToFolder(sourcePath, targetFolderPath) {
 export async function setMainFile(fileName) {
   const name = String(fileName || "").trim();
   if (!name || name === s.mainFileName) return;
+  const prevMain = s.mainFileName;
   await api(`/api/projects/${cfg.projectId}/`, {
     method: "PATCH",
     body: JSON.stringify({ main_file: name }),
   });
   s.mainFileName = name;
-  s.selectedFile = { name, type: "main", is_text: true };
+  if (s.projectMeta) s.projectMeta.main_file_name = name;
+  if (s.selectedFile.name === prevMain) {
+    s.selectedFile = { ...s.selectedFile, type: "asset", is_text: true };
+  }
+  if (s.selectedFile.name === name) {
+    s.selectedFile = { ...s.selectedFile, type: "main", is_text: true };
+  }
   const labelEl = document.getElementById("current-file-label");
-  if (labelEl) labelEl.textContent = name;
+  if (labelEl) labelEl.textContent = s.selectedFile.name || s.mainFileName;
   setSaveHint(`Main file: ${name}`, "saved");
 }
 

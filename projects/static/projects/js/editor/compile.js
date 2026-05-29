@@ -1,6 +1,6 @@
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
-import { getContent, saveTabState, replaceTabContent } from "./cm.js?v=20260529-ui7";
+import { getContent, saveTabState, replaceTabContent } from "./cm.js";
 import { utf8ByteSize } from "./files.js";
 import {
   setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics,
@@ -58,36 +58,47 @@ export async function saveCurrentFile() {
     setSaveHint("Read-only: AI session active", "error");
     return;
   }
-  if (s.saving || !s.selectedFile.is_text || s.selectedFile.is_dir) return;
+  const targetName = String(s.activeTabName || s.selectedFile?.name || "");
+  if (!targetName) return;
+  const targetFile = targetName === s.mainFileName
+    ? { name: targetName, type: "main", is_text: true, is_dir: false }
+    : (
+      s.projectFiles.find(item => item.name === targetName)
+      || (s.selectedFile?.name === targetName ? s.selectedFile : null)
+      || { name: targetName, type: "asset", is_text: true, is_dir: false }
+    );
+  if (s.saving || !targetFile.is_text || targetFile.is_dir) return;
   s.saving = true;
   setSaveHint("Збереження…", "saving");
   try {
     const content = getContent();
-    if (s.selectedFile.name === s.mainFileName) {
+    if (targetName === s.mainFileName) {
       await api(`/api/projects/${cfg.projectId}/file/`, {
         method: "PUT",
         body: JSON.stringify({ content }),
       });
       s.mainFileContent = content;
     } else {
-      await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/`, {
+      await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(targetName)}/content/`, {
         method: "PUT",
         body: JSON.stringify({ content }),
       });
       const savedSize = utf8ByteSize(content);
-      s.selectedFile   = { ...s.selectedFile, size: savedSize };
+      if (s.selectedFile?.name === targetName) {
+        s.selectedFile = { ...s.selectedFile, size: savedSize };
+      }
       s.projectFiles   = s.projectFiles.map(item =>
-        item.name === s.selectedFile.name ? { ...item, size: savedSize } : item
+        item.name === targetName ? { ...item, size: savedSize } : item
       );
     }
-    saveTabState(s.selectedFile.name);
+    saveTabState(targetName);
     s.hasUnsavedChanges = false;
     setSaveHint("Збережено", "saved");
     setCompileState("out_of_date", "pending");
-    import("./main.js?v=20260529-ui7").then(m => m.renderEditorTabs?.()).catch(() => {});
+    import("./app.js").then(m => m.renderEditorTabs?.()).catch(() => {});
     const { renderFileList } = await import("./files.js");
     renderFileList();
-    import("./main.js?v=20260529-ui7").then(m => m.loadVersions(true)).catch(() => {});
+    import("./app.js").then(m => m.loadVersions(true)).catch(() => {});
   } catch (err) {
     setSaveHint(`Помилка: ${err.message}`, "error");
   } finally {
@@ -198,7 +209,7 @@ export async function pollUntilCompileDone(maxMs = 45000, stepMs = 600) {
 async function handleMcpUpdate() {
   setSaveHint("Проєкт оновлено через MCP. Оновлюємо…", "saving");
   try {
-    const { loadMainFile, loadFiles, loadVersions } = await import("./main.js?v=20260529-ui7");
+    const { loadMainFile, loadFiles, loadVersions } = await import("./app.js");
     await loadMainFile();
     // Refresh non-main text file if currently open
     if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
@@ -220,22 +231,27 @@ async function handleProjectUpdate(source = "web") {
   const label = source === "mcp" ? "MCP" : "Проєкт";
   setSaveHint(`${label}: оновлюємо стан…`, "saving");
   try {
-    const main = await import("./main.js?v=20260529-ui7");
+    const main = await import("./app.js");
     await main.loadProjectMeta();
-    await main.loadMainFile();
-    if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
-      try {
-        const params = new URLSearchParams({ include_text: "1" });
-        const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
-        replaceTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
-        s.hasUnsavedChanges = false;
-      } catch (_) {}
+    // Only reload file content from server when there are no local edits in flight.
+    // replaceTabContent is now a no-op when content is identical, so the cursor
+    // never jumps in the normal post-compile case where content is in sync.
+    if (!s.hasUnsavedChanges) {
+      await main.loadMainFile();
+      if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
+        try {
+          const params = new URLSearchParams({ include_text: "1" });
+          const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
+          replaceTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
+          s.hasUnsavedChanges = false;
+        } catch (_) {}
+      }
     }
     await Promise.all([
       main.loadFiles(),
       main.loadSections(),
       main.loadVersions(true),
-      import("./longdoc.js?v=20260529-ui7").then(m => m.loadLongdocData()),
+      import("./longdoc.js").then(m => m.loadLongdocData()),
     ]);
     if (source === "mcp") {
       await pollUntilCompileDone();
@@ -272,8 +288,8 @@ export function connectProjectUpdatesSse() {
       return;
     }
     if (data.type === "proposal_updated") {
-      import("./longdoc.js?v=20260529-ui7").then(m => m.loadLongdocData?.()).catch(() => {});
-      import("./main.js?v=20260529-ui7").then(m => m.loadProjectMeta?.()).catch(() => {});
+      import("./longdoc.js").then(m => m.loadLongdocData?.()).catch(() => {});
+      import("./app.js").then(m => m.loadProjectMeta?.()).catch(() => {});
       return;
     }
     if (data.type !== "project_updated") return;

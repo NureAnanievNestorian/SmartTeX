@@ -183,7 +183,7 @@ export async function rollbackVersion(vid) {
       body: JSON.stringify({ summary: `Rollback to version ${vnum}` }),
     });
     closeDiffModal();
-    const { loadMainFile, loadSections, loadVersions } = await import("./main.js?v=20260529-ui7");
+    const { loadMainFile, loadSections, loadVersions } = await import("./app.js");
     await loadMainFile();
     await Promise.all([loadSections(), loadVersions(true)]);
     setSaveHint(`Відновлено до версії #${vnum}`, "saved");
@@ -200,11 +200,11 @@ export function initVersionsPanel() {
   });
   versionsListEl?.addEventListener("scroll", () => {
     const nearBottom = versionsListEl.scrollTop + versionsListEl.clientHeight >= versionsListEl.scrollHeight - 120;
-    if (nearBottom) import("./main.js?v=20260529-ui7").then(m => m.loadVersions(false)).catch(() => {});
+    if (nearBottom) import("./app.js").then(m => m.loadVersions(false)).catch(() => {});
   });
 
   historyFilterBtn?.addEventListener("click", async () => {
-    const { loadVersions } = await import("./main.js?v=20260529-ui7");
+    const { loadVersions } = await import("./app.js");
     if (s.versionsFileFilter) {
       s.versionsFileFilter = null;
     } else {
