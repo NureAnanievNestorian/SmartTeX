@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
@@ -8,7 +9,7 @@ from django.utils import timezone
 
 from projects.models import Project
 
-from .task_types import FEATURE_KEYS, TASK_TYPES
+from .task_types import TASK_TYPES
 
 
 def next_utc_midnight():
@@ -24,65 +25,66 @@ def next_month_utc():
     return timezone.datetime(year, month, 1, tzinfo=timezone.UTC)
 
 
-class UserSmallModelAccess(models.Model):
+class SmallModelConfig(models.Model):
+    """Central registry of provider+model pairs: pricing and runtime config."""
+
     class Provider(models.TextChoices):
         GEMINI = "gemini", "Gemini"
         DEEPSEEK = "deepseek", "DeepSeek"
-        MOCK = "mock", "Mock"
         OPENAI = "openai", "OpenAI"
+        MOCK = "mock", "Mock"
 
+    provider = models.CharField(max_length=30, choices=Provider.choices)
+    model_name = models.CharField(max_length=100)
+    input_price_per_million_tokens = models.DecimalField(max_digits=12, decimal_places=6, default=Decimal("0"))
+    output_price_per_million_tokens = models.DecimalField(max_digits=12, decimal_places=6, default=Decimal("0"))
+    provider_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Runtime config: timeout_seconds, max_output_tokens, temperature, top_p, etc.",
+    )
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("provider", "model_name")]
+
+    def __str__(self) -> str:
+        return f"{self.provider}/{self.model_name}"
+
+
+class UserSmallModelAccess(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="small_model_access")
     enabled = models.BooleanField(default=False)
-    provider = models.CharField(max_length=30, choices=Provider.choices, default=Provider.GEMINI)
-    model_name = models.CharField(max_length=100, blank=True)
+    model_config = models.ForeignKey(
+        SmallModelConfig,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="access_records",
+    )
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def has_feature(self, feature_key: str) -> bool:
-        if not self.enabled:
-            return False
-        return self.feature_grants.filter(feature_key=feature_key).exists()
+        return self.enabled
 
     def __str__(self) -> str:
-        return f"{self.user_id}:{self.provider}:{'enabled' if self.enabled else 'disabled'}"
-
-
-class UserSmallModelFeatureGrant(models.Model):
-    access = models.ForeignKey(UserSmallModelAccess, on_delete=models.CASCADE, related_name="feature_grants")
-    feature_key = models.CharField(max_length=50, choices=[(key, key) for key in FEATURE_KEYS])
-    granted_at = models.DateTimeField(auto_now_add=True)
-    granted_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="small_model_feature_grants_made",
-    )
-
-    class Meta:
-        unique_together = [("access", "feature_key")]
-
-    def __str__(self) -> str:
-        return f"{self.access_id}:{self.feature_key}"
+        label = str(self.model_config) if self.model_config_id else "no config"
+        return f"{self.user_id}:{label}:{'enabled' if self.enabled else 'disabled'}"
 
 
 class UserSmallModelQuota(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="small_model_quota")
-    daily_request_limit = models.PositiveIntegerField(default=50)
-    monthly_request_limit = models.PositiveIntegerField(default=500)
-    daily_token_limit = models.PositiveIntegerField(default=100_000)
-    monthly_token_limit = models.PositiveIntegerField(default=1_000_000)
-    daily_requests_used = models.PositiveIntegerField(default=0)
-    monthly_requests_used = models.PositiveIntegerField(default=0)
-    daily_tokens_used = models.PositiveIntegerField(default=0)
-    monthly_tokens_used = models.PositiveIntegerField(default=0)
-    daily_reset_at = models.DateTimeField(default=next_utc_midnight)
-    monthly_reset_at = models.DateTimeField(default=next_month_utc)
+    credits_limit = models.DecimalField(max_digits=10, decimal_places=6, default=Decimal("1.000000"))
+    credits_used = models.DecimalField(max_digits=10, decimal_places=6, default=Decimal("0"))
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:
-        return f"{self.user_id}: {self.daily_requests_used}/{self.daily_request_limit} today"
+        return f"{self.user_id}: ${self.credits_used}/{self.credits_limit}"
 
 
 class SmallModelUsageLog(models.Model):

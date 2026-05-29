@@ -41,12 +41,15 @@ class SmallModelCallMixin:
         input_payload: dict[str, Any],
         response_schema: dict[str, Any],
     ) -> SmallModelResponse:
-        access = UserSmallModelAccess.objects.filter(user=user).first()
-        provider_name = access.provider if access else None
-        provider = get_provider(provider_name)
+        access = UserSmallModelAccess.objects.select_related("model_config").filter(user=user).first()
+        cfg = access.model_config if access else None
+        provider_name = cfg.provider if cfg else None
+        model_name = cfg.model_name if cfg else None
+        provider_config = dict(cfg.provider_config) if cfg and cfg.provider_config else {}
+        provider = get_provider(provider_name, model_name=model_name, config=provider_config)
         effective_provider_name = provider_name or getattr(provider, "provider_name", "")
-        provider_prefix = str(effective_provider_name or "gemini").upper()
-        provider_model_name = getattr(provider, "model_name", "") or getattr(settings, f"{provider_prefix}_SMALL_MODEL_NAME", "")
+        provider_model_name = getattr(provider, "model_name", "")
+        timeout = int(provider_config.get("timeout_seconds", 15))
         cache_ttl = int(getattr(settings, "SMALL_MODEL_CACHE_TTL_SECONDS", 300))
         cache_key = self._cache_key(
             task_type=self.task_type,
@@ -69,19 +72,10 @@ class SmallModelCallMixin:
                 error_code="QUOTA_EXCEEDED",
                 error_message=quota.reason,
             )
-        if not SmallModelQuotaService.reserve_request(user):
-            return SmallModelResponse(
-                success=False,
-                provider_name="quota",
-                model_name="",
-                error_code="QUOTA_EXCEEDED",
-                error_message="quota reservation failed",
-            )
         log_prompts = bool(getattr(settings, "SMALL_MODEL_LOG_PROMPTS", False))
         response: SmallModelResponse | None = None
         try:
             try:
-                timeout = int(getattr(settings, f"{provider_prefix}_TIMEOUT_SECONDS", 15))
                 response = provider.generate_json(
                     task_type=self.task_type,
                     system_instruction=system_instruction,
@@ -106,12 +100,12 @@ class SmallModelCallMixin:
             if response is not None:
                 if response.success and cache_ttl > 0:
                     cache.set(cache_key, self._serialize_response(response), cache_ttl)
-                elif not response.success and response.input_tokens_estimate <= 0 and response.output_tokens_estimate <= 0:
-                    SmallModelQuotaService.release_request(user)
                 SmallModelQuotaService.consume_tokens(
                     user,
                     response.input_tokens_estimate,
                     response.output_tokens_estimate,
+                    provider=effective_provider_name,
+                    model_name=str(provider_model_name),
                 )
                 if log_prompts:
                     try:

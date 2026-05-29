@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
-from django.db import transaction
 from django.db.models import F
-from django.utils import timezone
 
-from small_model.models import UserSmallModelAccess, UserSmallModelQuota, next_month_utc, next_utc_midnight
+from small_model.models import SmallModelConfig, UserSmallModelAccess, UserSmallModelQuota
 
 
 @dataclass(slots=True)
 class QuotaCheckResult:
     quota_ok: bool
     reason: str | None = None
-    requests_remaining_today: int = 0
-    tokens_remaining_today: int = 0
+    credits_remaining: Decimal = Decimal("0")
+    credits_used: Decimal = Decimal("0")
+    credits_limit: Decimal = Decimal("0")
 
 
 class SmallModelQuotaService:
@@ -24,86 +24,40 @@ class SmallModelQuotaService:
         quota = UserSmallModelQuota.objects.filter(user=user).first()
         if access is None or quota is None:
             return QuotaCheckResult(False, "small_model_access_disabled")
-        SmallModelQuotaService._reset_if_due(quota)
-        if quota.daily_requests_used >= quota.daily_request_limit:
-            return QuotaCheckResult(False, "daily_request_limit_exceeded")
-        if quota.monthly_requests_used >= quota.monthly_request_limit:
-            return QuotaCheckResult(False, "monthly_request_limit_exceeded")
-        if quota.daily_tokens_used >= quota.daily_token_limit:
-            return QuotaCheckResult(False, "daily_token_limit_exceeded")
-        if quota.monthly_tokens_used >= quota.monthly_token_limit:
-            return QuotaCheckResult(False, "monthly_token_limit_exceeded")
+        if quota.credits_used >= quota.credits_limit:
+            return QuotaCheckResult(
+                False,
+                "credits_limit_exceeded",
+                credits_remaining=Decimal("0"),
+                credits_used=quota.credits_used,
+                credits_limit=quota.credits_limit,
+            )
+        remaining = max(Decimal("0"), quota.credits_limit - quota.credits_used)
         return QuotaCheckResult(
             True,
             None,
-            max(0, quota.daily_request_limit - quota.daily_requests_used),
-            max(0, quota.daily_token_limit - quota.daily_tokens_used),
+            credits_remaining=remaining,
+            credits_used=quota.credits_used,
+            credits_limit=quota.credits_limit,
         )
 
     @staticmethod
-    def reserve_request(user) -> bool:
-        with transaction.atomic():
-            quota = UserSmallModelQuota.objects.select_for_update().filter(user=user).first()
-            if quota is None:
-                return False
-            SmallModelQuotaService._reset_if_due(quota)
-            if (
-                quota.daily_requests_used >= quota.daily_request_limit
-                or quota.monthly_requests_used >= quota.monthly_request_limit
-            ):
-                return False
-            UserSmallModelQuota.objects.filter(pk=quota.pk).update(
-                daily_requests_used=F("daily_requests_used") + 1,
-                monthly_requests_used=F("monthly_requests_used") + 1,
+    def get_cost(provider: str, model_name: str, input_tokens: int, output_tokens: int) -> Decimal:
+        cfg = SmallModelConfig.objects.filter(provider=provider, model_name=model_name, is_active=True).first()
+        if cfg is None:
+            return Decimal("0")
+        input_cost = Decimal(max(0, int(input_tokens or 0))) * cfg.input_price_per_million_tokens / Decimal("1000000")
+        output_cost = Decimal(max(0, int(output_tokens or 0))) * cfg.output_price_per_million_tokens / Decimal("1000000")
+        return input_cost + output_cost
+
+    @staticmethod
+    def consume_tokens(user, input_tokens: int, output_tokens: int, provider: str = "", model_name: str = "") -> None:
+        cost = SmallModelQuotaService.get_cost(provider, model_name, input_tokens, output_tokens)
+        if cost > 0:
+            UserSmallModelQuota.objects.filter(user=user).update(
+                credits_used=F("credits_used") + cost,
             )
-            return True
 
     @staticmethod
-    def consume_tokens(user, input_tokens: int, output_tokens: int) -> None:
-        total = max(0, int(input_tokens or 0)) + max(0, int(output_tokens or 0))
-        if total <= 0:
-            return
-        UserSmallModelQuota.objects.filter(user=user).update(
-            daily_tokens_used=F("daily_tokens_used") + total,
-            monthly_tokens_used=F("monthly_tokens_used") + total,
-        )
-
-    @staticmethod
-    def release_request(user) -> None:
-        UserSmallModelQuota.objects.filter(user=user, daily_requests_used__gt=0, monthly_requests_used__gt=0).update(
-            daily_requests_used=F("daily_requests_used") - 1,
-            monthly_requests_used=F("monthly_requests_used") - 1,
-        )
-
-    @staticmethod
-    def reset_daily_quota(user) -> None:
-        UserSmallModelQuota.objects.filter(user=user).update(
-            daily_requests_used=0,
-            daily_tokens_used=0,
-            daily_reset_at=next_utc_midnight(),
-        )
-
-    @staticmethod
-    def reset_monthly_quota(user) -> None:
-        UserSmallModelQuota.objects.filter(user=user).update(
-            monthly_requests_used=0,
-            monthly_tokens_used=0,
-            monthly_reset_at=next_month_utc(),
-        )
-
-    @staticmethod
-    def _reset_if_due(quota: UserSmallModelQuota) -> None:
-        now = timezone.now()
-        fields: list[str] = []
-        if quota.daily_reset_at <= now:
-            quota.daily_requests_used = 0
-            quota.daily_tokens_used = 0
-            quota.daily_reset_at = next_utc_midnight()
-            fields += ["daily_requests_used", "daily_tokens_used", "daily_reset_at"]
-        if quota.monthly_reset_at <= now:
-            quota.monthly_requests_used = 0
-            quota.monthly_tokens_used = 0
-            quota.monthly_reset_at = next_month_utc()
-            fields += ["monthly_requests_used", "monthly_tokens_used", "monthly_reset_at"]
-        if fields:
-            quota.save(update_fields=[*fields, "updated_at"])
+    def reset_credits(user) -> None:
+        UserSmallModelQuota.objects.filter(user=user).update(credits_used=Decimal("0"))

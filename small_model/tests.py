@@ -17,7 +17,7 @@ from longdoc.session_service import SessionWriteError
 from longdoc.proposal_service import serialize_change_proposal
 
 from .deepseek_provider import DeepSeekProvider
-from .models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelFeatureGrant, UserSmallModelQuota
+from .models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from .gemini_provider import GeminiProvider
 from .provider import SmallModelResponse
 from .registry import get_provider
@@ -79,9 +79,8 @@ class SmallModelControlLayerTests(TestCase):
 
         self.assertIsInstance(provider, DeepSeekProvider)
 
-    @override_settings(DEEPSEEK_TEMPERATURE=0.1, DEEPSEEK_MAX_OUTPUT_TOKENS=256, DEEPSEEK_THINKING_TYPE="disabled")
     def test_deepseek_provider_parses_chat_completion_json(self) -> None:
-        provider = DeepSeekProvider(api_key="test-key", model_name="deepseek-v4-flash")
+        provider = DeepSeekProvider(api_key="test-key", model_name="deepseek-v4-flash", config={"temperature": 0.1, "max_output_tokens": 256, "thinking_type": "disabled"})
         response_body = json_bytes({
             "model": "deepseek-v4-flash",
             "choices": [{"message": {"content": '{"risk_level":"low","recommendation":"allow"}'}}],
@@ -143,8 +142,7 @@ class SmallModelControlLayerTests(TestCase):
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_reviewer_enabled_rejects_over_budget_when_provider_unavailable(self) -> None:
-        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key=FEATURE_DIFF_SAFETY_REVIEWER)
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
             project=self.project,
@@ -265,8 +263,7 @@ class SmallModelControlLayerTests(TestCase):
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_circuit_breaker_provider_failure_tracks_unavailable_streak(self) -> None:
-        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key="circuit_breaker")
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
             project=self.project,
@@ -287,8 +284,7 @@ class SmallModelControlLayerTests(TestCase):
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_pre_proposal_uses_single_provider_call(self) -> None:
-        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key="edit_intent_classifier")
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
             project=self.project,
@@ -335,8 +331,7 @@ class SmallModelControlLayerTests(TestCase):
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_compile_triage_skips_provider_for_obvious_log(self) -> None:
-        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key="compile_log_triage")
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
             project=self.project,
@@ -554,8 +549,7 @@ class SmclEnumValidationTests(TestCase):
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_provider_returning_invalid_json_uses_fallback(self) -> None:
-        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key=FEATURE_EDIT_INTENT_CLASSIFIER)
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
             project=self.project,
@@ -574,8 +568,7 @@ class SmclEnumValidationTests(TestCase):
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_provider_returning_invalid_edit_mode_uses_fallback(self) -> None:
-        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key=FEATURE_EDIT_INTENT_CLASSIFIER)
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
             project=self.project,
@@ -626,8 +619,7 @@ class SmclEnumValidationTests(TestCase):
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_pre_proposal_returns_candidate_files_and_read_plan(self) -> None:
-        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True, provider="mock")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key=FEATURE_EDIT_INTENT_CLASSIFIER)
+        access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
             project=self.project,

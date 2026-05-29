@@ -161,10 +161,10 @@ def _project_payload(project: Project, user=None) -> dict:
         },
         "small_model": {
             "enabled": bool(small_model_settings and small_model_settings.small_model_control_enabled),
+            "user_has_access": bool(small_model_access),
             "quota_ok": bool(quota.quota_ok) if quota is not None else True,
             "quota_reason": quota_reason,
-            "requests_remaining_today": quota.requests_remaining_today if quota is not None else 0,
-            "tokens_remaining_today": quota.tokens_remaining_today if quota is not None else 0,
+            "credits_remaining": float(quota.credits_remaining) if quota is not None else 0,
             "quota_warning_visible": quota_warning_visible,
         },
         "github": {

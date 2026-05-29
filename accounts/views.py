@@ -93,32 +93,30 @@ def _post_login_redirect(request: HttpRequest, user) -> str:
 
 
 def _small_model_profile_payload(user) -> dict:
+    from decimal import Decimal
     from small_model.models import UserSmallModelAccess, UserSmallModelQuota
     from small_model.services.quota_service import SmallModelQuotaService
 
-    access = UserSmallModelAccess.objects.filter(user=user).first()
+    access = UserSmallModelAccess.objects.select_related("model_config").filter(user=user).first()
     quota = UserSmallModelQuota.objects.filter(user=user).first()
     quota_check = SmallModelQuotaService.check_quota(user)
+
+    cfg = access.model_config if access else None
+    credits_limit = quota.credits_limit if quota else Decimal("0")
+    credits_used = quota.credits_used if quota else Decimal("0")
+    credits_pct = int(min(100, float(credits_used / credits_limit * 100) if credits_limit > 0 else 0))
+
     return {
         "has_access_record": access is not None,
         "enabled": bool(access and access.enabled),
-        "provider": access.provider if access else "",
-        "model_name": access.model_name if access else "",
-        "feature_keys": list(access.feature_grants.values_list("feature_key", flat=True)) if access else [],
+        "provider": cfg.provider if cfg else "",
+        "model_name": cfg.model_name if cfg else "",
         "quota_ok": quota_check.quota_ok,
         "quota_reason": quota_check.reason or "",
-        "requests_remaining_today": quota_check.requests_remaining_today,
-        "tokens_remaining_today": quota_check.tokens_remaining_today,
-        "daily_request_limit": quota.daily_request_limit if quota else 0,
-        "monthly_request_limit": quota.monthly_request_limit if quota else 0,
-        "daily_token_limit": quota.daily_token_limit if quota else 0,
-        "monthly_token_limit": quota.monthly_token_limit if quota else 0,
-        "daily_requests_used": quota.daily_requests_used if quota else 0,
-        "monthly_requests_used": quota.monthly_requests_used if quota else 0,
-        "daily_tokens_used": quota.daily_tokens_used if quota else 0,
-        "monthly_tokens_used": quota.monthly_tokens_used if quota else 0,
-        "daily_reset_at": quota.daily_reset_at if quota else None,
-        "monthly_reset_at": quota.monthly_reset_at if quota else None,
+        "credits_limit": f"{float(credits_limit):.4f}",
+        "credits_used": f"{float(credits_used):.4f}",
+        "credits_remaining": f"{float(quota_check.credits_remaining):.4f}",
+        "credits_used_pct": credits_pct,
     }
 
 

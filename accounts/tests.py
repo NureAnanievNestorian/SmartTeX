@@ -6,7 +6,7 @@ from django.urls import reverse
 
 from accounts.email_verification import ensure_unverified_state, mark_user_email_verified
 from accounts.models import OAuthClient
-from small_model.models import UserSmallModelAccess, UserSmallModelFeatureGrant, UserSmallModelQuota
+from small_model.models import SmallModelConfig, UserSmallModelAccess, UserSmallModelQuota
 
 
 class OAuthAuthorizeVerificationGateTests(TestCase):
@@ -131,23 +131,18 @@ class ProfileViewTests(TestCase):
     def test_profile_shows_ai_limits_for_small_model_user(self):
         user = User.objects.create_user(username="profile-user", email="profile@example.com", password="secret123")
         self.client.force_login(user)
-        access = UserSmallModelAccess.objects.create(user=user, enabled=True, provider="gemini", model_name="gemini-2.5-flash")
-        UserSmallModelFeatureGrant.objects.create(access=access, feature_key="diff_safety_reviewer")
+        model_cfg = SmallModelConfig.objects.create(provider="gemini", model_name="gemini-2.5-flash")
+        access = UserSmallModelAccess.objects.create(user=user, enabled=True, model_config=model_cfg)
+        from decimal import Decimal
         UserSmallModelQuota.objects.create(
             user=user,
-            daily_request_limit=50,
-            daily_requests_used=5,
-            daily_token_limit=1000,
-            daily_tokens_used=100,
-            monthly_request_limit=500,
-            monthly_requests_used=25,
-            monthly_token_limit=10000,
-            monthly_tokens_used=900,
+            credits_limit=Decimal("1.000000"),
+            credits_used=Decimal("0.250000"),
         )
 
         response = self.client.get(reverse("profile"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "AI Limits")
+        self.assertContains(response, "AI Credits")
         self.assertContains(response, "gemini-2.5-flash")
-        self.assertContains(response, "5 / 50")
+        self.assertContains(response, "0.7500")

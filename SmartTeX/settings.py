@@ -51,7 +51,7 @@ INSTALLED_APPS = [
     'projects',
     'longdoc',
     'mcp',
-    'small_model.apps.SmallModelConfig',
+    'small_model.apps.SmallModelAppConfig',
 ]
 
 MIDDLEWARE = [
@@ -246,19 +246,7 @@ MCP_READ_BUDGET_HARD = _env_bool("MCP_READ_BUDGET_HARD", False)
 MCP_MAX_SEARCH_RESULTS = int(os.getenv("MCP_MAX_SEARCH_RESULTS", "30"))
 
 SMALL_MODEL_FEATURE_ENABLED = _env_bool("SMALL_MODEL_FEATURE_ENABLED", False)
-SMALL_MODEL_PROVIDER = os.getenv("SMALL_MODEL_PROVIDER", "mock")
 SMALL_MODEL_LOG_PROMPTS = _env_bool("SMALL_MODEL_LOG_PROMPTS", False)
+SMALL_MODEL_CACHE_TTL_SECONDS = int(os.getenv("SMALL_MODEL_CACHE_TTL_SECONDS", "300"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_SMALL_MODEL_NAME = os.getenv("GEMINI_SMALL_MODEL_NAME", "gemini-2.0-flash-lite")
-GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "15"))
-GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "1024"))
-GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0"))
-GEMINI_TOP_P = None
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_SMALL_MODEL_NAME = os.getenv("DEEPSEEK_SMALL_MODEL_NAME", "deepseek-v4-flash")
-DEEPSEEK_TIMEOUT_SECONDS = int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "15"))
-DEEPSEEK_MAX_OUTPUT_TOKENS = int(os.getenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "1024"))
-DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", "0"))
-DEEPSEEK_TOP_P = None
-DEEPSEEK_THINKING_TYPE = os.getenv("DEEPSEEK_THINKING_TYPE", "disabled").strip().lower() or "disabled"
-DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "").strip().lower()

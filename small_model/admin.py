@@ -1,44 +1,40 @@
+from decimal import Decimal
+
 from django.contrib import admin
 
 from .models import (
     ProjectSmallModelSettings,
+    SmallModelConfig,
     SmallModelUsageLog,
     UserSmallModelAccess,
-    UserSmallModelFeatureGrant,
     UserSmallModelQuota,
-    next_month_utc,
-    next_utc_midnight,
 )
-
-
-class UserSmallModelFeatureGrantInline(admin.TabularInline):
-    model = UserSmallModelFeatureGrant
-    extra = 0
 
 
 @admin.register(UserSmallModelAccess)
 class UserSmallModelAccessAdmin(admin.ModelAdmin):
-    list_display = ("user", "enabled", "provider", "model_name", "updated_at")
-    list_filter = ("enabled", "provider")
+    list_display = ("user", "enabled", "model_config", "updated_at")
+    list_filter = ("enabled", "model_config__provider")
     search_fields = ("user__username", "user__email", "notes")
-    inlines = [UserSmallModelFeatureGrantInline]
 
 
-@admin.action(description="Reset daily quota")
-def reset_daily_quota(modeladmin, request, queryset):
-    queryset.update(daily_requests_used=0, daily_tokens_used=0, daily_reset_at=next_utc_midnight())
-
-
-@admin.action(description="Reset monthly quota")
-def reset_monthly_quota(modeladmin, request, queryset):
-    queryset.update(monthly_requests_used=0, monthly_tokens_used=0, monthly_reset_at=next_month_utc())
+@admin.action(description="Reset credits to zero")
+def reset_credits(modeladmin, request, queryset):
+    queryset.update(credits_used=Decimal("0"))
 
 
 @admin.register(UserSmallModelQuota)
 class UserSmallModelQuotaAdmin(admin.ModelAdmin):
-    list_display = ("user", "daily_requests_used", "daily_request_limit", "daily_tokens_used", "daily_token_limit")
+    list_display = ("user", "credits_used", "credits_limit", "updated_at")
     search_fields = ("user__username", "user__email")
-    actions = [reset_daily_quota, reset_monthly_quota]
+    actions = [reset_credits]
+
+
+@admin.register(SmallModelConfig)
+class SmallModelConfigAdmin(admin.ModelAdmin):
+    list_display = ("provider", "model_name", "input_price_per_million_tokens", "output_price_per_million_tokens", "is_active", "updated_at")
+    list_filter = ("provider", "is_active")
+    search_fields = ("provider", "model_name")
 
 
 @admin.register(SmallModelUsageLog)

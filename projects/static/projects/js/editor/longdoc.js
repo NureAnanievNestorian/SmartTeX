@@ -494,6 +494,7 @@ function renderSettingsPanel() {
   const lockText = locked
     ? `Заблоковано запропонованою зміною #${settings.locking_proposal_id || "?"}. Запис заблоковано до завершення перегляду.`
     : "Активного блокування запропонованою зміною немає.";
+  const userHasSmallModelAccess = Boolean(s.projectMeta?.small_model?.user_has_access);
   const groups = [
     ["Основне", [
       ["enabled", "Письмовий асистент", "Увімкнути робочий простір довгого документа."],
@@ -511,14 +512,14 @@ function renderSettingsPanel() {
       ["mcp_controlled_access", "Контрольований MCP-доступ", "Обмежити MCP доступом через контрольовані інструменти."],
       ["mcp_write_context", "MCP може писати контекст", "Дозволити MCP створювати та оновлювати контекст."],
     ]],
-    ["AI Safety Layer", [
+    ...(userHasSmallModelAccess ? [["AI Safety Layer", [
       ["small_model_control_enabled", "Увімкнути safety layer", "Опційна перевірка читання й запропонованих змін."],
       ["context_compressor_enabled", "Context Compressor", "Стискає контекст перед роботою моделі."],
       ["edit_intent_classifier_enabled", "Edit Intent Classifier", "Обмежує розмір зміни за наміром."],
       ["diff_safety_reviewer_enabled", "Diff Safety Reviewer", "Перевіряє diff перед переглядом."],
       ["compile_log_triage_enabled", "Compile Log Triage", "Класифікує помилки компіляції."],
       ["circuit_breaker_enabled", "Circuit Breaker", "Зупиняє повторні невдалі спроби."],
-    ]],
+    ]]] : []),
   ];
 
   const gh = s.projectMeta?.github || {};

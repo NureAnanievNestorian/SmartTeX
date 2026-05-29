@@ -17,11 +17,12 @@ from .provider import SmallModelProvider, SmallModelResponse, estimate_tokens
 class GeminiProvider(SmallModelProvider):
     provider_name = "gemini"
 
-    def __init__(self, api_key: str | None = None, model_name: str | None = None):
+    def __init__(self, api_key: str | None = None, model_name: str | None = None, config: dict | None = None):
         self.api_key = api_key if api_key is not None else str(getattr(settings, "GEMINI_API_KEY", "")).strip()
-        self.model_name = model_name or str(getattr(settings, "GEMINI_SMALL_MODEL_NAME", "gemini-2.0-flash-lite"))
+        self.model_name = model_name or "gemini-2.0-flash-lite"
+        self.config = config or {}
         if not self.api_key:
-            raise ImproperlyConfigured("GEMINI_API_KEY is required when SMALL_MODEL_PROVIDER='gemini'.")
+            raise ImproperlyConfigured("GEMINI_API_KEY is required when using the Gemini provider.")
 
     def generate_json(
         self,
@@ -43,13 +44,13 @@ class GeminiProvider(SmallModelProvider):
             "systemInstruction": {"parts": [{"text": system_instruction}]},
             "contents": [{"role": "user", "parts": [{"text": json.dumps(input_payload, ensure_ascii=False)}]}],
             "generationConfig": {
-                "temperature": float(getattr(settings, "GEMINI_TEMPERATURE", 0)),
-                "maxOutputTokens": int(getattr(settings, "GEMINI_MAX_OUTPUT_TOKENS", 1024)),
+                "temperature": float(self.config.get("temperature", 0)),
+                "maxOutputTokens": int(self.config.get("max_output_tokens", 1024)),
                 "responseMimeType": "application/json",
                 "responseSchema": response_schema,
             },
         }
-        top_p = getattr(settings, "GEMINI_TOP_P", None)
+        top_p = self.config.get("top_p")
         if top_p is not None:
             payload["generationConfig"]["topP"] = top_p
         request = urllib.request.Request(

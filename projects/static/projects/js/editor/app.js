@@ -136,10 +136,7 @@ const smallModelWarningTextEl = document.getElementById("small-model-warning-tex
 
 function humanQuotaReason(reason) {
   const labels = {
-    daily_request_limit_exceeded: "Daily request limit reached.",
-    monthly_request_limit_exceeded: "Monthly request limit reached.",
-    daily_token_limit_exceeded: "Daily token limit reached.",
-    monthly_token_limit_exceeded: "Monthly token limit reached.",
+    credits_limit_exceeded: "AI credits limit reached.",
   };
   return labels[reason] || "Small model requests are temporarily unavailable for this project.";
 }
@@ -149,12 +146,10 @@ function renderSmallModelWarning() {
   const show = Boolean(quota.enabled && quota.quota_warning_visible);
   if (smallModelWarningEl) smallModelWarningEl.classList.toggle("visible", show);
   if (smallModelWarningTextEl && show) {
-    const parts = [humanQuotaReason(quota.quota_reason)];
-    if (typeof quota.requests_remaining_today === "number" && typeof quota.tokens_remaining_today === "number") {
-      parts.push(`Remaining today: ${quota.requests_remaining_today} requests, ${quota.tokens_remaining_today} tokens.`);
-    }
-    smallModelWarningTextEl.textContent = parts.join(" ");
+    smallModelWarningTextEl.textContent = humanQuotaReason(quota.quota_reason);
   }
+  const aiLogBtn = document.getElementById("open-ai-log-btn");
+  if (aiLogBtn) aiLogBtn.style.display = quota.enabled ? "" : "none";
 }
 
 // ── Loaders ───────────────────────────────────────────────────────────────────
