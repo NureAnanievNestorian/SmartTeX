@@ -239,28 +239,6 @@ export function setContent(text) {
   _settingContent = false;
 }
 
-export function replaceTabContent(name, text, filename) {
-  if (!view || !name) return;
-  // If this tab is active and the content is already identical, skip the full
-  // setState so the cursor / undo history are not disturbed (e.g. SSE after compile).
-  if (name === s.activeTabName) {
-    const current = view.state.doc.toString();
-    if (current === text) return;
-    // Content differs — preserve cursor/selection so the user doesn't jump to pos 0.
-    const prevSel = view.state.selection;
-    activateTab(name, text, filename || name, true);
-    try {
-      const docLen = view.state.doc.length;
-      const clampedRanges = prevSel.ranges.map(r => ({
-        anchor: Math.min(r.anchor, docLen),
-        head:   Math.min(r.head,   docLen),
-      }));
-      view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
-    } catch (_) {}
-    return;
-  }
-  activateTab(name, text, filename || name, true);
-}
 
 export function jumpToLine(n, column = 1) {
   if (!view) return;

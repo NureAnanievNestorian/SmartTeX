@@ -21,7 +21,14 @@ RUN set -eux; \
       fontconfig \
       cabextract \
       xfonts-utils \
-      ttf-mscorefonts-installer; \
+      ttf-mscorefonts-installer \
+      ca-certificates \
+      gnupg; \
+    mkdir -p /etc/apt/keyrings; \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nodejs; \
     fc-cache -f -v; \
     rm -rf /var/lib/apt/lists/*
 
@@ -39,7 +46,12 @@ RUN set -eux; \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY package.json /app/package.json
+RUN npm install --no-audit --no-fund
+
 COPY . /app
+
+RUN npm run build
 
 EXPOSE 8000
 
