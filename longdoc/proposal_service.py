@@ -1,9 +1,40 @@
 from __future__ import annotations
 
 import difflib
+import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+
+_TEXTUAL_PATCH_OPS = {"patch_file_lines", "replace_text", "update_section", "append_to_file"}
+_TEXTUAL_CONTENT_KEYS = ("new_content", "content", "new_text")
+_TYPST_INCLUDE_RE = re.compile(r'#(?:include|import)\s+"([^"\n]+)"')
+_LATEX_INCLUDE_RE = re.compile(r'\\(?:input|include|subfile)\s*\{\s*([^}\n]+?)\s*\}')
+
+
+def _extract_include_targets(text: str) -> list[str]:
+    if not isinstance(text, str) or not text:
+        return []
+    matches: list[str] = []
+    matches.extend(_TYPST_INCLUDE_RE.findall(text))
+    matches.extend(_LATEX_INCLUDE_RE.findall(text))
+    return matches
+
+
+def _resolve_relative_include(parent_filename: str, include_target: str) -> str:
+    target = include_target.strip()
+    if not target:
+        return ""
+    if "." not in Path(target).name and Path(parent_filename).suffix.lower() == ".tex":
+        # \input{foo} without extension → foo.tex
+        target = f"{target}.tex"
+    try:
+        parent_dir = Path(parent_filename).parent
+        resolved = (parent_dir / target).as_posix()
+    except Exception:
+        return target
+    # Normalize "./" and similar
+    return Path(resolved).as_posix()
 
 from django.conf import settings
 from django.db import IntegrityError
@@ -67,13 +98,16 @@ def _line_count(value: Any) -> int:
 
 
 def _estimate_changed_lines(op: dict[str, Any]) -> int:
+    # Use max(old, new) instead of the sum: a 30→30 rewrite is 30 lines of
+    # change, not 60. Summing punishes equal-size rewrites that don't actually
+    # exceed the per-op edit budget.
     name = str(op.get("op") or "")
     if name == "replace_text":
-        return _line_count(op.get("old_text")) + _line_count(op.get("new_text"))
+        return max(_line_count(op.get("old_text")), _line_count(op.get("new_text")))
     if name == "patch_file_lines":
         start = int(op.get("start_line") or 0)
         end = int(op.get("end_line") or 0)
-        return max(0, end - start + 1) + _line_count(op.get("new_content"))
+        return max(max(0, end - start + 1), _line_count(op.get("new_content")))
     if name in {"append_to_file", "create_new_file", "update_section"}:
         return _line_count(op.get("content") or op.get("new_content"))
     if name == "include_file":
@@ -117,7 +151,11 @@ def _normalize_patch_ops(patch_ops: Any) -> list[dict[str, Any]]:
                     "NEW_FILE_TOO_LARGE",
                     f"{item['filename']} has {content_lines} lines; new-file limit is {_max_new_file_lines()}.",
                     status_code=413,
-                    suggestion="Create a smaller included file or patch existing compiled sections directly.",
+                    suggestion=(
+                        f"Split the file into two or more smaller files (each ≤ {_max_new_file_lines()} lines), "
+                        f"each added by its own create_new_file op in the same proposal, "
+                        f"and wire them in by adding #include / \\input directives in the parent file via patch_file_lines."
+                    ),
                 )
             if Path(item["filename"]).suffix.lower() in SOURCE_EXTENSIONS:
                 created_source_files.add(item["filename"])
@@ -127,11 +165,17 @@ def _normalize_patch_ops(patch_ops: Any) -> list[dict[str, Any]]:
             item["include_target"] = target
             after = item.get("anchor_after")
             before = item.get("anchor_before")
-            if bool(after) == bool(before):
+            if not after and not before:
                 raise SessionWriteError(
                     "INVALID_INCLUDE_ANCHOR",
-                    "include_file requires exactly one of anchor_after or anchor_before.",
-                    suggestion="Read the parent file and choose one exact anchor.",
+                    "include_file requires either anchor_after or anchor_before, but neither was provided.",
+                    suggestion="Read the parent file with read_file_lines, pick one exact line as the anchor, and set anchor_after (insert after that line) or anchor_before (insert above it).",
+                )
+            if after and before:
+                raise SessionWriteError(
+                    "INVALID_INCLUDE_ANCHOR",
+                    "include_file accepts only one of anchor_after / anchor_before, but both were provided.",
+                    suggestion="Pick a single insertion side and remove the other anchor.",
                 )
             included_files.add(target)
 
@@ -151,6 +195,20 @@ def _normalize_patch_ops(patch_ops: Any) -> list[dict[str, Any]]:
             status_code=413,
             suggestion="Split the work into smaller proposals.",
         )
+    # Also count textual #include / \input / \include directives added by
+    # patch ops on existing files — they wire new source files into the
+    # document graph just as well as an explicit include_file op.
+    for item in normalized:
+        if item["op"] not in _TEXTUAL_PATCH_OPS:
+            continue
+        for key in _TEXTUAL_CONTENT_KEYS:
+            text = item.get(key)
+            if not isinstance(text, str) or not text:
+                continue
+            for raw_target in _extract_include_targets(text):
+                resolved = _resolve_relative_include(item["filename"], raw_target)
+                if resolved:
+                    included_files.add(resolved)
     missing_includes = sorted(created_source_files - included_files)
     if missing_includes:
         fname = missing_includes[0]
@@ -180,11 +238,17 @@ def _apply_include_file(session: AISession, op: dict[str, Any]) -> dict[str, Any
     anchor = str(anchor_after or anchor_before)
     matches = [idx for idx, line in enumerate(lines) if anchor in line]
     if len(matches) != 1:
+        if not matches:
+            message = f"Anchor was not found in {op['filename']}; file may have changed since it was read."
+            suggestion = "Re-read the file and choose an exact existing line as the include anchor."
+        else:
+            message = f"Anchor appears {len(matches)} times in {op['filename']}; exact-once match required."
+            suggestion = "Re-read the file and choose a unique include anchor."
         raise SessionWriteError(
             "ANCHOR_MISMATCH",
-            f"Anchor appears {len(matches)} times in {op['filename']}; exact-once match required.",
+            message,
             status_code=409,
-            suggestion="Re-read the file and choose a unique include anchor.",
+            suggestion=f"{suggestion} Anchor: {anchor[:200]}",
         )
     directive = _include_directive(session.project, op["include_target"]) + "\n"
     idx = matches[0]
@@ -291,12 +355,21 @@ def propose_document_change(
         proposal = get_locking_change_proposal(project)
         raise SessionWriteError(
             "PROJECT_LOCKED",
-            f"Project {project.id} already has a suggested change in status {proposal.status}.",
+            f"Project {project.id} already has suggested change #{proposal.id} in status {proposal.status}: {proposal.goal}",
             status_code=423,
-            suggestion="Cancel the failed proposal or ask the user to review/discard the pending suggestion.",
+            suggestion=(
+                f"Ask the user to review/discard proposal #{proposal.id} in the UI, "
+                f"or call the proposal cancellation/discard tool if available before submitting another proposal."
+            ),
         )
 
     user = project.owner
+    # Deterministic, cheap validation first — avoid burning an LLM call on a
+    # proposal that will be rejected by static limits (file count, line count,
+    # per-op size, unknown ops, missing includes).
+    normalized_ops = _normalize_patch_ops(patch_ops)
+    validate_do_not_touch(project, normalized_ops)
+
     pre_policy = ProposalPolicyEngine.pre_proposal_check(user, project, str(goal or ""))
     if pre_policy.action == "stop":
         raise SessionWriteError(
@@ -305,9 +378,6 @@ def propose_document_change(
             status_code=409,
             suggestion="Clarify the scope and submit a narrower proposal.",
         )
-
-    normalized_ops = _normalize_patch_ops(patch_ops)
-    validate_do_not_touch(project, normalized_ops)
     expires_at = timezone.now() + timedelta(hours=_proposal_expire_hours())
     task = ProjectTask.objects.filter(project=project, id=addresses_task_id).first() if addresses_task_id else None
     outline_item = (
@@ -331,11 +401,18 @@ def propose_document_change(
             user_visible_message="Preparing suggested change...",
         )
     except IntegrityError:
+        active = get_locking_change_proposal(project)
+        if active is not None:
+            message = f"This project already has pending suggested change #{active.id}: {active.goal}"
+            suggestion = f"Ask the user to review/discard proposal #{active.id} in the UI before submitting another."
+        else:
+            message = "This project already has a pending suggested change."
+            suggestion = "Ask the user to review/discard the existing proposal in the UI before submitting another."
         raise SessionWriteError(
             "PROJECT_LOCKED",
-            "This project already has a pending suggested change.",
+            message,
             status_code=423,
-            suggestion="Resolve the existing proposal before submitting another.",
+            suggestion=suggestion,
         )
 
     try:
@@ -543,7 +620,9 @@ def preview_patch(project, op: dict[str, Any]) -> dict[str, Any]:
         lines = original.splitlines(keepends=True)
         matches = [idx for idx, line in enumerate(lines) if anchor in line]
         if len(matches) != 1:
-            raise SessionWriteError("ANCHOR_MISMATCH", f"Anchor appears {len(matches)} times.")
+            if not matches:
+                raise SessionWriteError("ANCHOR_MISMATCH", f"Anchor not found: {anchor[:200]}")
+            raise SessionWriteError("ANCHOR_MISMATCH", f"Anchor appears {len(matches)} times: {anchor[:200]}")
         directive = _include_directive(project, normalized["include_target"]) + "\n"
         insert_at = matches[0] + 1 if normalized.get("anchor_after") else matches[0]
         lines.insert(insert_at, directive)

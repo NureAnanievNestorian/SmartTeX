@@ -54,6 +54,7 @@ MCP_MAX_SEARCH_RESULTS = max(1, int(os.getenv("MCP_MAX_SEARCH_RESULTS", "30")))
 SOURCE_EXTENSIONS = {".tex", ".typ"}
 TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl"}
 READ_BUDGET_STATE: dict[tuple[str, int], int] = {}
+READ_BUDGET_RECENT_STATE: dict[tuple[str, int], list[dict[str, Any]]] = {}
 REPLACE_DRY_RUN_STATE: dict[tuple[str, int, str], str] = {}
 
 
@@ -570,11 +571,43 @@ def _attach_read_budget(payload: dict[str, Any], project_id: int) -> dict[str, A
     return payload
 
 
+def _record_read_budget_usage(
+        project_id: int,
+        *,
+        operation: str,
+        lines: int,
+        filename: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+) -> None:
+    if lines <= 0:
+        return
+    item: dict[str, Any] = {"operation": operation, "lines": int(lines)}
+    if filename:
+        item["file"] = filename
+    if start_line is not None:
+        item["start_line"] = int(start_line)
+    if end_line is not None:
+        item["end_line"] = int(end_line)
+    key = _budget_key(project_id)
+    recent = [item, *READ_BUDGET_RECENT_STATE.get(key, [])]
+    READ_BUDGET_RECENT_STATE[key] = recent[:20]
+
+
+def _recently_read_for_budget(project_id: int, limit: int = 5) -> list[dict[str, Any]]:
+    recent = READ_BUDGET_RECENT_STATE.get(_budget_key(project_id), [])
+    return sorted(recent, key=lambda item: int(item.get("lines") or 0), reverse=True)[: max(1, int(limit))]
+
+
 def _consume_read_budget(
         project_id: int,
         lines: int,
         *,
         suggestion: str,
+        operation: str = "read",
+        filename: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
 ) -> dict[str, Any] | None:
     cost = max(0, int(lines))
     remaining_before = _read_budget_remaining(project_id)
@@ -598,6 +631,7 @@ def _consume_read_budget(
             suggestion,
             read_budget_remaining=max(0, remaining_before),
             requested_lines=cost,
+            recently_read=_recently_read_for_budget(project_id),
         )
     if raw_remaining_after < 0:
         return _rejection(
@@ -606,8 +640,17 @@ def _consume_read_budget(
             suggestion,
             read_budget_remaining=0,
             requested_lines=cost,
+            recently_read=_recently_read_for_budget(project_id),
             warning=True,
         )
+    _record_read_budget_usage(
+        project_id,
+        operation=operation,
+        lines=cost,
+        filename=filename,
+        start_line=start_line,
+        end_line=end_line,
+    )
     return None
 
 
@@ -665,13 +708,16 @@ def _compute_diff_stats(before: str, after: str) -> tuple[str, int, int]:
 
 
 def _ensure_patch_size_allowed(lines_added: int, lines_removed: int) -> dict[str, Any] | None:
-    changed = lines_added + lines_removed
+    # Use max(added, removed) instead of the sum: a 30→30 rewrite is 30 lines
+    # of change, not 60. Summing inflates the count and makes the limit feel
+    # arbitrary to a caller that just rewrote a block of equal size.
+    changed = max(int(lines_added), int(lines_removed))
     if changed <= MCP_MAX_PATCH_LINES:
         return None
     return _rejection(
         "PATCH_TOO_LARGE",
-        f"Requested patch changes {changed} diff lines, exceeding the limit of {MCP_MAX_PATCH_LINES}.",
-        "Reduce the edit scope, then retry with patch_file_lines or update_project_section on a smaller range.",
+        f"Requested patch touches {changed} lines (max(added={lines_added}, removed={lines_removed})); per-op limit is {MCP_MAX_PATCH_LINES}.",
+        f"Split the edit so each op touches at most {MCP_MAX_PATCH_LINES} lines, then retry with patch_file_lines or update_project_section on smaller ranges.",
         lines_added=lines_added,
         lines_removed=lines_removed,
         max_patch_lines=MCP_MAX_PATCH_LINES,
@@ -1039,6 +1085,10 @@ def read_project_file(
             project_id,
             total_lines,
             suggestion="Use grep_file or read_file_lines for narrower reads, or get_project_section for section-scoped access.",
+            operation="read_project_file",
+            filename=resolved_file_name,
+            start_line=1,
+            end_line=total_lines,
         ) if controlled else None
         if budget_rejection and not budget_rejection.get("warning"):
             return budget_rejection
@@ -1076,6 +1126,8 @@ def read_project_file(
             project_id,
             _char_window_line_cost(payload),
             suggestion="Use read_file_lines or grep_file for more targeted reads.",
+            operation="read_project_window",
+            filename=resolved_file_name,
         )
         if budget_rejection and not budget_rejection.get("warning"):
             return budget_rejection
@@ -1155,6 +1207,10 @@ def read_file_lines(project_id: int, filename: str, start_line: int, end_line: i
         project_id,
         requested_lines,
         suggestion="Use grep_file to locate the exact area first, then read a narrower line range.",
+        operation="read_file_lines",
+        filename=filename,
+        start_line=safe_start,
+        end_line=safe_end,
     )
     if budget_rejection and not budget_rejection.get("warning"):
         return budget_rejection
@@ -1191,6 +1247,8 @@ def grep_file(
         project_id,
         estimated_cost,
         suggestion="Reduce max_matches or context_lines, or use read_file_lines after locating a narrower region.",
+        operation="grep_file",
+        filename=filename,
     )
     if budget_rejection and not budget_rejection.get("warning"):
         return budget_rejection
@@ -1737,8 +1795,10 @@ async def insert_text_at_position(
             return _rejection(
                 "ANCHOR_MISMATCH",
                 f"anchor_text did not match line {safe_insert_after} in {resolved_file_name}.",
-                "Re-run grep_file to find the current anchor text, then retry with the updated line number.",
+                "Compare expected_anchor vs actual_line below; if actual_line is the anchor you wanted, retry with the updated line. Otherwise re-run grep_file.",
                 searched_line=safe_insert_after,
+                expected_anchor=anchor_text,
+                actual_line=anchor_line,
             )
         line = safe_insert_after + 1
         column = 1
@@ -1769,7 +1829,12 @@ async def insert_text_at_position(
             return _rejection(
                 "ANCHOR_MISMATCH",
                 f"anchor_text was not found immediately before or after the insertion point in {resolved_file_name}.",
-                "Re-run grep_file to locate the current insertion point, then retry with the updated anchor_text and line.",
+                "Compare expected_anchor vs actual_window below; if the anchor moved, re-run grep_file to locate the current insertion point, then retry with the updated anchor_text and line.",
+                expected_anchor=anchor,
+                actual_window=snippet,
+                insertion_position=int(position),
+                window_start=window_start,
+                window_end=window_end,
             )
     payload = _call(
         "POST",
@@ -2042,8 +2107,10 @@ async def patch_file_lines(
             return _rejection(
                 "ANCHOR_MISMATCH",
                 f"anchor_before not found at line {safe_start - 1}. The file may have changed.",
-                "Re-run grep_file to find the current location of the anchor, then retry with the updated line number.",
+                "Compare expected_anchor vs actual_line below; if actual_line is the anchor you wanted, retry with the updated line. Otherwise re-run grep_file.",
                 searched_line=safe_start - 1,
+                expected_anchor=anchor_before,
+                actual_line=before_line,
             )
     if anchor_after is not None:
         if safe_end >= total_lines:
@@ -2059,8 +2126,10 @@ async def patch_file_lines(
             return _rejection(
                 "ANCHOR_MISMATCH",
                 f"anchor_after not found at line {safe_end + 1}. The file may have changed.",
-                "Re-run grep_file to find the current location of the anchor, then retry with the updated line number.",
+                "Compare expected_anchor vs actual_line below; if actual_line is the anchor you wanted, retry with the updated line. Otherwise re-run grep_file.",
                 searched_line=safe_end + 1,
+                expected_anchor=anchor_after,
+                actual_line=after_line,
             )
     before_payload = _read_file_lines_raw(project_id, info["file_name"], safe_start, safe_end)
     before_content = str(before_payload.get("content") or "")
@@ -2095,6 +2164,34 @@ async def patch_file_lines(
     )
     await _notify_project_write_updates(ctx, project_id, include_compile_log=bool(compileAlso))
     return shaped
+
+
+def _section_close_matches(sections: list[Any], anchor_section: str, filename: str, project_id: int) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    titles: list[str] = []
+    by_title: dict[str, dict[str, Any]] = {}
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        if str(section.get("file_name") or _project_main_file_name(project_id)) != filename:
+            continue
+        title = str(section.get("title") or "")
+        if not title:
+            continue
+        titles.append(title)
+        by_title.setdefault(title, section)
+    for title in difflib.get_close_matches(str(anchor_section), titles, n=3, cutoff=0.45):
+        section = by_title.get(title) or {}
+        candidates.append(
+            {
+                "title": title,
+                "index": section.get("index"),
+                "file_name": section.get("file_name") or filename,
+                "start_line": section.get("start_line"),
+                "end_line": section.get("end_line"),
+            }
+        )
+    return candidates
 
 
 @mcp.tool
@@ -2133,10 +2230,13 @@ async def append_to_file(
             and str(s.get("file_name") or _project_main_file_name(project_id)) == info["file_name"]
         ]
         if not matches:
+            did_you_mean = _section_close_matches(sections, str(anchor_section), info["file_name"], project_id)
             return _rejection(
                 "SECTION_NOT_FOUND",
                 f"Section '{anchor_section}' was not found in {info['file_name']}.",
-                "Call list_project_sections or find_project_section_by_title, then retry with the exact section title.",
+                "Use one of did_you_mean below if it matches the intended section; otherwise call list_project_sections and retry with the exact section title.",
+                searched_section=anchor_section,
+                did_you_mean=did_you_mean,
             )
         target_section = matches[-1]
         section_index = int(target_section.get("index"))
@@ -2594,13 +2694,13 @@ async def update_context_file(
         return _rejection(
             "FEATURE_DISABLED",
             "Context files are disabled for this project.",
-            "Enable long-document mode and the Context feature before updating context files.",
+            "Ask the user to enable Long document mode → Context in the project settings, then retry this tool.",
         )
     if not longdoc.get("mcp_write_context"):
         return _rejection(
             "MCP_CONTEXT_WRITES_DISABLED",
             "MCP context-file writes are disabled for this project.",
-            "Ask the user to enable MCP context writes or update the context file in the UI instead.",
+            "Ask the user to enable MCP context writes in the project settings → Context, or update the context file in the UI instead.",
         )
     safe_name = quote(filename, safe="")
     payload = _call_allow_json_errors(
