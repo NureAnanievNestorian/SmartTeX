@@ -482,7 +482,8 @@ def serialize_change_proposal(proposal: ChangeProposal | None) -> dict[str, Any]
     if proposal is None:
         return None
     session = proposal.internal_session
-    return {
+    auto_discarded_id = getattr(proposal, "auto_discarded_previous_failed_proposal_id", None)
+    payload: dict[str, Any] = {
         "id": proposal.id,
         "goal": proposal.goal,
         "status": proposal.status,
@@ -504,6 +505,9 @@ def serialize_change_proposal(proposal: ChangeProposal | None) -> dict[str, Any]
         "created_at": proposal.created_at.isoformat(),
         "updated_at": proposal.updated_at.isoformat(),
     }
+    if auto_discarded_id is not None:
+        payload["auto_discarded_previous_failed_proposal_id"] = auto_discarded_id
+    return payload
 
 
 def get_active_change_proposal(project) -> ChangeProposal | None:
@@ -519,20 +523,46 @@ def propose_document_change(
     addresses_outline_item_id: int | None = None,
     created_by: str = ChangeProposal.CreatedBy.MCP,
 ) -> ChangeProposal:
+    auto_discarded_previous_failed_proposal_id: int | None = None
     if get_locking_session(project) is not None or get_locking_change_proposal(project) is not None:
         session = get_locking_session(project)
         if session is not None:
             raise ProjectLockedError(project=project, session=session)
         proposal = get_locking_change_proposal(project)
-        raise SessionWriteError(
-            "PROJECT_LOCKED",
-            f"Project {project.id} already has suggested change #{proposal.id} in status {proposal.status}: {proposal.goal}",
-            status_code=423,
-            suggestion=(
-                f"Ask the user to review/discard proposal #{proposal.id} in the UI, "
-                f"or call the proposal cancellation/discard tool if available before submitting another proposal."
-            ),
+        # If the only thing locking the project is an MCP-created proposal that
+        # already failed validation/compile, auto-discard it so the agent can
+        # iterate instead of spinning in PROJECT_LOCKED → cancel → PROJECT_LOCKED.
+        # User-owned or pending/ready proposals still block — those are visible
+        # to the user and must be acted on in the UI.
+        auto_discard_ok = (
+            created_by == ChangeProposal.CreatedBy.MCP
+            and proposal.created_by == ChangeProposal.CreatedBy.MCP
+            and proposal.status in (
+                ChangeProposal.Status.FAILED_VALIDATION,
+                ChangeProposal.Status.FAILED_COMPILE,
+            )
         )
+        if auto_discard_ok:
+            try:
+                cancel_change_proposal(proposal)
+                auto_discarded_previous_failed_proposal_id = proposal.id
+            except SessionWriteError:
+                pass
+        # Re-check the lock — auto-discard may have cleared it.
+        if get_locking_session(project) is not None or get_locking_change_proposal(project) is not None:
+            session = get_locking_session(project)
+            if session is not None:
+                raise ProjectLockedError(project=project, session=session)
+            blocking = get_locking_change_proposal(project)
+            raise SessionWriteError(
+                "PROJECT_LOCKED",
+                f"Project {project.id} already has suggested change #{blocking.id} in status {blocking.status}: {blocking.goal}",
+                status_code=423,
+                suggestion=(
+                    f"Ask the user to review/discard proposal #{blocking.id} in the UI, "
+                    f"or call the proposal cancellation/discard tool if available before submitting another proposal."
+                ),
+            )
 
     user = project.owner
     # Deterministic, cheap validation first — avoid burning an LLM call on a
@@ -572,6 +602,9 @@ def propose_document_change(
             expires_at=expires_at,
             user_visible_message="Preparing suggested change...",
         )
+        # Transient attribute — serializer surfaces it so the agent can log
+        # that the previous failed MCP proposal was auto-discarded.
+        proposal.auto_discarded_previous_failed_proposal_id = auto_discarded_previous_failed_proposal_id
     except IntegrityError:
         active = get_locking_change_proposal(project)
         if active is not None:
@@ -821,6 +854,49 @@ def _normalize_patch_line_order(
     return reordered, normalizations
 
 
+_VALIDATE_DIFF_BUDGET = 4000
+
+
+def _truncate_diff_text(diff_text: str) -> tuple[str, bool]:
+    """Cap diff_text at ~_VALIDATE_DIFF_BUDGET chars, ideally at a hunk boundary."""
+    if not isinstance(diff_text, str) or len(diff_text) <= _VALIDATE_DIFF_BUDGET:
+        return diff_text or "", False
+    cut = diff_text.rfind("\n@@", 0, _VALIDATE_DIFF_BUDGET)
+    if cut < 0:
+        cut = diff_text.rfind("\n", 0, _VALIDATE_DIFF_BUDGET)
+    if cut < 0:
+        cut = _VALIDATE_DIFF_BUDGET
+    return diff_text[:cut] + "\n… [diff truncated]\n", True
+
+
+def _summarize_patch_ops(ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Compact echo of ops without body text — enough to confirm shape."""
+    summary: list[dict[str, Any]] = []
+    for op in ops:
+        name = str(op.get("op") or "")
+        item: dict[str, Any] = {"op": name, "filename": op.get("filename")}
+        if name == "patch_file_lines":
+            item["start_line"] = op.get("start_line")
+            item["end_line"] = op.get("end_line")
+            item["new_content_lines"] = _line_count(op.get("new_content"))
+        elif name == "create_new_file":
+            item["content_lines"] = _line_count(op.get("content"))
+        elif name == "append_to_file":
+            item["content_lines"] = _line_count(op.get("content"))
+        elif name == "replace_text":
+            item["old_text_lines"] = _line_count(op.get("old_text"))
+            item["new_text_lines"] = _line_count(op.get("new_text"))
+        elif name == "update_section":
+            item["section_index"] = op.get("section_index")
+            item["new_content_lines"] = _line_count(op.get("new_content"))
+        elif name == "include_file":
+            item["include_target"] = op.get("include_target")
+            item["anchor_after"] = bool(op.get("anchor_after"))
+            item["anchor_before"] = bool(op.get("anchor_before"))
+        summary.append(item)
+    return summary
+
+
 def validate_document_change(
     project,
     *,
@@ -929,19 +1005,36 @@ def validate_document_change(
                 }
 
         diff_text = generate_diff(session)
-        return {
+        diff_text, diff_truncated = _truncate_diff_text(diff_text)
+        payload: dict[str, Any] = {
             "valid": True,
             "will_apply": True,
             "goal": str(goal or "").strip() or "Suggested change",
-            "normalized_patch_ops": normalized_ops,
             "normalizations": normalizations,
             "compile": compile_result,
             "diff_text": diff_text,
-            "applied_ops": applied_ops,
             "changed_files": _changed_files_from_batch(session),
             "proposal_not_created": True,
-            "suggestion": "Submit the returned normalized_patch_ops with propose_document_change when you are ready to create the user-visible suggestion.",
         }
+        if diff_truncated:
+            payload["diff_truncated"] = True
+        if normalizations:
+            # Op shape was rewritten (alias rename, reorder). Agent must use
+            # these instead of its original patch_ops.
+            payload["normalized_patch_ops"] = normalized_ops
+            payload["suggestion"] = (
+                "Validation changed the op shape — submit the returned normalized_patch_ops with "
+                "propose_document_change (do not reuse your original patch_ops)."
+            )
+        else:
+            # Nothing was rewritten. Agent already has its ops; mirror only a
+            # compact summary so the response stays small.
+            payload["patch_ops_summary"] = _summarize_patch_ops(normalized_ops)
+            payload["suggestion"] = (
+                "No normalizations applied. Resubmit your original patch_ops to "
+                "propose_document_change to create the user-visible suggestion."
+            )
+        return payload
     finally:
         if session is not None:
             try:

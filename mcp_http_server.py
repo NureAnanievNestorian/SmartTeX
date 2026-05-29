@@ -2680,8 +2680,16 @@ def validate_document_change(
 
     Obvious typos are normalized here (but NOT in `propose_document_change`):
     e.g. `patch_lines` → `patch_file_lines`. Every such fix is reported in
-    `normalizations`. Use the returned `normalized_patch_ops` when calling
-    `propose_document_change`.
+    `normalizations`.
+
+    Response shape on success:
+      • If `normalizations` is non-empty, the response includes
+        `normalized_patch_ops` — submit THOSE to `propose_document_change`
+        instead of the originals.
+      • If `normalizations` is empty, the response includes only a compact
+        `patch_ops_summary` (op + filename + sizes, no body text); resubmit
+        your original `patch_ops` unchanged. `diff_text` may be truncated
+        (signaled by `diff_truncated: true`).
 
     If `auto_reorder_line_patches` is true, line-range edits for the same file
     may be normalized bottom-up to avoid line-number drift.
