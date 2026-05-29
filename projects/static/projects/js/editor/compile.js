@@ -1,6 +1,6 @@
 import { s, cfg } from "./state.js";
 import { api } from "./api.js";
-import { getContent, saveTabState, replaceTabContent } from "./cm.js";
+import { getContent, saveTabState, activateTab, view } from "./cm.js";
 import { utf8ByteSize } from "./files.js";
 import {
   setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics,
@@ -13,6 +13,26 @@ const logEl       = document.getElementById("log");
 // openOutlineLocation is injected from main.js
 let _openOutlineLocation = () => {};
 export function setOutlineLocationRef(fn) { _openOutlineLocation = fn; }
+
+function syncTabContent(name, text, filename) {
+  if (!view || !name) return;
+  if (name === s.activeTabName) {
+    const current = view.state.doc.toString();
+    if (current === text) return;
+    const prevSel = view.state.selection;
+    activateTab(name, text, filename || name, true);
+    try {
+      const docLen = view.state.doc.length;
+      const clampedRanges = prevSel.ranges.map(range => ({
+        anchor: Math.min(range.anchor, docLen),
+        head: Math.min(range.head, docLen),
+      }));
+      view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
+    } catch (_) {}
+    return;
+  }
+  activateTab(name, text, filename || name, true);
+}
 
 // ── Compile state helpers ─────────────────────────────────────────────────────
 
@@ -216,7 +236,7 @@ async function handleMcpUpdate() {
       try {
         const params = new URLSearchParams({ include_text: "1" });
         const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
-        replaceTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
+        syncTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
         s.hasUnsavedChanges = false;
       } catch (_) {}
     }
@@ -234,15 +254,15 @@ async function handleProjectUpdate(source = "web") {
     const main = await import("./app.js");
     await main.loadProjectMeta();
     // Only reload file content from server when there are no local edits in flight.
-    // replaceTabContent is now a no-op when content is identical, so the cursor
-    // never jumps in the normal post-compile case where content is in sync.
+    // syncTabContent is a no-op when content is identical, so the cursor never
+    // jumps in the normal post-compile case where content is already in sync.
     if (!s.hasUnsavedChanges) {
       await main.loadMainFile();
       if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
         try {
           const params = new URLSearchParams({ include_text: "1" });
           const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
-          replaceTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
+          syncTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
           s.hasUnsavedChanges = false;
         } catch (_) {}
       }

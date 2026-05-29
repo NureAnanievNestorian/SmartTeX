@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import {
   initCodeMirror, switchLanguage,
   focusEditor, jumpToLine, view,
-  saveTabState, hasTabState, activateTab, dropTabState, replaceTabContent,
+  saveTabState, hasTabState, activateTab, dropTabState,
 } from "./cm.js";
 import { loadPdfViewer, pdfEmpty } from "./pdfviewer.js";
 import {
@@ -152,6 +152,26 @@ function renderSmallModelWarning() {
   if (aiLogBtn) aiLogBtn.style.display = quota.enabled ? "" : "none";
 }
 
+function syncTabContent(name, text, filename) {
+  if (!view || !name) return;
+  if (name === s.activeTabName) {
+    const current = view.state.doc.toString();
+    if (current === text) return;
+    const prevSel = view.state.selection;
+    activateTab(name, text, filename || name, true);
+    try {
+      const docLen = view.state.doc.length;
+      const clampedRanges = prevSel.ranges.map(range => ({
+        anchor: Math.min(range.anchor, docLen),
+        head: Math.min(range.head, docLen),
+      }));
+      view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
+    } catch (_) {}
+    return;
+  }
+  activateTab(name, text, filename || name, true);
+}
+
 // ── Loaders ───────────────────────────────────────────────────────────────────
 
 export async function loadProjectMeta() {
@@ -186,7 +206,7 @@ export async function loadMainFile() {
   s.mainFileContent = data.content || "";
   // Re-check: user may have typed during the async fetch — don't overwrite their edits.
   if (!s.hasUnsavedChanges) {
-    replaceTabContent(s.mainFileName, s.mainFileContent, s.mainFileName);
+    syncTabContent(s.mainFileName, s.mainFileContent, s.mainFileName);
     s.hasUnsavedChanges = false;
     setSaveHint("Завантажено", "saved");
   }
