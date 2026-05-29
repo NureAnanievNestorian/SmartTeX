@@ -48,6 +48,16 @@ class APIClient:
     def update_project_file(self, project_id: int, content: str):
         return self._call("PUT", f"/api/projects/{project_id}/file/", {"content": content})
 
+    def create_project_file(self, project_id: int, filename: str, content: str, goal: str):
+        return self._call(
+            "POST",
+            f"/api/projects/{project_id}/change-proposals/",
+            {
+                "goal": goal,
+                "patch_ops": [{"op": "create_new_file", "filename": filename, "content": content}],
+            },
+        )
+
     def compile_project(self, project_id: int):
         return self._call("POST", f"/api/projects/{project_id}/compile/")
 
@@ -136,6 +146,7 @@ class Command(BaseCommand):
                         "get_project",
                         "get_project_file",
                         "update_project_file",
+                        "create_project_file",
                         "compile_project",
                         "get_compile_log",
                         "list_templates",
@@ -180,6 +191,13 @@ class Command(BaseCommand):
                     result = client.get_project(int(args["project_id"]))
                 elif tool == "update_project_file":
                     result = client.update_project_file(int(args["project_id"]), str(args.get("content", "")))
+                elif tool == "create_project_file":
+                    result = client.create_project_file(
+                        int(args["project_id"]),
+                        str(args["filename"]),
+                        str(args.get("content", "")),
+                        str(args.get("goal", f"Create {args['filename']}")),
+                    )
                 elif tool == "compile_project":
                     result = client.compile_project(int(args["project_id"]))
                 elif tool == "get_compile_log":
