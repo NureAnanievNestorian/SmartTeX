@@ -186,6 +186,32 @@ TYPST_BINARY = os.getenv('TYPST_BINARY', 'typst').strip() or 'typst'
 # Example: TYPST_FONTS_DIR=/srv/fonts
 TYPST_FONTS_DIR = os.getenv('TYPST_FONTS_DIR', '').strip() or ''
 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
+    'loggers': {
+        'projects': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'longdoc': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+
 OAUTH_ISSUER_URL = os.getenv('OAUTH_ISSUER_URL', '').strip()
 MCP_SERVER_PUBLIC_URL = os.getenv('MCP_SERVER_PUBLIC_URL', '').strip()
 MCP_PATH = os.getenv('MCP_PATH', '/mcp').strip()
