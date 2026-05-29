@@ -59,6 +59,8 @@ class ProposalPolicyEngine:
             "max_changed_lines": int(edit_intent.get("max_changed_lines") or 15),
             "max_files": int(edit_intent.get("max_files") or 1),
         }
+        scope_confidence = str(edit_intent.get("scope_confidence") or "high").lower()
+        scope_confidence_reason = edit_intent.get("scope_confidence_reason")
         review = reviewer.review(
             user=user,
             project=project,
@@ -66,6 +68,8 @@ class ProposalPolicyEngine:
             diff_text=diff,
             edit_mode=str(edit_intent.get("edit_mode") or "paragraph_edit"),
             patch_budget=patch_budget,
+            scope_confidence=scope_confidence,
+            scope_confidence_reason=str(scope_confidence_reason) if scope_confidence_reason else None,
         )
         action = review.get("action") or "allow"
         return PolicyResult(

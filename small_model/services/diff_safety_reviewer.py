@@ -21,11 +21,18 @@ class DiffSafetyReviewService(SmallModelCallMixin):
         diff_text: str,
         edit_mode: str = "paragraph_edit",
         patch_budget: dict[str, int] | None = None,
+        scope_confidence: str = "high",
+        scope_confidence_reason: str | None = None,
     ) -> dict[str, Any]:
         patch_budget = patch_budget or {"max_changed_lines": 15, "max_files": 1}
         review_input = build_diff_review_input(diff_text)
         max_changed = int(patch_budget.get("max_changed_lines") or 15)
         stats = review_input.diff_stats
+        # When the small model itself reported low/medium confidence in the
+        # budget it picked, treat the budget as advisory rather than a hard
+        # cap. The big model still sees an SMCL_BUDGET_ADVISORY warning telling
+        # it to verify the diff is actually legitimate for the request.
+        budget_advisory = scope_confidence in {"low", "medium"}
         deterministic_warnings: list[dict[str, str]] = []
         if stats["total_changed_lines"] > max_changed:
             deterministic_warnings.append(
@@ -36,6 +43,20 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                     "deterministic_diff_stats",
                 )
             )
+            if budget_advisory:
+                deterministic_warnings.append(
+                    warning(
+                        "medium",
+                        "SMCL_BUDGET_ADVISORY",
+                        (
+                            f"Patch budget ({max_changed} lines) was advisory: small-model scope "
+                            f"confidence was '{scope_confidence}'"
+                            + (f" ({scope_confidence_reason})" if scope_confidence_reason else "")
+                            + ". Verify that every change is required by the user's request before applying."
+                        ),
+                        "scope_confidence",
+                    )
+                )
         if review_input.deleted_labels_or_refs:
             deterministic_warnings.append(
                 warning(
@@ -54,7 +75,7 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                     "deterministic_diff_stats",
                 )
             )
-        if stats["total_changed_lines"] > max_changed:
+        if stats["total_changed_lines"] > max_changed and not budget_advisory:
             return {
                 "action": "reject",
                 "reason": "Diff exceeds the deterministic patch budget.",
@@ -74,7 +95,11 @@ class DiffSafetyReviewService(SmallModelCallMixin):
         if self._is_tiny_low_risk_diff(stats, review_input):
             return {"action": "allow", "reason": None, "risk_level": "low", "warnings": [], "review_payload": {}}
 
-        if stats["diff_char_length"] > 12288 and stats["total_changed_lines"] > max_changed * 2:
+        if (
+            stats["diff_char_length"] > 12288
+            and stats["total_changed_lines"] > max_changed * 2
+            and not budget_advisory
+        ):
             return {
                 "action": "reject",
                 "reason": "Diff is too large for the declared edit scope.",
@@ -85,18 +110,29 @@ class DiffSafetyReviewService(SmallModelCallMixin):
 
         enabled, _, _ = self.is_enabled(user, project)
         if not enabled:
-            return self._deterministic_fallback(stats, max_changed, deterministic_warnings, review_input)
+            return self._deterministic_fallback(
+                stats, max_changed, deterministic_warnings, review_input, budget_advisory=budget_advisory
+            )
 
         payload = self._payload(proposal_goal, edit_mode, patch_budget, review_input)
+        payload["scope_confidence"] = scope_confidence
+        if scope_confidence_reason:
+            payload["scope_confidence_reason"] = scope_confidence_reason
         response = self.call_provider(
             user=user,
             project=project,
-            system_instruction="Review the diff for over-editing, drift, accidental deletions, and unrelated changes.",
+            system_instruction=(
+                "Review the diff for over-editing, drift, accidental deletions, and unrelated changes. "
+                "If scope_confidence is 'low' or 'medium', the patch budget is advisory — judge whether "
+                "the diff is legitimate for the user's request rather than rejecting on size alone."
+            ),
             input_payload=payload,
             response_schema=schemas.DIFF_SAFETY_SCHEMA,
         )
         if not response.success or not response.parsed_json:
-            return self._deterministic_fallback(stats, max_changed, deterministic_warnings, review_input)
+            return self._deterministic_fallback(
+                stats, max_changed, deterministic_warnings, review_input, budget_advisory=budget_advisory
+            )
 
         result = response.parsed_json
         risk = str(result.get("risk_level") or "low")
@@ -155,8 +191,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             "unified_diff": review_input.unified_diff,
         }
 
-    def _deterministic_fallback(self, stats, max_changed, warnings, review_input):
-        if stats["total_changed_lines"] > max_changed:
+    def _deterministic_fallback(self, stats, max_changed, warnings, review_input, *, budget_advisory: bool = False):
+        if stats["total_changed_lines"] > max_changed and not budget_advisory:
             return {
                 "action": "reject",
                 "reason": "Diff exceeds the deterministic patch budget.",

@@ -24,6 +24,8 @@ VALID_READ_PLAN_TOOLS = frozenset({
     "find_project_files", "file_line_count", "grep_file", "read_file_lines",
 })
 
+VALID_SCOPE_CONFIDENCE = frozenset({"low", "medium", "high"})
+
 MAX_CANDIDATE_FILES = 5
 MAX_READ_PLAN_STEPS = 8
 MAX_READ_LINES_CAP = 200
@@ -48,6 +50,8 @@ PRE_PROPOSAL_SCHEMA = {
         "compile_required": {"type": "boolean"},
         "requires_user_clarification": {"type": "boolean"},
         "clarification_reason": {"type": "string", "nullable": True},
+        "scope_confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "scope_confidence_reason": {"type": "string", "nullable": True},
         "candidate_files": {
             "type": "array",
             "items": {
@@ -103,6 +107,8 @@ EDIT_INTENT_SCHEMA = {
         "compile_required": {"type": "boolean"},
         "requires_user_clarification": {"type": "boolean"},
         "clarification_reason": {"type": "string", "nullable": True},
+        "scope_confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "scope_confidence_reason": {"type": "string", "nullable": True},
     },
 }
 

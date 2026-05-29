@@ -37,6 +37,8 @@ CONSERVATIVE_PARAGRAPH = {
     "compile_required": False,
     "requires_user_clarification": False,
     "clarification_reason": None,
+    "scope_confidence": "high",
+    "scope_confidence_reason": None,
 }
 
 COMPILE_FIX_FALLBACK = {
@@ -51,6 +53,8 @@ COMPILE_FIX_FALLBACK = {
     "compile_required": True,
     "requires_user_clarification": False,
     "clarification_reason": None,
+    "scope_confidence": "high",
+    "scope_confidence_reason": None,
 }
 
 
@@ -97,6 +101,17 @@ def sanitize_smcl_edit_intent(data: dict) -> tuple[dict, bool]:
     raw_read_lines = result.get("max_read_lines")
     if raw_read_lines is not None:
         result["max_read_lines"] = min(int(raw_read_lines), schemas.MAX_READ_LINES_CAP)
+
+    confidence = str(result.get("scope_confidence") or "").lower()
+    if confidence not in schemas.VALID_SCOPE_CONFIDENCE:
+        # Default to "high" — preserves strict SMCL behavior when the small
+        # model didn't (or couldn't) self-rate. The downstream policy only
+        # softens the budget gate when confidence is explicitly low/medium.
+        confidence = "high"
+        fallback_used = True
+    result["scope_confidence"] = confidence
+    reason = result.get("scope_confidence_reason")
+    result["scope_confidence_reason"] = str(reason)[:300] if isinstance(reason, str) else None
 
     return result, fallback_used
 

@@ -25,8 +25,18 @@ _COMPILE_RE = re.compile(
 _PATH_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-./]+$")
 
 _SYSTEM_INSTRUCTION = (
-    "Analyze the user request and return editing guidance as JSON with STRICT enum values only.\n"
+    "Analyze the user request OBJECTIVELY and return editing guidance as JSON with STRICT enum values only.\n"
+    "Classify the request by the scope ACTUALLY required, not by what would be conservative. "
+    "Single-word fixes are micro_edit. Sentence/paragraph rewrites are paragraph_edit. "
+    "Rewriting one logical section is section_edit. Adding one new section is new_section. "
+    "If the request restructures the document, splits content into several new files, rewrites a main file, "
+    "or otherwise clearly needs many files / many lines, classify as section_edit or new_section AND "
+    "mark scope_confidence='low' with scope_confidence_reason explaining why the available budgets may not fit "
+    "(the downstream policy will then treat the budget as advisory, not as a hard cap).\n"
     "edit_mode MUST be exactly one of: micro_edit, paragraph_edit, section_edit, new_section, compile_fix, review_only.\n"
+    "scope_confidence MUST be exactly one of: low, medium, high. Use 'high' only when the request unambiguously fits "
+    "the chosen edit_mode budget. Use 'low' or 'medium' for ambiguous or clearly larger requests — don't shrink the "
+    "scope artificially.\n"
     "read_strategy and recommended_read_strategy MUST be exactly one of: "
     "file_map_only, summary_only, range_only, target_file_if_under_cap. NEVER use 'full'.\n"
     "allowed_ops MUST only contain values from: "
@@ -39,7 +49,9 @@ _SYSTEM_INSTRUCTION = (
     "Include candidate_files (list of likely relevant files with path, confidence, reason) "
     "and read_plan (narrow file reads using only: find_project_files, grep_file, read_file_lines).\n"
     "If the request involves bibliography, imports, CSL, compile errors, or missing files, use edit_mode 'compile_fix'.\n"
-    "Prefer range_only when uncertain. Prefer narrower patch budgets when uncertain. "
+    "Prefer range_only when uncertain about reads. For patch budgets: classify the real scope first; "
+    "if the request looks larger than the chosen mode's budget, mark scope_confidence='low' instead of "
+    "silently shrinking the request.\n"
     "Do not include raw document text. Do not suggest reading entire main files."
 )
 
@@ -174,6 +186,8 @@ class PreProposalAnalysisService(SmallModelCallMixin):
             "edit_mode": "micro_edit",
             "max_changed_lines": 5,
             "max_files": 1,
+            "scope_confidence": "high",
+            "scope_confidence_reason": "Deterministic verb match (replace/rename) on a narrow request.",
         }
         context = {
             "task_brief": PayloadSanitizer.trim_text(text, max_chars=200),
