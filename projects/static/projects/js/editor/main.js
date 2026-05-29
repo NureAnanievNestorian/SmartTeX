@@ -1,3 +1,3 @@
-import { initEditorApp } from "./app.js";
+import * as app from "./app.js";
 
-initEditorApp().catch(() => {});
+app.initEditorApp?.().catch(() => {});

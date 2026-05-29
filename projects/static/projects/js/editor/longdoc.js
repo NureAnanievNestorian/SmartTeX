@@ -1,6 +1,10 @@
-import { cfg, s } from "./state.js";
-import { api } from "./api.js";
-import { escHtml, showConfirm } from "./ui.js";
+import * as state from "./state.js";
+import * as apiMod from "./api.js";
+import * as ui from "./ui.js";
+
+const { cfg, s } = state;
+const { api } = apiMod;
+const { escHtml, showConfirm } = ui;
 
 const contextPanelEl = document.getElementById("longdoc-context-panel");
 const outlinePanelEl = document.getElementById("longdoc-outline-panel");

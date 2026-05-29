@@ -1,10 +1,15 @@
-import { s, cfg } from "./state.js";
-import { api } from "./api.js";
-import {
+import * as state from "./state.js";
+import * as apiMod from "./api.js";
+import * as ui from "./ui.js";
+import * as cm from "./cm.js";
+
+const { s, cfg } = state;
+const { api } = apiMod;
+const {
   escHtml, fmtBytes, editorWrapEl, assetView, assetBox,
   setSaveHint, updateEditorTab,
-} from "./ui.js";
-import { setContent, switchLanguage, focusEditor, refreshLayout } from "./cm.js";
+} = ui;
+const { setContent, switchLanguage, focusEditor, refreshLayout } = cm;
 
 // selectFile is set from main.js to avoid circular dep at init time
 let _selectFile = null;

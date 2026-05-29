@@ -1,4 +1,6 @@
-import { cfg } from "./state.js";
+import * as state from "./state.js";
+
+const { cfg } = state;
 
 export async function api(url, opts = {}) {
   const headers = {

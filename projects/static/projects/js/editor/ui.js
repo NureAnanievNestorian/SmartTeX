@@ -1,4 +1,6 @@
-import { s } from "./state.js";
+import * as state from "./state.js";
+
+const { s } = state;
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 

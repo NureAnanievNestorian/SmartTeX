@@ -18,7 +18,9 @@ import {
 import { highlightSelectionMatches, searchKeymap } from "https://esm.sh/@codemirror/search@6";
 import { tags } from "https://esm.sh/@lezer/highlight@1";
 import { stex } from "https://esm.sh/@codemirror/legacy-modes@6/mode/stex";
-import { s } from "./state.js";
+import * as state from "./state.js";
+
+const { s } = state;
 
 // ── basicSetup equivalent ────────────────────────────────────────────────────
 

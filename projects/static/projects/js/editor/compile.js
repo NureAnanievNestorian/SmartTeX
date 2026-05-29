@@ -1,11 +1,16 @@
-import { s, cfg } from "./state.js";
-import { api } from "./api.js";
-import { getContent, saveTabState, activateTab, view } from "./cm.js";
-import { utf8ByteSize } from "./files.js";
-import {
-  setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics,
-} from "./ui.js";
-import { loadPdfViewer, pdfEmpty } from "./pdfviewer.js";
+import * as state from "./state.js";
+import * as apiMod from "./api.js";
+import * as cm from "./cm.js";
+import * as files from "./files.js";
+import * as ui from "./ui.js";
+import * as pdfviewer from "./pdfviewer.js";
+
+const { s, cfg } = state;
+const { api } = apiMod;
+const { getContent, saveTabState, activateTab } = cm;
+const { utf8ByteSize } = files;
+const { setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics } = ui;
+const { loadPdfViewer, pdfEmpty } = pdfviewer;
 
 const openPdfLink = document.getElementById("open-pdf");
 const logEl       = document.getElementById("log");
@@ -15,19 +20,19 @@ let _openOutlineLocation = () => {};
 export function setOutlineLocationRef(fn) { _openOutlineLocation = fn; }
 
 function syncTabContent(name, text, filename) {
-  if (!view || !name) return;
+  if (!cm.view || !name) return;
   if (name === s.activeTabName) {
-    const current = view.state.doc.toString();
+    const current = cm.view.state.doc.toString();
     if (current === text) return;
-    const prevSel = view.state.selection;
+    const prevSel = cm.view.state.selection;
     activateTab(name, text, filename || name, true);
     try {
-      const docLen = view.state.doc.length;
+      const docLen = cm.view.state.doc.length;
       const clampedRanges = prevSel.ranges.map(range => ({
         anchor: Math.min(range.anchor, docLen),
         head: Math.min(range.head, docLen),
       }));
-      view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
+      cm.view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
     } catch (_) {}
     return;
   }

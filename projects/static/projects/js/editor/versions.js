@@ -1,6 +1,10 @@
-import { s, cfg } from "./state.js";
-import { api } from "./api.js";
-import { escHtml, fmtDate, setSaveHint, setCompileState, renderDiff, showConfirm } from "./ui.js";
+import * as state from "./state.js";
+import * as apiMod from "./api.js";
+import * as ui from "./ui.js";
+
+const { s, cfg } = state;
+const { api } = apiMod;
+const { escHtml, fmtDate, setSaveHint, setCompileState, renderDiff, showConfirm } = ui;
 
 const versionsListEl       = document.getElementById("versions-list");
 const diffModalOverlay     = document.getElementById("diff-modal-overlay");

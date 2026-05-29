@@ -1,29 +1,38 @@
-import { s, cfg } from "./state.js";
-import { api } from "./api.js";
-import {
+import * as state from "./state.js";
+import * as apiMod from "./api.js";
+import * as cm from "./cm.js";
+import * as pdfviewer from "./pdfviewer.js";
+import * as ui from "./ui.js";
+import * as files from "./files.js";
+import * as versions from "./versions.js";
+import * as compile from "./compile.js";
+import * as longdoc from "./longdoc.js";
+
+const { s, cfg } = state;
+const { api } = apiMod;
+const {
   initCodeMirror, switchLanguage,
-  focusEditor, jumpToLine, view,
+  focusEditor, jumpToLine,
   saveTabState, hasTabState, activateTab, dropTabState,
-} from "./cm.js";
-import { loadPdfViewer, pdfEmpty } from "./pdfviewer.js";
-import {
+} = cm;
+const { loadPdfViewer, pdfEmpty } = pdfviewer;
+const {
   setSaveHint, setCompileState, updateEditorTab, openLog,
   switchBottomTab, initDialogs, initResizeHandles, updateLineCol,
   logToggleBtn, tabProblemsBtn, bottomCloseBtn, bottomPanel, editorWrapEl, assetView,
-} from "./ui.js";
-import {
+} = ui;
+const {
   renderFileList, renderOutline, showEditorForText, showAssetViewer, showEmptyEditor,
   setSelectFileRef, uploadFile, uploadZip, normalizeClipboardFile,
   createFolder, createEmptyTextFile, moveFileToFolder, deleteFile,
   isUploadableProjectFile, utf8ByteSize, pathBaseName, getFileTypeClass,
-} from "./files.js";
-import { renderVersions, initVersionsPanel, closeDiffModal } from "./versions.js";
-import {
+} = files;
+const { renderVersions, initVersionsPanel, closeDiffModal } = versions;
+const {
   saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef,
-} from "./compile.js";
-import { loadLongdocData, setLongdocProjectMetaRef, initSessionUI, closeAiLogModal } from "./longdoc.js";
+} = compile;
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
@@ -39,6 +48,10 @@ const editorTabbarEl = document.getElementById("editor-tabbar");
 function closeWritingAssistantTab() {
   document.getElementById("drop-zone")?.classList.remove("wa-active");
   document.getElementById("wa-tab-btn")?.classList.remove("active");
+}
+
+function closeAiLogOverlay() {
+  document.getElementById("ai-log-overlay")?.classList.remove("open");
 }
 
 export function renderEditorTabs() {
@@ -153,19 +166,19 @@ function renderSmallModelWarning() {
 }
 
 function syncTabContent(name, text, filename) {
-  if (!view || !name) return;
+  if (!cm.view || !name) return;
   if (name === s.activeTabName) {
-    const current = view.state.doc.toString();
+    const current = cm.view.state.doc.toString();
     if (current === text) return;
-    const prevSel = view.state.selection;
+    const prevSel = cm.view.state.selection;
     activateTab(name, text, filename || name, true);
     try {
-      const docLen = view.state.doc.length;
+      const docLen = cm.view.state.doc.length;
       const clampedRanges = prevSel.ranges.map(range => ({
         anchor: Math.min(range.anchor, docLen),
         head: Math.min(range.head, docLen),
       }));
-      view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
+      cm.view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
     } catch (_) {}
     return;
   }
@@ -404,14 +417,14 @@ export function initEditorApp() {
   // Inject shared references to break circular deps
   setSelectFileRef(selectFile);
   setOutlineLocationRef(openOutlineLocation);
-  setLongdocProjectMetaRef(loadProjectMeta);
-  initSessionUI();
+  longdoc.setLongdocProjectMetaRef?.(loadProjectMeta);
+  longdoc.initSessionUI?.();
 
   // Initialize CodeMirror
   initCodeMirror(
     cmParent,
     onEditorInput,
-    () => { if (view) updateLineCol(view); }
+    () => { if (cm.view) updateLineCol(cm.view); }
   );
 
   // Initialize UI subsystems
@@ -540,7 +553,7 @@ export function initEditorApp() {
       return;
     }
     if (e.key === "Escape" && document.getElementById("ai-log-overlay")?.classList.contains("open")) {
-      closeAiLogModal();
+      closeAiLogOverlay();
     }
   });
 
@@ -561,7 +574,7 @@ export function initEditorApp() {
   renderEditorTabs();
   updateEditorTab(s.selectedFile?.name || s.mainFileName);
   setCompileState("out_of_date");
-  await Promise.all([loadFiles(), loadSections(), loadVersions(true), loadLongdocData()]);
+  await Promise.all([loadFiles(), loadSections(), loadVersions(true), longdoc.loadLongdocData?.()]);
 
   const cd = await api(`/api/projects/${cfg.projectId}/compile/`, { method: "GET" });
   if (cd.log) { logEl.textContent = cd.log; openLog(); }
