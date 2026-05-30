@@ -56,13 +56,22 @@ _MAX_READ_TARGETS = 6
 _MAX_EDIT_TARGETS = 4
 
 _TASK_TYPE_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("compile_fix", re.compile(r"\b(compile|bibliography|\.bib|fix|error|помилк|виправ)\b", re.I)),
+    ("compile_fix", re.compile(r"\b(compile|bibliography|\.bib|fix|error)\b", re.I)),
     ("new_section", re.compile(r"\b(add (a |new )?section|create section|add chapter|new chapter)\b", re.I)),
-    ("section_edit", re.compile(r"\b(rewrite|restructure|переписати|refactor|move section)\b", re.I)),
+    ("section_edit", re.compile(r"\b(rewrite|restructure|refactor|move section)\b", re.I)),
     ("micro_edit", re.compile(r"\b(typo|rename|change word|fix word|change title)\b", re.I)),
     ("review_only", re.compile(r"\b(explain|describe|what does|review|analyze|analyse)\b", re.I)),
     ("paragraph_edit", re.compile(r"\b(fill in|write|expand|replace paragraph|update paragraph|update intro|fill out)\b", re.I)),
 ]
+
+
+_EDIT_PENALTY_PATH_PATTERNS = re.compile(
+    r"(BENCHMARK|/config/|README\.md|/extra/|"
+    r"old[-_]|demo[-_]|draft[-_]|[-_]demo\.[a-z]+|[-_]old\.[a-z]+)",
+    re.I,
+)
+
+_EDIT_EXCLUDED_ROLES = frozenset({FileRole.BIB, FileRole.CSL, FileRole.STYLE, FileRole.CLASS})
 
 
 def _infer_task_type(text: str) -> str:
@@ -271,17 +280,20 @@ def _request_keywords(user_request: str) -> set[str]:
     return {w.lower() for w in words if len(w) >= 3}
 
 
-def _score_file_card(card: FileCard, keywords: set[str]) -> float:
+def _score_file_card(card: FileCard, keywords: set[str], *, for_edit: bool = False) -> float:
     if not keywords:
         return 0.0
     score = 0.0
-    # Filename / stem overlap.
+    # Filename / stem overlap — track for path-penalty override.
     name = Path(card.filename).stem.lower()
+    name_explicitly_matched = False
     if name in keywords:
         score += 4.0
+        name_explicitly_matched = True
     for token in re.split(r"[\-_./]", name):
         if token and token in keywords:
             score += 1.0
+            name_explicitly_matched = True
     # Triggers.
     for trig in card.edit_triggers or []:
         phrase = str((trig or {}).get("phrase", "")).lower()
@@ -303,6 +315,14 @@ def _score_file_card(card: FileCard, keywords: set[str]) -> float:
         score -= 5.0
     if card.is_stale:
         score -= 0.5
+    # Edit-specific policy (path penalties overrideable by explicit file targeting).
+    if for_edit:
+        if card.reachability == Reachability.ORPHAN:
+            score -= 2.0
+        if not name_explicitly_matched and _EDIT_PENALTY_PATH_PATTERNS.search(card.filename):
+            score -= 2.5
+        if card.reachability == Reachability.REACHABLE and card.role in {FileRole.CONTENT_SECTION, FileRole.ENTRYPOINT}:
+            score += 0.8
     return score
 
 
@@ -311,15 +331,21 @@ def _score_region(region: RegionCard, keywords: set[str]) -> float:
         return 0.0
     score = 0.0
     title = (region.title or "").lower()
-    if title and title in " ".join(keywords):
+    # Check if any keyword appears in title OR title appears in a keyword
+    # (handles inflected/morphological variants, e.g. "supervisor" vs "supervisors").
+    if title and any(kw in title or title in kw for kw in keywords):
         score += 2.0
     for token in re.split(r"[\-_./\s]+", title):
         if token and token in keywords:
             score += 1.5
     for trig in region.edit_triggers or []:
         phrase = str((trig or {}).get("phrase", "")).lower()
-        if phrase and phrase in keywords:
+        if not phrase:
+            continue
+        if phrase in keywords:
             score += 2.0
+        elif any(p in phrase or phrase in p for p in keywords):
+            score += 0.5
     if region.is_stale:
         score -= 0.5
     if region.state == StateKind.PLACEHOLDER:
@@ -327,6 +353,39 @@ def _score_region(region: RegionCard, keywords: set[str]) -> float:
     if region.state == StateKind.DEMO:
         score += 0.5
     return score
+
+
+def _find_file_card(index: ProjectNavigationIndex, filename: str) -> Optional[FileCard]:
+    return index.file_cards.filter(filename=filename).first()
+
+
+def _best_region_for(fc: FileCard, keywords: set[str]) -> tuple[Optional[RegionCard], float]:
+    best: Optional[RegionCard] = None
+    best_score = -1.0
+    for region in fc.region_cards.all():
+        rs = _score_region(region, keywords)
+        if rs > best_score:
+            best_score = rs
+            best = region
+    return best, best_score
+
+
+def _edit_target_entry(
+    fc: FileCard,
+    target: dict,
+    best_region: Optional[RegionCard],
+    confidence: str,
+) -> dict:
+    return {
+        "filename": fc.filename,
+        "line_start": target["line_start"],
+        "line_end": target["line_end"],
+        "region_card_id": target["region_card_id"],
+        "region_title": (best_region.title if best_region else ""),
+        "state": (best_region.state if best_region else fc.state),
+        "reason": target["reason"],
+        "confidence": confidence,
+    }
 
 
 def _populate_indexed_keyword(
@@ -347,30 +406,30 @@ def _populate_indexed_keyword(
         index.file_cards.exclude(reachability=Reachability.EXCLUDED)
         .exclude(reachability=Reachability.MISSING)
     )
-    scored = [
-        (_score_file_card(fc, keywords), fc) for fc in file_cards
+
+    # Read scoring: no edit penalty, used to surface relevant files to read.
+    read_scored = [(_score_file_card(fc, keywords, for_edit=False), fc) for fc in file_cards]
+    read_scored = [s for s in read_scored if s[0] > 0]
+    read_scored.sort(key=lambda s: s[0], reverse=True)
+
+    # Edit scoring: independent, with edit policy applied.
+    edit_scored = [
+        (_score_file_card(fc, keywords, for_edit=True), fc)
+        for fc in file_cards
+        if fc.role not in _EDIT_EXCLUDED_ROLES
     ]
-    scored = [s for s in scored if s[0] > 0]
-    scored.sort(key=lambda s: s[0], reverse=True)
+    edit_scored = [s for s in edit_scored if s[0] > 0]
+    edit_scored.sort(key=lambda s: s[0], reverse=True)
 
     read_targets: list[dict[str, Any]] = []
-    edit_targets: list[dict[str, Any]] = []
     do_not_touch: list[str] = []
-    seen_files: set[str] = set()
 
-    for score, fc in scored[:_MAX_READ_TARGETS]:
+    for score, fc in read_scored[:_MAX_READ_TARGETS]:
         confidence = "high" if score >= 4 else ("medium" if score >= 2 else "low")
         if fc.is_stale:
             payload["warnings"].append(f"card_stale:{fc.filename}")
             confidence = "low"
-        # Best region within this file.
-        best_region: Optional[RegionCard] = None
-        best_region_score = -1.0
-        for region in fc.region_cards.all():
-            rs = _score_region(region, keywords)
-            if rs > best_region_score:
-                best_region_score = rs
-                best_region = region
+        best_region, best_region_score = _best_region_for(fc, keywords)
         target = _file_card_target(
             fc,
             reason=f"keyword match score={score:.1f}",
@@ -378,19 +437,27 @@ def _populate_indexed_keyword(
             region=best_region if best_region_score > 0 else None,
             suggested_tool="read_file_lines",
         )
+        # Private fields for rerank: stripped before returning.
+        target["_raw_score"] = score
+        target["_fc_role"] = str(fc.role)
+        target["_fc_reachability"] = str(fc.reachability)
         read_targets.append(target)
-        if fc.role not in {FileRole.BIB, FileRole.CSL, FileRole.STYLE, FileRole.CLASS} and len(edit_targets) < _MAX_EDIT_TARGETS:
-            edit_targets.append({
-                "filename": fc.filename,
-                "line_start": target["line_start"],
-                "line_end": target["line_end"],
-                "region_card_id": target["region_card_id"],
-                "region_title": (best_region.title if best_region else ""),
-                "state": (best_region.state if best_region else fc.state),
-                "reason": target["reason"],
-                "confidence": confidence,
-            })
-        seen_files.add(fc.filename)
+
+    # Build edit targets from independent edit scoring.
+    edit_targets: list[dict[str, Any]] = []
+    for edit_score, fc in edit_scored[:_MAX_EDIT_TARGETS]:
+        confidence = "high" if edit_score >= 4 else ("medium" if edit_score >= 2 else "low")
+        if fc.is_stale:
+            confidence = "low"
+        best_region, best_region_score = _best_region_for(fc, keywords)
+        target = _file_card_target(
+            fc,
+            reason=f"edit score={edit_score:.1f}",
+            confidence=confidence,
+            region=best_region if best_region_score > 0 else None,
+            suggested_tool="read_file_lines",
+        )
+        edit_targets.append(_edit_target_entry(fc, target, best_region if best_region_score > 0 else None, confidence))
 
     # Surface excluded / read-only cards as do_not_touch.
     for fc in index.file_cards.filter(reachability=Reachability.EXCLUDED):
@@ -398,12 +465,14 @@ def _populate_indexed_keyword(
 
     payload["read_targets"] = read_targets
     payload["likely_edit_targets"] = edit_targets
+    # Private: independent edit candidates preserved for post-rerank merge.
+    payload["_pre_rerank_edit_targets"] = list(edit_targets)
     payload["constraints"]["do_not_touch_files"] = do_not_touch
 
     if not read_targets:
         payload["scope_confidence"] = "low"
         payload["warnings"].append("no_keyword_match")
-    elif scored and scored[0][0] >= 4:
+    elif read_scored and read_scored[0][0] >= 4:
         payload["scope_confidence"] = "high"
     else:
         payload["scope_confidence"] = "medium"
@@ -471,6 +540,151 @@ def _populate_minimal(payload: dict[str, Any], *, reasons: list[str]) -> None:
     ])
 
 
+# --- context bundle ----------------------------------------------------------
+
+
+def _build_context_bundle(
+    project: Project,
+    read_targets: list[dict],
+    edit_targets: list[dict],
+    task_type: str,
+    *,
+    max_snippets: int = 3,
+    max_total_lines: int = 120,
+    max_chars: int = 12_000,
+    max_lines_per_snippet: int = 60,
+) -> dict:
+    from ..models import RegionKind as _RegionKind
+    from ..models import RegionCard as _RegionCard
+
+    # Multi-file tasks get one extra snippet slot.
+    _multi_file = task_type in {"section_edit", "compile_fix", "new_section"} or len(edit_targets) > 1
+    if _multi_file:
+        max_snippets = min(max_snippets + 1, 4)
+
+    root = project_dir(project)
+    seen_files: set[str] = set()
+    ordered: list[dict] = []
+    for t in list(edit_targets) + list(read_targets):
+        fn = t.get("filename")
+        if fn and fn not in seen_files:
+            seen_files.add(fn)
+            ordered.append(t)
+
+    snippets: list[dict] = []
+    omitted: list[dict] = []
+    lines_used = 0
+    chars_used = 0
+
+    for target in ordered:
+        fn = target.get("filename")
+        if not fn:
+            continue
+        if len(snippets) >= max_snippets or lines_used >= max_total_lines or chars_used >= max_chars:
+            omitted.append({"filename": fn, "reason": "budget"})
+            continue
+        abs_path = root / fn
+        try:
+            content = abs_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            omitted.append({"filename": fn, "reason": "unreadable"})
+            continue
+        file_lines = content.splitlines()
+        total_lines = len(file_lines)
+
+        line_start = max(1, int(target.get("line_start") or 1))
+        line_end = int(target.get("line_end") or total_lines)
+        original_end = line_end
+
+        # For metadata blocks extend past the #let line to capture assignment value.
+        region_card_id = target.get("region_card_id")
+        if region_card_id:
+            try:
+                region = _RegionCard.objects.filter(pk=region_card_id).first()
+                if region and region.region_kind == _RegionKind.METADATA_BLOCK:
+                    extended = min(total_lines, line_end + 5)
+                    # Extend while line looks like continuation of assignment.
+                    while extended < total_lines:
+                        next_line = file_lines[extended].strip() if extended < len(file_lines) else ""
+                        if next_line.startswith("#") and not next_line.startswith("#let"):
+                            break
+                        extended += 1
+                        if extended - line_end >= 8:
+                            break
+                    line_end = extended
+            except Exception:
+                pass
+
+        line_start = max(1, min(line_start, total_lines))
+        line_end = max(line_start, min(line_end, total_lines))
+        snippet_lines = file_lines[line_start - 1: line_end]
+
+        if len(snippet_lines) > max_lines_per_snippet:
+            snippet_lines = snippet_lines[:max_lines_per_snippet]
+            line_end = line_start + max_lines_per_snippet - 1
+
+        snippet_text = "\n".join(snippet_lines)
+        snippet_chars = len(snippet_text)
+        if chars_used + snippet_chars > max_chars:
+            omitted.append({"filename": fn, "reason": "budget"})
+            continue
+
+        complete_region = (
+            line_end >= original_end
+            and len(snippet_lines) < max_lines_per_snippet
+        )
+        lines_used += len(snippet_lines)
+        chars_used += snippet_chars
+        snippets.append({
+            "filename": fn,
+            "line_start": line_start,
+            "line_end": line_end,
+            "region_card_id": region_card_id,
+            "region_title": target.get("region_title") or "",
+            "reason": target.get("reason") or "",
+            "complete_region": complete_region,
+            "content": snippet_text,
+        })
+
+    # additional_reads_needed=False only when top edit target is bounded,
+    # complete, and single-file task.
+    top_edit = edit_targets[0] if edit_targets else None
+    additional_reads_needed = True
+    if top_edit and not _multi_file:
+        top_snippet = next((s for s in snippets if s["filename"] == top_edit.get("filename")), None)
+        if (
+            top_snippet
+            and top_snippet.get("complete_region")
+            and top_edit.get("region_card_id")
+        ):
+            additional_reads_needed = False
+
+    return {
+        "included": [s["filename"] for s in snippets],
+        "budget": {
+            "lines_used": lines_used,
+            "max_total_lines": max_total_lines,
+            "chars_used": chars_used,
+            "max_chars": max_chars,
+        },
+        "snippets": snippets,
+        "omitted": omitted,
+        "additional_reads_needed": additional_reads_needed,
+        "context_snippets_are_current_at_prepare_time": True,
+        "context_snippets_are_not_write_locks": True,
+    }
+
+
+def _strip_private_fields(response: dict) -> None:
+    """Remove internal fields not intended for MCP consumers."""
+    response.pop("_user_request", None)
+    response.pop("_pre_rerank_edit_targets", None)
+    for target in response.get("read_targets") or []:
+        for k in list(target.keys()):
+            if k.startswith("_"):
+                target.pop(k, None)
+
+
 # --- public entry-point -----------------------------------------------------
 
 
@@ -483,6 +697,8 @@ def prepare_document_work(
     attempted_patch_ops: Optional[list[dict]] = None,
     selected_file: Optional[str] = None,
     selected_region_id: Optional[int] = None,
+    include_context: bool = True,
+    context_budget_lines: int = 120,
 ) -> dict[str, Any]:
     """Build a preparation response for ``user_request``.
 
@@ -639,6 +855,28 @@ def prepare_document_work(
         elif mode == "minimal":
             _populate_minimal(response, reasons=freshness.reasons)
 
+        # Build context bundle for target-bearing modes.
+        _context_modes = {"indexed_keyword", "indexed_reranked", "cheap_direct"}
+        if include_context and response["mode"] in _context_modes:
+            try:
+                bundle = _build_context_bundle(
+                    project,
+                    response.get("read_targets") or [],
+                    response.get("likely_edit_targets") or [],
+                    response.get("task_type") or "unknown",
+                    max_total_lines=context_budget_lines,
+                )
+                response["context_bundle"] = bundle
+                response["recommended_next_step"] = {
+                    "action": "draft_patch_from_context" if not bundle["additional_reads_needed"] else "read_more_before_patch",
+                    "additional_reads_needed": bundle["additional_reads_needed"],
+                }
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("context bundle build failed: %s", exc)
+
+        # Strip private fields before caching and returning.
+        _strip_private_fields(response)
+
         # Cacheable modes — store the response.
         cacheable_modes = {"indexed_keyword", "indexed_reranked", "fallback_structural", "cheap_direct"}
         if response["mode"] in cacheable_modes and index_obj:
@@ -662,7 +900,6 @@ def prepare_document_work(
         response["warnings"].append(f"internal_error:{type(exc).__name__}")
         _populate_minimal(response, reasons=["internal_error"])
 
-    response.pop("_user_request", None)
     try:
         logger.info(
             "nav.prepare project=%s mode=%s scope=%s latency_ms=%.1f caps=%s warnings=%s",
@@ -712,10 +949,11 @@ def _maybe_small_model_rerank(
             "candidate_id": f"c{idx}",
             "filename": t.get("filename"),
             "region_title": t.get("region_title") or "",
-            "role": "",
+            "role": t.get("_fc_role", ""),
+            "reachability": t.get("_fc_reachability", ""),
             "state": t.get("state") or "",
             "summary": t.get("reason") or "",
-            "deterministic_score": float(len(read_targets) - idx),
+            "deterministic_score": t.get("_raw_score", float(len(read_targets) - idx)),
         })
     try:
         result = service.run(
@@ -754,12 +992,41 @@ def _maybe_small_model_rerank(
         if cid not in seen:
             new_targets.append(target)
     response["read_targets"] = new_targets
-    # Re-derive likely_edit_targets order to follow the new ranking.
-    name_order = {t["filename"]: i for i, t in enumerate(new_targets)}
-    response["likely_edit_targets"] = sorted(
-        response.get("likely_edit_targets") or [],
-        key=lambda e: name_order.get(e.get("filename"), 1_000),
-    )
+    # Combine reranked read candidates (filtered by edit policy) with
+    # independently scored edit candidates, then apply edit policy cap.
+    pre_rerank_edits: list[dict] = response.pop("_pre_rerank_edit_targets", None) or []
+    combined_edit: list[dict] = []
+    seen_edit: set[str] = set()
+    _excluded_role_strs = {str(r) for r in _EDIT_EXCLUDED_ROLES}
+    _excluded_reach_strs = {str(Reachability.EXCLUDED), str(Reachability.MISSING)}
+    for t in new_targets:
+        if t.get("_fc_role", "") in _excluded_role_strs:
+            continue
+        if t.get("_fc_reachability", "") in _excluded_reach_strs:
+            continue
+        fn = t.get("filename", "")
+        if fn and fn not in seen_edit:
+            combined_edit.append({
+                "filename": fn,
+                "line_start": t.get("line_start"),
+                "line_end": t.get("line_end"),
+                "region_card_id": t.get("region_card_id"),
+                "region_title": t.get("region_title") or "",
+                "state": t.get("state") or "",
+                "reason": t.get("rerank_reason") or t.get("reason") or "",
+                "confidence": t.get("confidence") or "medium",
+            })
+            seen_edit.add(fn)
+        if len(combined_edit) >= _MAX_EDIT_TARGETS:
+            break
+    for et in pre_rerank_edits:
+        fn = et.get("filename", "")
+        if fn and fn not in seen_edit:
+            combined_edit.append(et)
+            seen_edit.add(fn)
+        if len(combined_edit) >= _MAX_EDIT_TARGETS:
+            break
+    response["likely_edit_targets"] = combined_edit
     response["capabilities"]["small_model_rerank"] = "used"
     scope = result.get("scope_confidence")
     if scope in {"low", "medium", "high"}:

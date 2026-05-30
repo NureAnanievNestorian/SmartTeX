@@ -104,6 +104,16 @@ def _register() -> None:
     @receiver(post_save, sender=Project, dispatch_uid="nav_index_on_project_meta")
     def _on_project(sender, instance: "Project", created: bool, **kwargs) -> None:
         if created:
+            # Create a pending index stub so the first prepare_document_work
+            # knows an index is expected and will build synchronously.
+            try:
+                from .models import IndexStatus, ProjectNavigationIndex
+                ProjectNavigationIndex.objects.get_or_create(
+                    project=instance,
+                    defaults={"status": IndexStatus.PENDING},
+                )
+            except Exception as exc:
+                logger.warning("nav pending index creation failed: %s", exc)
             return
         # Markup-type / main-file changes invalidate the whole index
         # (entrypoint/structural facts change). Detection is best-effort:
@@ -146,3 +156,32 @@ def _register() -> None:
         # The handler exists so that future bookkeeping (eg. cache purge)
         # has a hook.
         return
+
+    # Mark the project index stale when nav-specific settings change.
+    # Only fires for ProjectSmallModelSettings saves; other settings models
+    # (quota, UserSmallModelAccess, etc.) are updated frequently and are
+    # not connected here.
+    try:
+        from small_model.models import ProjectSmallModelSettings
+
+        _NAV_FIELDS = frozenset({"nav_index_enrich_enabled", "nav_rerank_enabled", "nav_repair_enabled"})
+
+        @receiver(
+            post_save,
+            sender=ProjectSmallModelSettings,
+            dispatch_uid="nav_index_on_smallmodel_settings",
+        )
+        def _on_smallmodel_settings(
+            sender, instance: "ProjectSmallModelSettings", created: bool, update_fields=None, **kwargs
+        ) -> None:
+            # Skip if update_fields is known and doesn't include nav fields.
+            if update_fields is not None and not (_NAV_FIELDS & set(update_fields)):
+                return
+            try:
+                from .services.refresh import mark_whole_index_stale
+                mark_whole_index_stale(instance.project, reason="nav_settings_changed")
+            except Exception as exc:
+                logger.warning("nav settings-change stale marking failed: %s", exc)
+
+    except ImportError:
+        pass

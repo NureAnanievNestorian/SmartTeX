@@ -657,9 +657,16 @@ def _enrich_cards(
             span = max(1, int(region.line_end) - int(region.line_start) + 1)
             if span < 3 and not region.title:
                 continue
-            slice_lines = content.splitlines()[
-                max(0, region.line_start - 1): max(0, region.line_end)
-            ]
+            content_lines = content.splitlines()
+            if region.region_kind == "metadata_block" and span < 3:
+                # Extend slice to capture the assignment value, not just the #let line.
+                context_start = max(0, region.line_start - 1)
+                context_end = min(len(content_lines), region.line_end + 4)
+                slice_lines = content_lines[context_start:context_end]
+            else:
+                slice_lines = content_lines[
+                    max(0, region.line_start - 1): max(0, region.line_end)
+                ]
             slice_text = "\n".join(slice_lines)
             try:
                 region_result = region_service.run(

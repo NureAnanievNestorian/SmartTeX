@@ -9,6 +9,7 @@ from django.views.decorators.http import require_http_methods
 from accounts.auth_helpers import get_api_user
 from projects.views import _project_with_owner
 
+from .services.enforcement import check_preparation_freshness, get_enforcement_mode
 from .services.preparation import prepare_document_work
 
 
@@ -50,3 +51,27 @@ def api_prepare_document_work(request: HttpRequest, project_id: int) -> JsonResp
         selected_region_id=(int(body["selected_region_id"]) if str(body.get("selected_region_id") or "").strip().isdigit() else None),
     )
     return JsonResponse(result)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def api_prep_check(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Return enforcement mode and preparation freshness for a project.
+
+    Called by the MCP server before enforced write/read tools.
+    Query param: preparation_id (optional).
+    """
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    preparation_id = (request.GET.get("preparation_id") or "").strip() or None
+    mode = get_enforcement_mode(project)
+    freshness = check_preparation_freshness(project, preparation_id)
+    return JsonResponse({
+        "enforcement_mode": mode,
+        "fresh": freshness["fresh"],
+        "fresh_reason": freshness.get("reason", ""),
+        "last_prep_mode": freshness.get("mode", "none"),
+        "context_bundle_present": freshness.get("context_bundle_present", False),
+    })

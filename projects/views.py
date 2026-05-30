@@ -156,6 +156,7 @@ def _project_payload(project: Project, user=None) -> dict:
             "ai_sessions_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.ai_sessions_enabled),
             "mcp_controlled_access": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_controlled_access),
             "mcp_write_context": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_write_context),
+            "preparation_enforcement_mode": (longdoc_settings.preparation_enforcement_mode if longdoc_settings else "off") or "off",
             "locked": locked,
             "locking_proposal_id": locking_proposal.id if locking_proposal else None,
         },

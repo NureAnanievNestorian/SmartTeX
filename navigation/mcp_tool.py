@@ -36,6 +36,17 @@ Use the returned ``read_targets``, ``likely_edit_targets``,
 your reads and edits. Do not check settings or feature flags first —
 feature availability is reported inside ``capabilities``.
 
+**Context bundle**: when ``context_bundle`` is present in the response,
+use it as follows:
+
+- If ``context_bundle.additional_reads_needed`` is false, draft the
+  patch directly from the returned snippets — do NOT call
+  list_project_files or read_project_file/read_file_lines first.
+- If ``context_bundle.additional_reads_needed`` is true, read only the
+  specific files listed in ``context_bundle.omitted`` before patching.
+- Do not use list_project_files for orientation unless
+  prepare_document_work failed or returned mode='minimal'.
+
 This tool never edits source files, never creates or modifies proposals,
 and never takes proposal locks. It MAY build/refresh navigation index
 rows and write a short-lived preparation cache entry.
@@ -50,6 +61,8 @@ def prepare_document_work_tool(
     attempted_patch_ops: Optional[list[dict]] = None,
     selected_file: Optional[str] = None,
     selected_region_id: Optional[int] = None,
+    include_context: bool = True,
+    context_budget_lines: int = 120,
 ) -> dict[str, Any]:
     try:
         project = Project.objects.get(pk=int(project_id))
@@ -68,6 +81,8 @@ def prepare_document_work_tool(
             attempted_patch_ops=attempted_patch_ops,
             selected_file=selected_file,
             selected_region_id=selected_region_id,
+            include_context=include_context,
+            context_budget_lines=context_budget_lines,
         )
     except Exception as exc:  # pragma: no cover - last-resort guard
         logger.exception("prepare_document_work tool failed: %s", exc)

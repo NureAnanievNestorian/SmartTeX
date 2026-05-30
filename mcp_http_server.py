@@ -7,6 +7,7 @@ import sys
 import difflib
 import fnmatch
 import hashlib
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -57,6 +58,113 @@ TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv"
 READ_BUDGET_STATE: dict[tuple[str, int], int] = {}
 READ_BUDGET_RECENT_STATE: dict[tuple[str, int], list[dict[str, Any]]] = {}
 REPLACE_DRY_RUN_STATE: dict[tuple[str, int, str], str] = {}
+
+# Tracks the last preparation_id returned by prepare_document_work per (token, project).
+# Used by read tools to check preparation freshness without requiring the AI to pass
+# preparation_id explicitly on every call.
+_PREP_TRACK: dict[tuple[str, int], tuple[str, float]] = {}
+# Short-lived cache for prep-check API responses (avoids repeated Django round-trips).
+_PREP_CHECK_CACHE: dict[tuple[int, str], tuple[float, dict]] = {}
+_PREP_CHECK_TTL = 8.0  # seconds
+
+
+def _prep_track_key(project_id: int) -> tuple[str, int]:
+    token = _current_bearer_token() or LEGACY_TOKEN or "anonymous"
+    return token, int(project_id)
+
+
+def _update_prep_tracking(project_id: int, preparation_id: str) -> None:
+    _PREP_TRACK[_prep_track_key(project_id)] = (str(preparation_id), time.monotonic())
+
+
+def _get_tracked_preparation(project_id: int) -> str | None:
+    entry = _PREP_TRACK.get(_prep_track_key(project_id))
+    return entry[0] if entry else None
+
+
+def _nav_prep_check(project_id: int, preparation_id: str | None) -> dict[str, Any]:
+    """Call Django prep-check with short-lived in-process cache."""
+    cache_key = (int(project_id), str(preparation_id or ""))
+    cached = _PREP_CHECK_CACHE.get(cache_key)
+    if cached is not None:
+        ts, result = cached
+        if time.monotonic() - ts < _PREP_CHECK_TTL:
+            return result
+    try:
+        params = urlencode({"preparation_id": preparation_id or ""})
+        result = _call("GET", f"/api/projects/{project_id}/navigation/prep-check/?{params}")
+        if not isinstance(result, dict):
+            result = {"enforcement_mode": "off", "fresh": False, "fresh_reason": "unexpected_response"}
+    except Exception:
+        result = {"enforcement_mode": "off", "fresh": False, "fresh_reason": "check_failed"}
+    _PREP_CHECK_CACHE[cache_key] = (time.monotonic(), result)
+    return result
+
+
+def _log_nav_metric(event: str, project_id: int, **kwargs: Any) -> None:
+    import logging
+    logging.getLogger("smarttex.nav").info(
+        "nav_metric event=%s project_id=%d %s",
+        event,
+        int(project_id),
+        " ".join(f"{k}={v}" for k, v in kwargs.items()),
+    )
+
+
+def _require_preparation(
+        project_id: int,
+        preparation_id: str | None,
+        tool_name: str,
+) -> dict[str, Any] | None:
+    """Hard gate for write tools: reject if no fresh preparation when controlled mode is on."""
+    if not _project_controlled_mode_enabled(project_id):
+        return None
+    effective_id = preparation_id or _get_tracked_preparation(project_id)
+    check = _nav_prep_check(project_id, effective_id)
+    if check.get("fresh"):
+        return None
+    _log_nav_metric("write_without_preparation", project_id, tool=tool_name, has_id=bool(effective_id))
+    return _rejection(
+        "PREPARATION_REQUIRED",
+        f"A fresh preparation is required before calling {tool_name}.",
+        "Call prepare_document_work(project_id=<id>, user_request=<your intent>, include_context=True) and pass the returned preparation_id here.",
+        tool=tool_name,
+        fresh_reason=check.get("fresh_reason", ""),
+    )
+
+
+def _soft_read_check(
+        project_id: int,
+        preparation_id: str | None,
+        *,
+        is_broad: bool,
+        tool_name: str,
+) -> dict[str, Any] | None:
+    """Soft gate for read tools: warn or block based on preparation_enforcement_mode."""
+    longdoc = _project_longdoc_meta(project_id)
+    mode = str(longdoc.get("preparation_enforcement_mode") or "off")
+    if mode == "off":
+        return None
+    effective_id = preparation_id or _get_tracked_preparation(project_id)
+    check = _nav_prep_check(project_id, effective_id)
+    if check.get("fresh"):
+        _log_nav_metric("extra_reads_after_prepare", project_id, tool=tool_name, is_broad=is_broad)
+        return None
+    _log_nav_metric("read_without_preparation", project_id, tool=tool_name, is_broad=is_broad)
+    if mode == "block_broad_reads" and is_broad:
+        return _rejection(
+            "NO_FRESH_PREPARATION",
+            "Broad reads require a fresh preparation when enforcement is set to block_broad_reads.",
+            "Call prepare_document_work(project_id=<id>, user_request=<your intent>, include_context=True) first.",
+            enforcement_mode=mode,
+            fresh_reason=check.get("fresh_reason", ""),
+        )
+    return {
+        "warning": "NO_FRESH_PREPARATION",
+        "warning_message": "No fresh preparation exists for this project. Call prepare_document_work before write operations.",
+        "enforcement_mode": mode,
+        "fresh_reason": check.get("fresh_reason", ""),
+    }
 
 
 class DjangoIntrospectionTokenVerifier(TokenVerifier):
@@ -1123,12 +1231,11 @@ def read_project_file(
     """Read a text file window from the project (`main.tex`/`main.typ` by default)."""
     resolved_file_name = file_name or _project_main_file_name(project_id)
     controlled = _project_controlled_mode_enabled(project_id)
-    if (
-            start_line is None
-            and end_line is None
-            and start_char is None
-            and end_char is None
-    ):
+    is_full_file = start_line is None and end_line is None and start_char is None and end_char is None
+    if is_full_file:
+        nav_check = _soft_read_check(project_id, None, is_broad=True, tool_name="read_project_file")
+        if nav_check and nav_check.get("error"):
+            return nav_check
         info = _file_line_info(project_id, resolved_file_name)
         total_lines = max(1, int(info["line_count"] or 1))
         if controlled and int(info["size_bytes"] or 0) > MCP_MAX_FULL_READ_BYTES:
@@ -1159,6 +1266,8 @@ def read_project_file(
             return {}
         if budget_rejection:
             payload["budget_warning"] = budget_rejection
+        if nav_check:
+            payload["nav_warning"] = nav_check
         return _attach_read_budget(payload, project_id)
 
     if controlled and (start_line is not None or end_line is not None) and start_char is None and end_char is None:
@@ -1228,7 +1337,11 @@ def find_project_files(project_id: int, pattern: str | None = None, file_type: s
                 "modified_at": item.get("updated_at"),
             }
         )
-    return _attach_read_budget({"files": files}, project_id)
+    result: dict[str, Any] = {"files": files}
+    nav_check = _soft_read_check(project_id, None, is_broad=False, tool_name="find_project_files")
+    if nav_check:
+        result["nav_warning"] = nav_check
+    return _attach_read_budget(result, project_id)
 
 
 @mcp.tool
@@ -1240,6 +1353,9 @@ def file_line_count(project_id: int, filename: str) -> dict[str, Any]:
         "lines": info["line_count"],
         "size_bytes": info["size_bytes"],
     }
+    nav_check = _soft_read_check(project_id, None, is_broad=False, tool_name="file_line_count")
+    if nav_check:
+        payload["nav_warning"] = nav_check
     return _attach_read_budget(payload, project_id)
 
 
@@ -1286,6 +1402,9 @@ def read_file_lines(project_id: int, filename: str, start_line: int, end_line: i
     }
     if budget_rejection:
         shaped["budget_warning"] = budget_rejection
+    nav_check = _soft_read_check(project_id, None, is_broad=False, tool_name="read_file_lines")
+    if nav_check:
+        shaped["nav_warning"] = nav_check
     return _attach_read_budget(shaped, project_id)
 
 
@@ -1407,7 +1526,13 @@ async def update_project_file(
 @mcp.tool
 def list_project_files(project_id: int) -> dict[str, Any]:
     """List project entries (files and folders)."""
-    return _call("GET", f"/api/projects/{project_id}/files/")
+    nav_check = _soft_read_check(project_id, None, is_broad=True, tool_name="list_project_files")
+    if nav_check and nav_check.get("error"):
+        return nav_check
+    result = _call("GET", f"/api/projects/{project_id}/files/")
+    if nav_check and isinstance(result, dict):
+        result["nav_warning"] = nav_check
+    return result
 
 
 @mcp.tool
@@ -2682,6 +2807,7 @@ async def propose_document_change(
         validation_token: str | None = None,
         addresses_task_id: int | None = None,
         addresses_outline_item_id: int | None = None,
+        preparation_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit a suggested document change for user review.
 
@@ -2746,6 +2872,9 @@ async def propose_document_change(
     and become STALE_VALIDATION_TOKEN if the project HEAD moves; in either
     case revalidate and retry.
     """
+    prep_rejection = _require_preparation(project_id, preparation_id, "propose_document_change")
+    if prep_rejection:
+        return prep_rejection
     payload: dict[str, Any] = {"goal": goal}
     if validation_token:
         payload["validation_token"] = str(validation_token)
@@ -2770,6 +2899,7 @@ def validate_document_change(
         patch_ops: list[dict[str, Any]],
         compile: bool = True,
         auto_reorder_line_patches: bool = True,
+        preparation_id: str | None = None,
 ) -> dict[str, Any]:
     """Dry-run a complete suggested-change plan without creating a proposal.
 
@@ -2801,6 +2931,9 @@ def validate_document_change(
     If `auto_reorder_line_patches` is true, line-range edits for the same file
     may be normalized bottom-up to avoid line-number drift.
     """
+    prep_rejection = _require_preparation(project_id, preparation_id, "validate_document_change")
+    if prep_rejection:
+        return prep_rejection
     return _call_allow_json_errors(
         "POST",
         f"/api/projects/{project_id}/change-proposals/validate/",
@@ -3451,7 +3584,12 @@ def prepare_document_work(
         body["selected_file"] = selected_file
     if selected_region_id is not None:
         body["selected_region_id"] = int(selected_region_id)
-    return _call_allow_json_errors("POST", f"/api/projects/{int(project_id)}/navigation/prepare/", body)
+    result = _call_allow_json_errors("POST", f"/api/projects/{int(project_id)}/navigation/prepare/", body)
+    if isinstance(result, dict) and result.get("preparation_id"):
+        _update_prep_tracking(int(project_id), str(result["preparation_id"]))
+        if result.get("context_bundle"):
+            _log_nav_metric("prepare_context_bundle_used", int(project_id), mode=result.get("mode", ""))
+    return result
 
 
 prepare_document_work.__doc__ = _PREPARE_DOCUMENT_WORK_DOCSTRING
