@@ -73,9 +73,8 @@ def _is_skipped_dir(parts: Iterable[str]) -> bool:
 def _looks_binary(sample: bytes) -> bool:
     """Return True only for likely binary data.
 
-    Important: UTF-8 Ukrainian/Cyrillic text contains many bytes >= 128.
-    A byte-level ASCII printable ratio misclassifies it as binary, so first
-    try to decode as text.
+    UTF-8 Ukrainian/Cyrillic text contains many bytes >= 128, so an ASCII
+    printable ratio is not enough. Valid UTF-8 is always text here.
     """
     if not sample:
         return False
@@ -171,23 +170,27 @@ def discover_project_files(project: Project) -> DiscoveryResult:
         except OSError:
             continue
 
-        if _looks_binary(data[:4096]):
-            result.skipped.append(
-                DiscoveredFile(
-                    filename=rel,
-                    absolute_path=path,
-                    byte_size=size,
-                    line_count=0,
-                    content_hash="",
-                    excluded=True,
-                    exclusion_reason="binary",
-                    is_binary=True,
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            if _looks_binary(data[:4096]):
+                result.skipped.append(
+                    DiscoveredFile(
+                        filename=rel,
+                        absolute_path=path,
+                        byte_size=size,
+                        line_count=0,
+                        content_hash="",
+                        excluded=True,
+                        exclusion_reason="binary",
+                        is_binary=True,
+                    )
                 )
-            )
-            result.skip_reasons["binary"] = result.skip_reasons.get("binary", 0) + 1
-            continue
+                result.skip_reasons["binary"] = result.skip_reasons.get("binary", 0) + 1
+                continue
 
-        text = data.decode("utf-8", errors="replace")
+            text = data.decode("utf-8", errors="replace")
+
         line_count = text.count("\n") + (0 if text.endswith("\n") or not text else 1)
 
         result.files.append(
