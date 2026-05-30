@@ -752,9 +752,25 @@ def accept_session(session: AISession, user=None) -> None:
         check=False,
     )
     if merge_proc.returncode != 0:
-        raise RuntimeError(
-            f"git merge failed: {(merge_proc.stderr or merge_proc.stdout or 'unknown error').strip()}"
-        )
+        merge_output = (merge_proc.stderr or merge_proc.stdout or "").strip()
+        # If untracked files would be overwritten, remove them and retry once.
+        if "would be overwritten by merge" in merge_output:
+            proj_dir = get_project_dir(project)
+            for line in merge_output.splitlines():
+                line = line.strip()
+                if line and not line.startswith(("error:", "Please", "Aborting", "Merge")):
+                    conflicting = proj_dir / line
+                    if conflicting.exists() and not conflicting.is_dir():
+                        conflicting.unlink()
+            merge_proc = _run_project_git(
+                project,
+                ["merge", "--no-ff", "--no-edit", session.branch_name],
+                check=False,
+            )
+        if merge_proc.returncode != 0:
+            raise RuntimeError(
+                f"git merge failed: {(merge_proc.stderr or merge_proc.stdout or 'unknown error').strip()}"
+            )
 
     # 3. Sync live project files from the git object store.
     proj_dir = get_project_dir(project)
