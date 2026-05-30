@@ -928,8 +928,9 @@ mcp = FastMCP(
     - Changing any imported `.typ` file still requires compile to update PDF.
 
     ### Writing Assistant data
-    - If long-document mode is enabled, prefer the structured tools over editing hidden support files directly.
-    - Use `get_longdoc_overview` first for a compact snapshot of context, outline, tasks, notes, summaries, and requirements.
+    - Start every project with `get_project_overview`. The response includes `longdoc_enabled`.
+    - If `longdoc_enabled` is false, do NOT call any Writing Assistant tools (outline, tasks, notes, summaries, requirements, context files). Use the general project tools listed in `suggested_tools` instead.
+    - If `longdoc_enabled` is true, prefer the structured tools below over editing hidden support files directly.
     - Context files: `list_context_files`, `read_context_file`, `update_context_file`.
     - Outline: `read_outline`, `add_outline_item`, `update_outline_item`.
     - Tasks: `list_tasks`, `add_task`, `complete_task`, `update_task_status`.
@@ -2509,12 +2510,50 @@ def get_longdoc_overview(project_id: int) -> dict[str, Any]:
 
 @mcp.tool
 def get_project_overview(project_id: int) -> dict[str, Any]:
-    """Return project Writing Assistant context and active suggested-change status.
+    """Return a compact project overview that works for any project.
 
-    This is the proposal-oriented overview. It does not expose session branches,
-    worktrees, or staging filesystem paths.
+    For projects with Writing Assistant (long-document mode) enabled, returns the
+    full longdoc overview (context, outline, tasks, notes, summaries, requirements).
+    For projects with it disabled, returns a minimal overview with `longdoc_enabled=False`
+    and pointers to the general project tools (list_project_files, list_project_sections,
+    inspect_document_graph, etc.). Does not expose session branches, worktrees, or
+    staging filesystem paths.
     """
-    return get_longdoc_overview(project_id)
+    longdoc = _project_longdoc_meta(project_id)
+    if longdoc.get("enabled"):
+        payload = get_longdoc_overview(project_id)
+        if isinstance(payload, dict):
+            payload.setdefault("longdoc_enabled", True)
+        return payload
+    main_file = _project_main_file_name(project_id)
+    return {
+        "longdoc_enabled": False,
+        "main_file": main_file,
+        "note": (
+            "Writing Assistant / long-document mode is disabled for this project. "
+            "Do not call longdoc tools (read_outline, list_tasks, read_notes, etc.) — "
+            "they will return FEATURE_DISABLED."
+        ),
+        "suggested_tools": [
+            "list_project_files",
+            "list_project_sections",
+            "inspect_document_graph",
+            "read_project_file",
+            "search_project_content",
+            "find_edit_targets",
+            "propose_document_change",
+        ],
+        "limits": {
+            "max_read_lines": MCP_MAX_READ_LINES,
+            "max_full_read_bytes": MCP_MAX_FULL_READ_BYTES,
+            "max_patch_lines": MCP_MAX_PATCH_LINES,
+            "max_grep_matches": MCP_MAX_GREP_MATCHES,
+            "session_read_budget": MCP_SESSION_READ_BUDGET,
+            "max_session_files": MCP_MAX_SESSION_FILES,
+            "max_proposal_lines": MCP_MAX_PROPOSAL_LINES,
+            "max_new_file_lines": MCP_MAX_NEW_FILE_LINES,
+        },
+    }
 
 
 @mcp.tool

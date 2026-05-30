@@ -1261,12 +1261,26 @@ def assert_longdoc_feature(project, feature_name: str, *, require_write: bool = 
     else:
         enabled = is_feature_enabled(settings_obj, feature_name)
     if not enabled:
-        feature_label = feature_name.replace("_enabled", "").replace("_", " ")
+        if feature_name == "enabled":
+            message = "Writing Assistant (long-document mode) is disabled for this project."
+            suggestion = (
+                "Do not call Writing Assistant / longdoc tools for this project. "
+                "Use the general project tools instead: list_project_files, "
+                "list_project_sections, inspect_document_graph, read_project_file, "
+                "search_project_content, find_edit_targets, propose_document_change."
+            )
+        else:
+            feature_label = feature_name.replace("_enabled", "").replace("_", " ")
+            message = f"The {feature_label} feature is disabled for this project."
+            suggestion = (
+                f"Do not retry {feature_label} tools for this project. "
+                "Either continue without this feature or ask the user to enable it in project settings."
+            )
         raise LongdocAccessError(
             error="FEATURE_DISABLED",
-            message=f"{feature_label.title()} is disabled for this project.",
+            message=message,
             status_code=409,
-            suggestion="Enable long-document mode or turn on this Writing Assistant feature in project settings.",
+            suggestion=suggestion,
             extra={"feature": feature_name},
         )
     if require_write:
