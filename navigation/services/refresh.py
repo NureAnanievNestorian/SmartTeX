@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import posixpath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
@@ -44,6 +45,16 @@ from .structure import (
 from . import cache as prep_cache
 
 logger = logging.getLogger(__name__)
+
+
+def _canon_graph_path(value: str | None) -> str:
+    if not value:
+        return ""
+    raw = str(value).replace("\\", "/")
+    normalized = posixpath.normpath(raw)
+    if normalized == ".":
+        return ""
+    return normalized.lstrip("./")
 
 
 @dataclass
@@ -83,7 +94,7 @@ def refresh_navigation_index(
         summary.status = "no_index"
         return summary
 
-    target_names: set[str] = {f for f in (files or []) if f}
+    target_names: set[str] = {_canon_graph_path(f) for f in (files or []) if f}
     if not target_names:
         target_names = set(
             index.file_cards.filter(is_stale=True).values_list("filename", flat=True)
@@ -95,7 +106,7 @@ def refresh_navigation_index(
         return summary
 
     root = project_dir(project)
-    main_file = main_source_filename(project)
+    main_file = _canon_graph_path(main_source_filename(project))
     version_number = _latest_version_number(project)
 
     source_touched = any(
@@ -108,7 +119,7 @@ def refresh_navigation_index(
     if source_touched:
         try:
             graph = inspect_document_graph(project)
-            reachable_set = set(graph.reachable_files) if graph else set()
+            reachable_set = {_canon_graph_path(p) for p in (getattr(graph, "reachable_files", None) or [])} if graph else set()
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("partial refresh graph inspect failed: %s", exc)
 
@@ -317,7 +328,7 @@ def refresh_navigation_index(
 
 def mark_files_stale(project: Project, filenames: Iterable[str]) -> int:
     """Mark cards stale without re-reading content. Returns count."""
-    names = [f for f in (filenames or []) if f]
+    names = [_canon_graph_path(f) for f in (filenames or []) if f]
     if not names:
         return 0
     index = ProjectNavigationIndex.objects.filter(project=project).first()

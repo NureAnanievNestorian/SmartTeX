@@ -38,6 +38,16 @@ from .repair import build_repair_guidance, patch_op_schema_reminder
 logger = logging.getLogger(__name__)
 
 
+def _canon_graph_path(value: str | None) -> str:
+    if not value:
+        return ""
+    raw = str(value).replace("\\", "/")
+    normalized = posixpath.normpath(raw)
+    if normalized == ".":
+        return ""
+    return normalized.lstrip("./")
+
+
 _FRESH_TTL_SECONDS_DEFAULT = 600
 _MAX_READ_TARGETS = 6
 _MAX_EDIT_TARGETS = 4
@@ -415,7 +425,7 @@ def _populate_fallback_structural(
         for path in sorted(root.rglob("*")):
             if not path.is_file():
                 continue
-            rel = path.relative_to(root).as_posix()
+            rel = _canon_graph_path(path.relative_to(root).as_posix())
             if rel.startswith(".git/") or "/.smarttex" in rel:
                 continue
             inventory.append(rel)
@@ -423,16 +433,17 @@ def _populate_fallback_structural(
                 break
 
     payload["fallback_structure"] = {
-        "entrypoint": main_source_filename(project),
-        "reachable_files": list(graph.reachable_files) if graph else [],
-        "orphan_files": list(graph.orphan_source_files) if graph else [],
-        "missing_files": list(getattr(graph, "missing_files", []) or []) if graph else [],
+        "entrypoint": _canon_graph_path(main_source_filename(project)),
+        "reachable_files": [_canon_graph_path(p) for p in (getattr(graph, "reachable_files", None) or [])] if graph else [],
+        "orphan_files": [_canon_graph_path(p) for p in (getattr(graph, "orphan_source_files", None) or [])] if graph else [],
+        "missing_files": [_canon_graph_path(p) for p in (getattr(graph, "missing_files", []) or [])] if graph else [],
         "file_inventory": inventory,
     }
     payload["scope_confidence"] = "low"
     payload["warnings"].append("index_unavailable_using_structural_fallback")
 
-    if graph and graph.reachable_files:
+    reachable_files = [_canon_graph_path(p) for p in (getattr(graph, "reachable_files", None) or [])] if graph else []
+    if reachable_files:
         payload["read_targets"] = [
             {
                 "filename": fn,
@@ -444,7 +455,7 @@ def _populate_fallback_structural(
                 "confidence": "low",
                 "suggested_tool": "read_file_lines",
             }
-            for fn in list(graph.reachable_files)[:_MAX_READ_TARGETS]
+            for fn in reachable_files[:_MAX_READ_TARGETS]
         ]
 
 

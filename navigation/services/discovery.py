@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import posixpath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -49,6 +50,16 @@ class DiscoveryResult:
         return [f.filename for f in self.files]
 
 
+def _canon_rel_path(value: str | None) -> str:
+    if not value:
+        return ""
+    raw = str(value).replace("\\", "/")
+    normalized = posixpath.normpath(raw)
+    if normalized == ".":
+        return ""
+    return normalized.lstrip("./")
+
+
 def _is_skipped_dir(parts: Iterable[str]) -> bool:
     for part in parts:
         if part in SKIP_DIR_PARTS:
@@ -82,7 +93,7 @@ def discover_project_files(project: Project) -> DiscoveryResult:
     if not root.exists():
         return result
 
-    main_file = main_source_filename(project)
+    main_file = _canon_rel_path(main_source_filename(project))
     candidates: list[Path] = []
 
     for path in sorted(root.rglob("*")):
@@ -96,7 +107,7 @@ def discover_project_files(project: Project) -> DiscoveryResult:
         candidates.append(path)
 
     for path in candidates:
-        rel = path.relative_to(root).as_posix()
+        rel = _canon_rel_path(path.relative_to(root).as_posix())
 
         try:
             stat = path.stat()

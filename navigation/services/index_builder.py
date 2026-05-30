@@ -10,6 +10,7 @@ edit triggers — and only when the project owner has enabled the
 from __future__ import annotations
 
 import logging
+import posixpath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -49,6 +50,29 @@ from .structure import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _canon_graph_path(value: str | None) -> str:
+    """Canonical project-relative path used for comparing graph/discovery names.
+
+    document_graph may return paths containing ``..`` (for example
+    ``template/../src/lib.typ``), while discovery sees the normalized path
+    (``src/lib.typ``). All reachability and edge comparisons must use this
+    canonical form.
+    """
+    if not value:
+        return ""
+    raw = str(value).replace("\\", "/")
+    normalized = posixpath.normpath(raw)
+    if normalized == ".":
+        return ""
+    return normalized.lstrip("./")
+
+
+def _graph_get(graph, key: str, default=None):
+    if isinstance(graph, dict):
+        return graph.get(key, default)
+    return getattr(graph, key, default)
 
 
 @dataclass
@@ -117,8 +141,8 @@ def build_navigation_index(
 
     index.status = IndexStatus.BUILDING
     index.markup_type_snapshot = project.markup_type
-    index.main_file_snapshot = main_source_filename(project)
-    index.entrypoint_file = main_source_filename(project)
+    index.main_file_snapshot = _canon_graph_path(main_source_filename(project))
+    index.entrypoint_file = _canon_graph_path(main_source_filename(project))
     index.schema_version = NAV_SCHEMA_VERSION
     index.build_error = ""
     index.save(
@@ -145,11 +169,15 @@ def build_navigation_index(
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("document_graph inspection failed for project %s: %s", project.id, exc)
 
-        reachable_set = set(graph.reachable_files) if graph else set()
-        orphan_set = set(graph.orphan_source_files) if graph else set()
-        dynamic_unresolved = (
-            {item.get("file") for item in graph.unresolved_dynamic_imports} if graph else set()
-        )
+        reachable_set = {_canon_graph_path(p) for p in (_graph_get(graph, "reachable_files", []) or [])} if graph else set()
+        orphan_set = {_canon_graph_path(p) for p in (_graph_get(graph, "orphan_source_files", []) or [])} if graph else set()
+        dynamic_unresolved = set()
+        if graph:
+            for item in (_graph_get(graph, "unresolved_dynamic_imports", []) or []):
+                if isinstance(item, dict):
+                    dynamic_unresolved.add(_canon_graph_path(item.get("file")))
+                else:
+                    dynamic_unresolved.add(_canon_graph_path(item))
         # Edges: rebuild forward edges by re-parsing reachable files quickly via graph isn't exposed,
         # so we leave forward/reverse edges empty until refresh.py wires them. Keeping deterministic.
         includes_map = _build_includes_map(project, discovery.files, graph)
@@ -206,7 +234,7 @@ def build_navigation_index(
             summary.enrichment_status = "disabled"
 
         # Mark missing files: cards that existed but were not seen this build.
-        seen_names = {df.filename for df in discovery.files} | {df.filename for df in discovery.skipped}
+        seen_names = {_canon_graph_path(df.filename) for df in discovery.files} | {_canon_graph_path(df.filename) for df in discovery.skipped}
         missing = index.file_cards.exclude(filename__in=seen_names)
         for card in missing:
             card.reachability = Reachability.MISSING
@@ -309,11 +337,12 @@ def _build_includes_map(
         )
         out: list[str] = []
         for ref in refs:
-            resolved = _resolve_ref(df.filename, ref, markup)
+            resolved = _canon_graph_path(_resolve_ref(df.filename, ref, markup))
+            source_name = _canon_graph_path(df.filename)
             out.append(resolved)
-            reverse.setdefault(resolved, []).append(df.filename)
+            reverse.setdefault(resolved, []).append(source_name)
         if out:
-            forward[df.filename] = sorted(set(out))
+            forward[_canon_graph_path(df.filename)] = sorted(set(out))
 
     for k in list(reverse.keys()):
         reverse[k] = sorted(set(reverse[k]))
@@ -332,15 +361,16 @@ def _upsert_file_card(
     includes_map: dict,
     version_number: int,
 ) -> tuple[bool, bool, dict]:
-    main_file = main_source_filename(project)
-    is_entrypoint = df.filename == main_file
-    role, role_conf = classify_file_role(df.filename, is_entrypoint=is_entrypoint)
+    filename = _canon_graph_path(df.filename)
+    main_file = _canon_graph_path(main_source_filename(project))
+    is_entrypoint = filename == main_file
+    role, role_conf = classify_file_role(filename, is_entrypoint=is_entrypoint)
 
-    if df.filename in dynamic_unresolved:
+    if filename in dynamic_unresolved:
         reachability = Reachability.DYNAMIC_UNRESOLVED
-    elif df.filename in reachable_set or is_entrypoint:
+    elif filename in reachable_set or is_entrypoint:
         reachability = Reachability.REACHABLE
-    elif df.filename in orphan_set:
+    elif filename in orphan_set:
         reachability = Reachability.ORPHAN
     else:
         # Not a source file: orphan-by-default unless reachable as an asset.
@@ -348,7 +378,7 @@ def _upsert_file_card(
         if suffix in {".tex", ".typ"}:
             reachability = Reachability.ORPHAN
         else:
-            reachability = Reachability.REACHABLE if df.filename in reachable_set else Reachability.ORPHAN
+            reachability = Reachability.REACHABLE if filename in reachable_set else Reachability.ORPHAN
 
     try:
         content = df.absolute_path.read_text(encoding="utf-8", errors="ignore")
@@ -358,25 +388,25 @@ def _upsert_file_card(
     state, state_conf = classify_state(content)
 
     region_infos = extract_regions(
-        filename=df.filename,
+        filename=filename,
         content=content,
         markup_type=project.markup_type,
         role=role,
     )
     region_titles = [r.title for r in region_infos if r.title]
     triggers = deterministic_file_triggers(
-        filename=df.filename, role=role, region_titles=region_titles
+        filename=filename, role=role, region_titles=region_titles
     )
 
-    forward = includes_map.get("forward", {}).get(df.filename, [])
-    reverse = includes_map.get("reverse", {}).get(df.filename, [])
+    forward = includes_map.get("forward", {}).get(filename, [])
+    reverse = includes_map.get("reverse", {}).get(filename, [])
 
     summary_text = _build_file_summary(df=df, role=role, region_count=len(region_infos))
 
     with transaction.atomic():
         card, created = FileCard.objects.select_for_update().get_or_create(
             index=index,
-            filename=df.filename,
+            filename=filename,
             defaults={
                 "role": role,
                 "role_source": Source.DETERMINISTIC,
@@ -507,9 +537,15 @@ def _sync_region_cards(
 
 
 def _upsert_excluded_card(*, index: ProjectNavigationIndex, df: DiscoveredFile) -> None:
+    filename = _canon_graph_path(df.filename)
+    existing = FileCard.objects.filter(index=index, filename=filename).first()
+    if existing is not None and existing.reachability != Reachability.EXCLUDED:
+        # Defensive guard: do not overwrite a valid source/reachable card if
+        # discovery ever reports the same path as skipped too.
+        return
     FileCard.objects.update_or_create(
         index=index,
-        filename=df.filename,
+        filename=filename,
         defaults={
             "role": FileRole.AUXILIARY,
             "role_source": Source.DETERMINISTIC,
@@ -536,7 +572,7 @@ def _upsert_excluded_card(*, index: ProjectNavigationIndex, df: DiscoveredFile) 
 
 
 def _mark_file_stale(index: ProjectNavigationIndex, filename: str) -> None:
-    FileCard.objects.filter(index=index, filename=filename).update(is_stale=True)
+    FileCard.objects.filter(index=index, filename=_canon_graph_path(filename)).update(is_stale=True)
 
 
 # --- small-model enrichment --------------------------------------------------
