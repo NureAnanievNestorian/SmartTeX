@@ -53,6 +53,10 @@ from .models import AIBatch, AIBatchChange, AISession, ChangeProposal, ProjectTa
 logger = logging.getLogger(__name__)
 
 SOURCE_EXTENSIONS: frozenset[str] = frozenset({".tex", ".typ"})
+_TEXT_EXTENSIONS_FOR_DIFF: frozenset[str] = frozenset({
+    ".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md",
+    ".csv", ".json", ".yaml", ".yml", ".csl",
+})
 PATCH_OPS: frozenset[str] = frozenset({"patch_file_lines", "replace_text", "append_to_file", "update_section"})
 
 
@@ -732,11 +736,14 @@ def accept_session(session: AISession, user=None) -> None:
     # 1. Gather changed files before merge so we know what to version.
     changed_files = sorted(_get_session_changed_files(project, session))
 
-    # Collect before-content from HEAD for each changed file.
+    # Collect before-content from HEAD for each changed file (text files only).
     before_contents: dict[str, str] = {}
     for fname in changed_files:
-        proc = _run_project_git(project, ["show", f"HEAD:{fname}"], check=False)
-        before_contents[fname] = proc.stdout if proc.returncode == 0 else ""
+        if Path(fname).suffix.lower() in _TEXT_EXTENSIONS_FOR_DIFF:
+            proc = _run_project_git(project, ["show", f"HEAD:{fname}"], check=False)
+            before_contents[fname] = proc.stdout if proc.returncode == 0 else ""
+        else:
+            before_contents[fname] = ""
 
     # 2. Merge session branch into HEAD with --no-ff so there is always a merge commit.
     merge_proc = _run_project_git(
@@ -752,11 +759,11 @@ def accept_session(session: AISession, user=None) -> None:
     # 3. Sync live project files from the git object store.
     proj_dir = get_project_dir(project)
     for fname in changed_files:
-        proc = _run_project_git(project, ["show", f"HEAD:{fname}"], check=False)
-        if proc.returncode == 0:
+        ls_proc = _run_project_git(project, ["ls-tree", "HEAD", "--", fname], check=False)
+        if ls_proc.returncode == 0 and (ls_proc.stdout or "").strip():
             target = proj_dir / fname
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(proc.stdout, encoding="utf-8")
+            _run_project_git(project, ["checkout", "HEAD", "--", fname], check=False)
         else:
             # File was deleted in session
             target = proj_dir / fname
@@ -785,8 +792,11 @@ def accept_session(session: AISession, user=None) -> None:
     merge_commit = (head_proc.stdout or "").strip()
 
     for fname in changed_files:
-        after_proc = _run_project_git(project, ["show", f"HEAD:{fname}"], check=False)
-        after_content = after_proc.stdout if after_proc.returncode == 0 else ""
+        if Path(fname).suffix.lower() in _TEXT_EXTENSIONS_FOR_DIFF:
+            after_proc = _run_project_git(project, ["show", f"HEAD:{fname}"], check=False)
+            after_content = after_proc.stdout if after_proc.returncode == 0 else ""
+        else:
+            after_content = ""
         create_project_version(
             project=project,
             actor=user,

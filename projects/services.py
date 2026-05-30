@@ -233,7 +233,7 @@ def _is_smarttex_trackable(parts: tuple) -> bool:
     return True
 
 
-def list_git_trackable_text_files(project: Project) -> list[str]:
+def list_git_trackable_files(project: Project) -> list[str]:
     root = ensure_project_dir(project)
     paths = {main_source_filename(project)}
     for path in root.rglob("*"):
@@ -253,12 +253,17 @@ def list_git_trackable_text_files(project: Project) -> list[str]:
         if rel == main_source_filename(project):
             paths.add(rel)
             continue
-        if path.suffix.lower() in TEXT_EXTENSIONS:
+        ext = path.suffix.lower()
+        if ext in TEXT_EXTENSIONS or ext in IMAGE_EXTENSIONS or ext == ".pdf":
             paths.add(rel)
     return sorted(paths)
 
 
-def commit_project_text_changes(
+def list_git_trackable_text_files(project: Project) -> list[str]:
+    return list_git_trackable_files(project)
+
+
+def commit_project_changes(
     project: Project,
     *,
     summary: str,
@@ -272,7 +277,7 @@ def commit_project_text_changes(
     before_commit = _current_git_head(project)
     normalized = sorted({str(path or "").strip() for path in target_files if str(path or "").strip()})
     if not normalized:
-        normalized = list_git_trackable_text_files(project)
+        normalized = list_git_trackable_files(project)
 
     try:
         add_args = ["add", "-A", "--", *normalized]
@@ -289,7 +294,7 @@ def commit_project_text_changes(
                 "",
                 f"operation: {operation}",
                 f"source: {source}",
-                "tracked: text-only",
+                "tracked: all-files",
             ]
         )
         _run_project_git(project, ["commit", "--quiet", "-m", message, "--", *normalized])
@@ -300,10 +305,23 @@ def commit_project_text_changes(
         return GitCommitInfo(before_commit=before_commit, commit_hash=commit_hash)
     except Exception:
         logger.exception(
-            "Failed to commit text changes",
+            "Failed to commit changes",
             extra={"project_id": project.id, "operation": operation, "source": source, "target_files": normalized},
         )
         raise
+
+
+def commit_project_text_changes(
+    project: Project,
+    *,
+    summary: str,
+    operation: str,
+    source: str,
+    target_files: list[str],
+) -> GitCommitInfo:
+    return commit_project_changes(
+        project, summary=summary, operation=operation, source=source, target_files=target_files
+    )
 
 
 GITHUB_SYNC_INTERVAL_SECONDS = 30 * 60

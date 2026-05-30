@@ -29,6 +29,7 @@ from .services import (
     build_version_diff,
     cancel_github_sync,
     compile_state_for_status,
+    commit_project_changes,
     commit_project_text_changes,
     compile_project,
     create_project_directory,
@@ -729,6 +730,13 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
                 summary=meta["summary"] or _default_change_summary("create_project_file", asset["name"]),
             )
         else:
+            commit_info = commit_project_changes(
+                project,
+                summary=meta["summary"] or _default_change_summary("upload_project_file", asset["name"]),
+                operation="upload_project_file",
+                source=meta["source"],
+                target_files=[asset["name"]],
+            )
             create_project_version(
                 project=project,
                 actor=user,
@@ -740,8 +748,8 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
                 before_content="",
                 after_content="",
                 snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
-                event_payload={"name": asset["name"], "size": asset["size"], "kind": "binary_upload"},
-                is_revertible=False,
+                event_payload={"name": asset["name"], "size": asset["size"], "kind": "binary_upload", "git_commit": commit_info.commit_hash or ""},
+                is_revertible=bool(commit_info.commit_hash),
             )
         return JsonResponse(asset, status=201)
 
@@ -811,6 +819,13 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
             summary=meta["summary"] or _default_change_summary("create_project_file", asset["name"]),
         )
     else:
+        commit_info = commit_project_changes(
+            project,
+            summary=meta["summary"] or _default_change_summary("upload_project_file", asset["name"]),
+            operation="upload_project_file",
+            source=meta["source"],
+            target_files=[asset["name"]],
+        )
         create_project_version(
             project=project,
             actor=user,
@@ -822,8 +837,8 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
             before_content="",
             after_content="",
             snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
-            event_payload={"name": asset["name"], "size": asset["size"], "kind": "binary_upload"},
-            is_revertible=False,
+            event_payload={"name": asset["name"], "size": asset["size"], "kind": "binary_upload", "git_commit": commit_info.commit_hash or ""},
+            is_revertible=bool(commit_info.commit_hash),
         )
     return JsonResponse(asset, status=201)
 
@@ -868,49 +883,32 @@ def api_project_asset(request: HttpRequest, project_id: int, filename: str):
     project.last_status = Project.CompileStatus.PENDING
     project.save(update_fields=["last_status", "updated_at"])
     deleted_name = str(payload.get("name") or filename)
-    deleted_is_text = bool(payload.get("is_text"))
-    if deleted_is_text:
-        commit_info = commit_project_text_changes(
-            project,
-            summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
-            operation="delete_project_file",
-            source=meta["source"],
-            target_files=[deleted_name],
-        )
-        create_project_version(
-            project=project,
-            actor=user,
-            source=meta["source"],
-            operation="delete_project_file",
-            target=deleted_name,
-            target_file=deleted_name,
-            summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
-            before_content="",
-            after_content="",
-            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
-            event_payload={
-                "name": deleted_name,
-                "kind": "text_delete",
-                "git_commit": commit_info.commit_hash or "",
-                "before_commit": commit_info.before_commit or "",
-            },
-            is_revertible=bool(commit_info.before_commit),
-        )
-    else:
-        create_project_version(
-            project=project,
-            actor=user,
-            source=meta["source"],
-            operation="delete_project_file",
-            target=deleted_name,
-            target_file=deleted_name,
-            summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
-            before_content="",
-            after_content="",
-            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
-            event_payload={"name": deleted_name, "kind": "binary_delete"},
-            is_revertible=False,
-        )
+    commit_info = commit_project_changes(
+        project,
+        summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
+        operation="delete_project_file",
+        source=meta["source"],
+        target_files=[deleted_name],
+    )
+    create_project_version(
+        project=project,
+        actor=user,
+        source=meta["source"],
+        operation="delete_project_file",
+        target=deleted_name,
+        target_file=deleted_name,
+        summary=meta["summary"] or _default_change_summary("delete_project_file", deleted_name),
+        before_content="",
+        after_content="",
+        snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+        event_payload={
+            "name": deleted_name,
+            "kind": "file_delete",
+            "git_commit": commit_info.commit_hash or "",
+            "before_commit": commit_info.before_commit or "",
+        },
+        is_revertible=bool(commit_info.before_commit),
+    )
     return JsonResponse(payload)
 
 
@@ -995,49 +993,33 @@ def api_project_asset_rename(request: HttpRequest, project_id: int, filename: st
     old_name = str(payload.get("old_name") or filename)
     new_name = str(payload.get("name") or new_filename)
     if old_name != new_name:
-        if bool(payload.get("is_text")):
-            commit_info = commit_project_text_changes(
-                project,
-                summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
-                operation="rename_project_file",
-                source=meta["source"],
-                target_files=[old_name, new_name],
-            )
-            create_project_version(
-                project=project,
-                actor=user,
-                source=meta["source"],
-                operation="rename_project_file",
-                target=f"{old_name}->{new_name}",
-                target_file=new_name,
-                summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
-                before_content="",
-                after_content="",
-                snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
-                event_payload={
-                    "old_name": old_name,
-                    "new_name": new_name,
-                    "kind": "text_rename",
-                    "git_commit": commit_info.commit_hash or "",
-                    "before_commit": commit_info.before_commit or "",
-                },
-                is_revertible=bool(commit_info.before_commit),
-            )
-        else:
-            create_project_version(
-                project=project,
-                actor=user,
-                source=meta["source"],
-                operation="rename_project_file",
-                target=f"{old_name}->{new_name}",
-                target_file=new_name,
-                summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
-                before_content="",
-                after_content="",
-                snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
-                event_payload={"old_name": old_name, "new_name": new_name, "kind": "binary_rename"},
-                is_revertible=False,
-            )
+        commit_info = commit_project_changes(
+            project,
+            summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
+            operation="rename_project_file",
+            source=meta["source"],
+            target_files=[old_name, new_name],
+        )
+        create_project_version(
+            project=project,
+            actor=user,
+            source=meta["source"],
+            operation="rename_project_file",
+            target=f"{old_name}->{new_name}",
+            target_file=new_name,
+            summary=meta["summary"] or _default_change_summary("rename_project_file", f"{old_name}->{new_name}"),
+            before_content="",
+            after_content="",
+            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+            event_payload={
+                "old_name": old_name,
+                "new_name": new_name,
+                "kind": "file_rename",
+                "git_commit": commit_info.commit_hash or "",
+                "before_commit": commit_info.before_commit or "",
+            },
+            is_revertible=bool(commit_info.before_commit),
+        )
     return JsonResponse(payload)
 
 
