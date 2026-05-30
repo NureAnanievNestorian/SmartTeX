@@ -613,8 +613,14 @@ def api_validate_document_change(request: HttpRequest, project_id: int) -> JsonR
         return JsonResponse(
             {
                 "error": "FEATURE_DISABLED",
-                "message": "Suggested changes are disabled for this project.",
-                "suggestion": "Ask the user to enable Long-document mode and Suggested changes in project settings before validating proposal changes.",
+                "message": "Suggested changes (proposal workflow) are disabled for this project.",
+                "suggestion": (
+                    "Do not call propose_document_change or validate_document_change for this project. "
+                    "Apply edits directly with update_project_section, replace_in_project_file, "
+                    "patch_file_lines, append_to_file, update_project_file, or create_project_text_file."
+                ),
+                "longdoc_enabled": settings_obj.enabled,
+                "ai_sessions_enabled": settings_obj.ai_sessions_enabled,
             },
             status=403,
         )
@@ -648,7 +654,20 @@ def api_change_proposals(request: HttpRequest, project_id: int) -> JsonResponse:
     body = _json_body(request)
     settings_obj, _ = get_or_create_longdoc_settings(project)
     if not (settings_obj.enabled and settings_obj.ai_sessions_enabled):
-        return JsonResponse({"error": "FEATURE_DISABLED", "message": "Suggested changes are disabled for this project."}, status=403)
+        return JsonResponse(
+            {
+                "error": "FEATURE_DISABLED",
+                "message": "Suggested changes (proposal workflow) are disabled for this project.",
+                "suggestion": (
+                    "Do not call propose_document_change for this project. "
+                    "Apply edits directly with update_project_section, replace_in_project_file, "
+                    "patch_file_lines, append_to_file, update_project_file, or create_project_text_file."
+                ),
+                "longdoc_enabled": settings_obj.enabled,
+                "ai_sessions_enabled": settings_obj.ai_sessions_enabled,
+            },
+            status=403,
+        )
     try:
         raw_patch_ops = body.get("patch_ops")
         proposal = propose_document_change(
