@@ -2209,6 +2209,58 @@ def search_project_content(
 
 
 @mcp.tool
+def smart_search_project(
+        project_id: int,
+        query: str,
+        scope: str = "reachable_document",
+        selected_file: str | None = None,
+        include_orphans: bool = False,
+        include_extra: bool = False,
+        include_config: bool = False,
+        use_small_model: bool = True,
+        max_results: int = 20,
+) -> dict[str, Any]:
+    """Semantic search across project documents using the navigation index.
+
+    Returns ranked results with snippets, match kinds, confidence, and reasons.
+    Prefer this over `search_project_content` for conceptual/structural queries.
+
+    Each result contains:
+      filename, line_start, line_end, region_title, region_kind,
+      match_kind, confidence, reason, snippet, file_role, file_state, reachability.
+
+    match_kind values:
+      exact_match          — query text found verbatim in the region
+      semantic_match       — trigger/summary match, no verbatim hit
+      related_context      — file-level match via summary
+      possible_conflict    — multiple locations cover the same topic differently
+      placeholder_or_demo  — region/file is marked demo or placeholder
+      old_topic_residue    — path or content suggests old/archive topic
+      citation_or_source   — bibliography or CSL file
+      diagram_reference    — figure block or diagram file
+      definition           — metadata block or structural definition
+
+    scope options:
+      reachable_document (default) — only reachable source files
+      current_file                 — search within selected_file only
+      all_project_files            — all indexed project files
+
+    Use include_orphans/include_extra/include_config to widen scope.
+    Disable use_small_model for deterministic-only mode.
+    """
+    return _call("POST", f"/api/projects/{project_id}/navigation/search/", {
+        "query": query,
+        "scope": scope,
+        "selected_file": selected_file,
+        "include_orphans": include_orphans,
+        "include_extra": include_extra,
+        "include_config": include_config,
+        "use_small_model": use_small_model,
+        "max_results": max_results,
+    })
+
+
+@mcp.tool
 def read_project_window(
         project_id: int,
         start_line: int | None = None,

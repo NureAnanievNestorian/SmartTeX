@@ -200,6 +200,24 @@ NAV_RERANK_TARGETS_SCHEMA = {
     },
 }
 
+SEARCH_RERANK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ranked": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "candidate_id": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "match_kind": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
 NAV_REPAIR_GUIDANCE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,

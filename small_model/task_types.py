@@ -8,6 +8,7 @@ TASK_NAV_FILE_CARD_ENRICH = "nav_file_card_enrich"
 TASK_NAV_REGION_CARD_ENRICH = "nav_region_card_enrich"
 TASK_NAV_RERANK_TARGETS = "nav_rerank_targets"
 TASK_NAV_REPAIR_GUIDANCE = "nav_repair_guidance"
+TASK_NAV_SEARCH_RERANK = "nav_search_rerank"
 
 TASK_TYPES = (
     TASK_PRE_PROPOSAL_ANALYZE,
@@ -20,6 +21,7 @@ TASK_TYPES = (
     TASK_NAV_REGION_CARD_ENRICH,
     TASK_NAV_RERANK_TARGETS,
     TASK_NAV_REPAIR_GUIDANCE,
+    TASK_NAV_SEARCH_RERANK,
 )
 
 FEATURE_PRE_PROPOSAL_ANALYZER = "pre_proposal_analyzer"

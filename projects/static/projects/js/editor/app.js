@@ -7,6 +7,7 @@ import * as files from "./files.js";
 import * as versions from "./versions.js";
 import * as compile from "./compile.js";
 import * as longdoc from "./longdoc.js";
+import * as search from "./search.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
@@ -297,6 +298,7 @@ export async function loadProjectMeta() {
     s.selectedFile = { name: s.mainFileName, type: "main", is_text: true };
   }
   renderSmallModelWarning();
+  search.syncSearchTabVisibility?.();
 }
 
 export async function loadMainFile() {
@@ -544,6 +546,10 @@ export function initEditorApp() {
   setOutlineLocationRef(openOutlineLocation);
   longdoc.setLongdocProjectMetaRef?.(loadProjectMeta);
   longdoc.initSessionUI?.();
+  search.setSearchSelectFileRef?.((file, line) => selectFile(file).then(() => {
+    if (line && line > 1) jumpToLine(line);
+  }));
+  search.initSearchPanel?.();
 
   // Initialize CodeMirror
   initCodeMirror(
