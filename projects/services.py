@@ -1230,8 +1230,12 @@ def write_project_window(
         if is_source_too_large(updated):
             raise ValueError("File exceeds 1MB")
         path.write_text(updated, encoding="utf-8")
+        try:
+            rel_name = str(path.relative_to(project_dir(project))).replace("\\", "/")
+        except ValueError:
+            rel_name = path.name
         return {
-            "file_name": path.name,
+            "file_name": rel_name,
             "mode": "chars",
             "start_char": s_char,
             "end_char": e_char,
@@ -1262,8 +1266,12 @@ def write_project_window(
         raise ValueError("File exceeds 1MB")
     path.write_text(updated, encoding="utf-8")
 
+    try:
+        rel_name = str(path.relative_to(project_dir(project))).replace("\\", "/")
+    except ValueError:
+        rel_name = path.name
     return {
-        "file_name": path.name,
+        "file_name": rel_name,
         "mode": "lines",
         "start_line": s_line,
         "end_line": e_line,
