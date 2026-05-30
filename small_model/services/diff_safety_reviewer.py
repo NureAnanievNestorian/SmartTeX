@@ -27,14 +27,28 @@ class DiffSafetyReviewService(SmallModelCallMixin):
         patch_budget = patch_budget or {"max_changed_lines": 15, "max_files": 1}
         review_input = build_diff_review_input(diff_text)
         max_changed = int(patch_budget.get("max_changed_lines") or 15)
+        max_files = int(patch_budget.get("max_files") or 1)
+        max_hunks = int(patch_budget.get("max_hunks") or 5)
         stats = review_input.diff_stats
+        files_changed = int(stats.get("files_changed") or 0)
+        hunks = int(stats.get("hunks") or 0)
+        total_changed = int(stats.get("total_changed_lines") or 0)
+
         # When the small model itself reported low/medium confidence in the
         # budget it picked, treat the budget as advisory rather than a hard
         # cap. The big model still sees an SMCL_BUDGET_ADVISORY warning telling
         # it to verify the diff is actually legitimate for the request.
         budget_advisory = scope_confidence in {"low", "medium"}
+
+        # A single-hunk, single-file diff that exceeds line count is likely a
+        # block wrap (e.g. adding font-size around a table) — treat the line
+        # budget as advisory even if scope_confidence was 'high', since the
+        # number of changed lines is an artefact of the block size, not scatter.
+        single_block_expansion = (hunks == 1 and files_changed == 1 and total_changed > max_changed)
+        effective_advisory = budget_advisory or single_block_expansion
+
         deterministic_warnings: list[dict[str, str]] = []
-        if stats["total_changed_lines"] > max_changed:
+        if total_changed > max_changed:
             deterministic_warnings.append(
                 warning(
                     "medium",
@@ -43,20 +57,43 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                     "deterministic_diff_stats",
                 )
             )
-            if budget_advisory:
+            if effective_advisory:
                 deterministic_warnings.append(
                     warning(
                         "medium",
                         "SMCL_BUDGET_ADVISORY",
                         (
-                            f"Patch budget ({max_changed} lines) was advisory: small-model scope "
-                            f"confidence was '{scope_confidence}'"
-                            + (f" ({scope_confidence_reason})" if scope_confidence_reason else "")
-                            + ". Verify that every change is required by the user's request before applying."
+                            f"Patch budget ({max_changed} lines) was advisory: "
+                            + (
+                                "single-hunk block expansion detected (likely a wrap/unwrap)."
+                                if single_block_expansion and not budget_advisory
+                                else f"small-model scope confidence was '{scope_confidence}'"
+                                + (f" ({scope_confidence_reason})" if scope_confidence_reason else "")
+                                + "."
+                            )
+                            + " Verify that every change is required by the user's request before applying."
                         ),
                         "scope_confidence",
                     )
                 )
+        if files_changed > max_files:
+            deterministic_warnings.append(
+                warning(
+                    "medium",
+                    "TOO_MANY_FILES",
+                    f"Diff touches {files_changed} file(s) but budget allows {max_files}.",
+                    "deterministic_diff_stats",
+                )
+            )
+        if hunks > max_hunks:
+            deterministic_warnings.append(
+                warning(
+                    "medium",
+                    "TOO_MANY_HUNKS",
+                    f"Diff has {hunks} separate hunk(s) but budget allows {max_hunks} — changes may be too scattered.",
+                    "deterministic_diff_stats",
+                )
+            )
         if review_input.deleted_labels_or_refs:
             deterministic_warnings.append(
                 warning(
@@ -75,10 +112,23 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                     "deterministic_diff_stats",
                 )
             )
-        if stats["total_changed_lines"] > max_changed and not budget_advisory:
+
+        # Hard reject: scattered changes across too many files or hunks (not advisory).
+        hard_reject_reason: str | None = None
+        if files_changed > max_files and not effective_advisory:
+            hard_reject_reason = f"Diff touches {files_changed} files but the declared scope allows {max_files}."
+        elif hunks > max_hunks and total_changed > max_changed and not effective_advisory:
+            hard_reject_reason = (
+                f"Diff has {hunks} scattered hunks and {total_changed} changed lines, "
+                f"exceeding the budget ({max_hunks} hunks, {max_changed} lines)."
+            )
+        elif total_changed > max_changed and not effective_advisory:
+            hard_reject_reason = "Diff exceeds the deterministic patch budget."
+
+        if hard_reject_reason:
             return {
                 "action": "reject",
-                "reason": "Diff exceeds the deterministic patch budget.",
+                "reason": hard_reject_reason,
                 "risk_level": "high",
                 "warnings": deterministic_warnings,
                 "review_payload": {
@@ -111,7 +161,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
         enabled, _, _ = self.is_enabled(user, project)
         if not enabled:
             return self._deterministic_fallback(
-                stats, max_changed, deterministic_warnings, review_input, budget_advisory=budget_advisory
+                stats, max_changed, deterministic_warnings, review_input,
+                budget_advisory=effective_advisory, patch_budget=patch_budget,
             )
 
         payload = self._payload(proposal_goal, edit_mode, patch_budget, review_input)
@@ -131,7 +182,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
         )
         if not response.success or not response.parsed_json:
             return self._deterministic_fallback(
-                stats, max_changed, deterministic_warnings, review_input, budget_advisory=budget_advisory
+                stats, max_changed, deterministic_warnings, review_input,
+                budget_advisory=effective_advisory, patch_budget=patch_budget,
             )
 
         result = response.parsed_json
@@ -191,11 +243,27 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             "unified_diff": review_input.unified_diff,
         }
 
-    def _deterministic_fallback(self, stats, max_changed, warnings, review_input, *, budget_advisory: bool = False):
-        if stats["total_changed_lines"] > max_changed and not budget_advisory:
+    def _deterministic_fallback(self, stats, max_changed, warnings, review_input, *, budget_advisory: bool = False, patch_budget: dict | None = None):
+        max_files = int((patch_budget or {}).get("max_files") or 1)
+        max_hunks = int((patch_budget or {}).get("max_hunks") or 5)
+        files_changed = int(stats.get("files_changed") or 0)
+        hunks = int(stats.get("hunks") or 0)
+        total_changed = int(stats.get("total_changed_lines") or 0)
+        single_block = hunks == 1 and files_changed == 1
+        effective_advisory = budget_advisory or (single_block and total_changed > max_changed)
+
+        reject_reason: str | None = None
+        if files_changed > max_files and not effective_advisory:
+            reject_reason = f"Diff touches {files_changed} files but the declared scope allows {max_files}."
+        elif hunks > max_hunks and total_changed > max_changed and not effective_advisory:
+            reject_reason = f"Diff has {hunks} scattered hunks and {total_changed} changed lines, exceeding the budget."
+        elif total_changed > max_changed and not effective_advisory:
+            reject_reason = "Diff exceeds the deterministic patch budget."
+
+        if reject_reason:
             return {
                 "action": "reject",
-                "reason": "Diff exceeds the deterministic patch budget.",
+                "reason": reject_reason,
                 "risk_level": "high",
                 "warnings": warnings,
                 "review_payload": {

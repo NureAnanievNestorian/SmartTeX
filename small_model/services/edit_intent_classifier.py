@@ -7,12 +7,22 @@ from small_model.task_types import FEATURE_EDIT_INTENT_CLASSIFIER, TASK_EDIT_INT
 
 
 EDIT_MODE_BUDGETS = {
-    "micro_edit": (5, 1, ["update_project_section", "update_project_file"]),
-    "paragraph_edit": (15, 1, ["update_project_section", "update_project_file"]),
+    "micro_edit": (12, 1, ["update_project_section", "update_project_file"]),
+    "paragraph_edit": (25, 1, ["update_project_section", "update_project_file"]),
     "section_edit": (50, 2, ["update_project_file"]),
     "new_section": (80, 2, ["update_project_file"]),
     "compile_fix": (20, 3, ["update_project_file"]),
     "review_only": (0, 0, ["patch_file_lines", "replace_in_project_file", "propose_document_change", "update_project_section", "update_project_file"]),
+}
+
+# Max number of diff hunks allowed per edit mode before flagging over-scatter.
+EDIT_MODE_MAX_HUNKS: dict[str, int] = {
+    "micro_edit": 2,
+    "paragraph_edit": 5,
+    "section_edit": 15,
+    "new_section": 15,
+    "compile_fix": 10,
+    "review_only": 0,
 }
 
 _DEFAULT_ALLOWED_OPS = [
@@ -104,10 +114,10 @@ def sanitize_smcl_edit_intent(data: dict) -> tuple[dict, bool]:
 
     confidence = str(result.get("scope_confidence") or "").lower()
     if confidence not in schemas.VALID_SCOPE_CONFIDENCE:
-        # Default to "high" — preserves strict SMCL behavior when the small
-        # model didn't (or couldn't) self-rate. The downstream policy only
-        # softens the budget gate when confidence is explicitly low/medium.
-        confidence = "high"
+        # Default to "medium" when the small model didn't or couldn't self-rate.
+        # "high" would make the budget a hard cap even on an unknown scope,
+        # causing false rejections whenever the model times out or returns garbage.
+        confidence = "medium"
         fallback_used = True
     result["scope_confidence"] = confidence
     reason = result.get("scope_confidence_reason")

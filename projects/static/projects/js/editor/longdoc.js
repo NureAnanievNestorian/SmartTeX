@@ -1515,6 +1515,7 @@ function switchPdfTab(tab) {
 }
 
 async function acceptSession() {
+  closeSessionDiffModal()
   if (!(await showConfirm("Прийняти запропоновану зміну? Її буде об'єднано з проєктом."))) return;
   try {
     const payload = await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, { method: "POST" });

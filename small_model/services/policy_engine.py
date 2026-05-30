@@ -7,7 +7,7 @@ from small_model.services.circuit_breaker import CircuitBreakerService
 from small_model.services.compile_log_triage import CompileLogTriageService
 from small_model.services.diff_safety_reviewer import DiffSafetyReviewService
 from small_model.services.diff_utils import warning
-from small_model.services.edit_intent_classifier import CONSERVATIVE_PARAGRAPH
+from small_model.services.edit_intent_classifier import CONSERVATIVE_PARAGRAPH, EDIT_MODE_MAX_HUNKS
 from small_model.services.pre_proposal import PreProposalAnalysisService
 
 
@@ -55,9 +55,11 @@ class ProposalPolicyEngine:
         enabled, _, _ = reviewer.is_enabled(user, project)
         if not enabled:
             return PolicyResult(action="allow", smcl_used=False, fallback_used=True)
+        edit_mode = str(edit_intent.get("edit_mode") or "paragraph_edit")
         patch_budget = {
             "max_changed_lines": int(edit_intent.get("max_changed_lines") or 15),
             "max_files": int(edit_intent.get("max_files") or 1),
+            "max_hunks": EDIT_MODE_MAX_HUNKS.get(edit_mode, 5),
         }
         scope_confidence = str(edit_intent.get("scope_confidence") or "high").lower()
         scope_confidence_reason = edit_intent.get("scope_confidence_reason")
@@ -66,7 +68,7 @@ class ProposalPolicyEngine:
             project=project,
             proposal_goal=proposal.goal,
             diff_text=diff,
-            edit_mode=str(edit_intent.get("edit_mode") or "paragraph_edit"),
+            edit_mode=edit_mode,
             patch_budget=patch_budget,
             scope_confidence=scope_confidence,
             scope_confidence_reason=str(scope_confidence_reason) if scope_confidence_reason else None,
@@ -128,7 +130,7 @@ class ProposalPolicyEngine:
         result_metadata = {
             "compile_log_triage": triage,
             "circuit_breaker": breaker,
-            "compile_failures": circuit_payload["compile_failures"],
+            "compile_failures": circuit_payload["compile_failures"] + 1,
             "smcl_unavailable_streak": int(breaker.get("smcl_unavailable_streak") or 0),
         }
         warnings = []

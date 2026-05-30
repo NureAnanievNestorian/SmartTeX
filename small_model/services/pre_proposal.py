@@ -27,7 +27,9 @@ _PATH_SAFE_RE = re.compile(r"^[a-zA-Z0-9_\-./]+$")
 _SYSTEM_INSTRUCTION = (
     "Analyze the user request OBJECTIVELY and return editing guidance as JSON with STRICT enum values only.\n"
     "Classify the request by the scope ACTUALLY required, not by what would be conservative. "
-    "Single-word fixes are micro_edit. Sentence/paragraph rewrites are paragraph_edit. "
+    "Single-word/token fixes or adding a single styling attribute are micro_edit. "
+    "Formatting changes that touch a block (e.g. font-size on a table, wrapping content in a show rule, "
+    "rewriting a paragraph) are paragraph_edit. "
     "Rewriting one logical section is section_edit. Adding one new section is new_section. "
     "If the request restructures the document, splits content into several new files, rewrites a main file, "
     "or otherwise clearly needs many files / many lines, classify as section_edit or new_section AND "
@@ -54,6 +56,29 @@ _SYSTEM_INSTRUCTION = (
     "silently shrinking the request.\n"
     "Do not include raw document text. Do not suggest reading entire main files."
 )
+
+
+def _build_document_graph_summary(project) -> str:
+    """Build a compact file-level summary from the navigation index if available."""
+    try:
+        from navigation.models import ProjectNavigationIndex, IndexStatus
+        index = (
+            ProjectNavigationIndex.objects
+            .filter(project=project, status=IndexStatus.READY)
+            .prefetch_related("file_cards")
+            .first()
+        )
+        if not index:
+            return ""
+        parts: list[str] = []
+        for fc in index.file_cards.select_related().all()[:12]:
+            entry = fc.filename
+            if fc.summary:
+                entry += f": {fc.summary}"
+            parts.append(entry)
+        return "; ".join(parts)[:900]
+    except Exception:
+        return ""
 
 
 def _is_safe_path(path: str) -> bool:
@@ -120,7 +145,7 @@ class PreProposalAnalysisService(SmallModelCallMixin):
                 "document_type": getattr(project, "markup_type", ""),
                 "outline_items": [],
                 "task_metadata": {},
-                "document_graph_summary": "",
+                "document_graph_summary": _build_document_graph_summary(project),
                 "user_request": PayloadSanitizer.trim_text(user_request, max_chars=2000),
                 "selected_file": selected_file,
                 "selected_section_id": selected_section_id,
@@ -184,7 +209,7 @@ class PreProposalAnalysisService(SmallModelCallMixin):
         edit_intent = {
             **CONSERVATIVE_PARAGRAPH,
             "edit_mode": "micro_edit",
-            "max_changed_lines": 5,
+            "max_changed_lines": EDIT_MODE_BUDGETS["micro_edit"][0],
             "max_files": 1,
             "scope_confidence": "high",
             "scope_confidence_reason": "Deterministic verb match (replace/rename) on a narrow request.",
