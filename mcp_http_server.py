@@ -54,7 +54,7 @@ MCP_SESSION_READ_BUDGET = max(1, int(os.getenv("MCP_SESSION_READ_BUDGET", "2000"
 MCP_READ_BUDGET_HARD = os.getenv("MCP_READ_BUDGET_HARD", "false").lower() in {"1", "true", "yes"}
 MCP_MAX_SEARCH_RESULTS = max(1, int(os.getenv("MCP_MAX_SEARCH_RESULTS", "30")))
 SOURCE_EXTENSIONS = {".tex", ".typ"}
-TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl"}
+TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl", ".puml"}
 READ_BUDGET_STATE: dict[tuple[str, int], int] = {}
 READ_BUDGET_RECENT_STATE: dict[tuple[str, int], list[dict[str, Any]]] = {}
 REPLACE_DRY_RUN_STATE: dict[tuple[str, int, str], str] = {}
@@ -1575,6 +1575,33 @@ async def upload_project_image_asset(
     )
     await _notify_project_write_updates(ctx, project_id, include_compile_log=bool(compileAlso))
     return result
+
+
+@mcp.tool
+async def generate_plantuml_diagram(
+        project_id: int,
+        filename: str,
+        source: str,
+        ctx: Context,
+) -> dict[str, Any]:
+    """Create or update a PlantUML diagram and immediately render it to SVG.
+
+    Writes `{filename}.puml` with the given source and renders `{filename}.svg`
+    via the PlantUML service. Use the SVG file directly in Typst (`image("{filename}.svg")`)
+    or LaTeX (`\\includegraphics{{filename}.svg}`).
+
+    `filename` — base name without extension, may include subdirectory
+    (e.g. `"diagrams/architecture"`).
+
+    `source` — full PlantUML diagram text starting with `@startuml`.
+    """
+    payload = _call(
+        "POST",
+        f"/api/projects/{project_id}/plantuml/",
+        {"filename": filename, "source": source},
+    )
+    await _notify_project_write_updates(ctx, project_id, include_compile_log=False)
+    return payload
 
 
 @mcp.tool

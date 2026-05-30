@@ -187,6 +187,8 @@ TYPST_BINARY = os.getenv('TYPST_BINARY', 'typst').strip() or 'typst'
 # Example: TYPST_FONTS_DIR=/srv/fonts
 TYPST_FONTS_DIR = os.getenv('TYPST_FONTS_DIR', '').strip() or ''
 
+PLANTUML_URL = os.getenv('PLANTUML_URL', 'http://plantuml:8080').rstrip('/')
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

@@ -36,6 +36,7 @@ from .services import (
     create_project_text_file,
     create_project_version,
     create_text_project_version,
+    ensure_project_dir,
     delete_project_asset,
     delete_project_files,
     get_project_version,
@@ -76,6 +77,7 @@ from .services import (
     IMAGE_EXTENSIONS,
     TEXT_EXTENSIONS,
 )
+from .plantuml_job import render_plantuml_svg, _sha256, _load_hashes, _save_hashes
 
 DEFAULT_LATEX = r"""\\documentclass{article}
 \\usepackage[ukrainian]{babel}
@@ -1296,6 +1298,66 @@ def api_project_compile(request: HttpRequest, project_id: int) -> JsonResponse:
         return JsonResponse(_compile_payload(project, status=project.last_status, log=result.log, request_mode="compile"))
 
     return JsonResponse(_compile_payload(project, status=project.last_status, log=read_compile_log(project), request_mode="read"))
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_plantuml(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Write a .puml source file and immediately render it to SVG.
+
+    Body JSON: {filename: str (base name, e.g. "diagram"), source: str}
+    Returns: {puml_file, svg_file, success, error?}
+    """
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+
+    project = _project_with_owner(project_id, user)
+
+    body = _json_body(request)
+    raw_name = str(body.get("filename") or "").strip()
+    source = str(body.get("source") or "").strip()
+
+    if not raw_name:
+        return JsonResponse({"detail": "filename is required"}, status=400)
+    if not source:
+        return JsonResponse({"detail": "source is required"}, status=400)
+
+    # Normalise: strip any supplied extension, then add .puml
+    base_name = raw_name.removesuffix(".puml").removesuffix(".svg")
+    puml_rel = f"{base_name}.puml"
+    svg_rel = f"{base_name}.svg"
+
+    # Validate path
+    from pathlib import PurePosixPath
+    try:
+        parts = PurePosixPath(puml_rel).parts
+        if any(p in ("..", "") for p in parts) or puml_rel.startswith("/"):
+            raise ValueError
+    except Exception:
+        return JsonResponse({"detail": "invalid filename"}, status=400)
+
+    workdir = ensure_project_dir(project)
+
+    puml_path = project_asset_path(project, puml_rel)
+    puml_path.parent.mkdir(parents=True, exist_ok=True)
+    puml_path.write_text(source, encoding="utf-8")
+
+    try:
+        svg_bytes = render_plantuml_svg(source)
+    except Exception as exc:
+        return JsonResponse({"success": False, "puml_file": puml_rel, "svg_file": svg_rel, "error": str(exc)}, status=502)
+
+    svg_path = project_asset_path(project, svg_rel)
+    svg_path.parent.mkdir(parents=True, exist_ok=True)
+    svg_path.write_bytes(svg_bytes)
+
+    # Update hash cache so pre-compile job won't re-render this on next compile
+    hashes = _load_hashes(workdir)
+    hashes[puml_rel] = _sha256(source.encode("utf-8"))
+    _save_hashes(workdir, hashes)
+
+    return JsonResponse({"success": True, "puml_file": puml_rel, "svg_file": svg_rel})
 
 
 @csrf_exempt

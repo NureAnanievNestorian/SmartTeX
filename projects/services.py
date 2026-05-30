@@ -23,7 +23,7 @@ from .models import Project, ProjectVersion
 logger = logging.getLogger(__name__)
 
 COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=3)
-TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl"}
+TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl", ".puml"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
 ALLOWED_UPLOAD_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
 MAX_PROJECT_FILES_TOTAL_SIZE = int(getattr(settings, "MAX_PROJECT_TOTAL_SIZE", 64 * 1024 * 1024))
@@ -1863,6 +1863,10 @@ def compile_project(project: Project) -> CompileResult:
             diagnostics=parse_compile_diagnostics(project, log_text),
             compile_state="failed",
         )
+
+    from projects.pre_compile import run_pre_compile_jobs
+    import projects.plantuml_job  # noqa: F401 — registers PlantUmlJob
+    run_pre_compile_jobs(project)
 
     host_project_root = str(getattr(settings, "HOST_PROJECT_ROOT", "")).strip()
 
