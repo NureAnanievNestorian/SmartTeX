@@ -57,7 +57,7 @@ class ProjectVersion(models.Model):
     snapshot_kind = models.CharField(max_length=12, choices=SnapshotKind.choices, default=SnapshotKind.TEXT)
     event_payload = models.JSONField(default=dict, blank=True)
     is_revertible = models.BooleanField(default=True)
-    summary = models.CharField(max_length=255)
+    summary = models.TextField()
     before_content = models.TextField()
     after_content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
