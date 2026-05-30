@@ -140,35 +140,11 @@ def _soft_read_check(
         is_broad: bool,
         tool_name: str,
 ) -> dict[str, Any] | None:
-    """Gate for read tools.
+    """Gate for read tools: hard-block when mcp_controlled_access is on and no fresh preparation.
 
-    When mcp_controlled_access is on: hard-block all reads until a fresh
-    preparation exists. When only preparation_enforcement_mode is set (without
-    full controlled mode): soft warn/block based on that setting.
-    Returns None if the read is allowed, a rejection/warning dict otherwise.
+    Returns None if the read is allowed, a rejection dict otherwise.
     """
-    longdoc = _project_longdoc_meta(project_id)
-    controlled = bool(longdoc.get("enabled") and longdoc.get("mcp_controlled_access"))
-
-    if controlled:
-        effective_id = preparation_id or _get_tracked_preparation(project_id)
-        check = _nav_prep_check(project_id, effective_id)
-        if check.get("fresh"):
-            _log_nav_metric("extra_reads_after_prepare", project_id, tool=tool_name, is_broad=is_broad)
-            return None
-        _log_nav_metric("read_without_preparation", project_id, tool=tool_name, is_broad=is_broad)
-        return _rejection(
-            "PREPARATION_REQUIRED",
-            f"prepare_document_work must be called before {tool_name}. "
-            "It returns read_targets with the exact files to read — exploratory reads are not needed.",
-            "Call prepare_document_work(project_id=<id>, user_request=<your intent>) first, "
-            "then read only the files listed in read_targets.",
-            tool=tool_name,
-            fresh_reason=check.get("fresh_reason", ""),
-        )
-
-    mode = str(longdoc.get("preparation_enforcement_mode") or "off")
-    if mode == "off":
+    if not _project_controlled_mode_enabled(project_id):
         return None
     effective_id = preparation_id or _get_tracked_preparation(project_id)
     check = _nav_prep_check(project_id, effective_id)
@@ -176,20 +152,15 @@ def _soft_read_check(
         _log_nav_metric("extra_reads_after_prepare", project_id, tool=tool_name, is_broad=is_broad)
         return None
     _log_nav_metric("read_without_preparation", project_id, tool=tool_name, is_broad=is_broad)
-    if mode == "block_broad_reads" and is_broad:
-        return _rejection(
-            "NO_FRESH_PREPARATION",
-            "Broad reads require a fresh preparation when enforcement is set to block_broad_reads.",
-            "Call prepare_document_work(project_id=<id>, user_request=<your intent>, include_context=True) first.",
-            enforcement_mode=mode,
-            fresh_reason=check.get("fresh_reason", ""),
-        )
-    return {
-        "warning": "NO_FRESH_PREPARATION",
-        "warning_message": "No fresh preparation exists for this project. Call prepare_document_work before write operations.",
-        "enforcement_mode": mode,
-        "fresh_reason": check.get("fresh_reason", ""),
-    }
+    return _rejection(
+        "PREPARATION_REQUIRED",
+        f"prepare_document_work must be called before {tool_name}. "
+        "It returns read_targets with the exact files to read — exploratory reads are not needed.",
+        "Call prepare_document_work(project_id=<id>, user_request=<your intent>) first, "
+        "then read only the files listed in read_targets.",
+        tool=tool_name,
+        fresh_reason=check.get("fresh_reason", ""),
+    )
 
 
 class DjangoIntrospectionTokenVerifier(TokenVerifier):

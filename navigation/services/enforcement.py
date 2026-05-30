@@ -11,14 +11,6 @@ if TYPE_CHECKING:
     from projects.models import Project
 
 
-def get_enforcement_mode(project: "Project") -> str:
-    try:
-        settings = project.longdoc_settings
-        return settings.preparation_enforcement_mode or "off"
-    except Exception:
-        return "off"
-
-
 def check_preparation_freshness(project: "Project", preparation_id: str | None) -> dict:
     """Return freshness info for a preparation_id against the current project index."""
     from . import cache as prep_cache

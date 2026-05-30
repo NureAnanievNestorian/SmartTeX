@@ -28,16 +28,6 @@ class ProjectLongDocSettings(models.Model):
     mcp_controlled_access = models.BooleanField(default=True)
     mcp_write_context = models.BooleanField(default=False)
 
-    class PreparationEnforcementMode(models.TextChoices):
-        OFF = "off", "Off"
-        WARN = "warn", "Warn"
-        BLOCK_BROAD_READS = "block_broad_reads", "Block broad reads"
-
-    preparation_enforcement_mode = models.CharField(
-        max_length=20,
-        choices=PreparationEnforcementMode.choices,
-        default=PreparationEnforcementMode.OFF,
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
