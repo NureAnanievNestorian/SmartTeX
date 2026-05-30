@@ -5,6 +5,16 @@ from SmartTeX.markup import MarkupType
 from templates_lib.models import Template
 
 
+class GitHubInstallation(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="github_installation")
+    installation_id = models.BigIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"GitHub installation {self.installation_id} for user {self.user_id}"
+
+
 class Project(models.Model):
     class CompileStatus(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -19,7 +29,6 @@ class Project(models.Model):
     last_status = models.CharField(max_length=16, choices=CompileStatus.choices, default=CompileStatus.PENDING)
     github_sync_enabled = models.BooleanField(default=False)
     github_repo_url = models.CharField(max_length=512, blank=True, default="")
-    github_pat = models.CharField(max_length=256, blank=True, default="")
     github_sync_interval_minutes = models.PositiveIntegerField(default=30)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

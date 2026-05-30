@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import ai_connect_guide, ai_workflow_guide, create_project_from_dashboard, dashboard, editor, home, session_review
+from .views import ai_connect_guide, ai_workflow_guide, create_project_from_dashboard, dashboard, editor, github_app_callback, home, session_review
 
 app_name = "projects"
 
@@ -12,4 +12,5 @@ urlpatterns = [
     path("projects/new/", create_project_from_dashboard, name="create"),
     path("projects/<int:project_id>/session/", session_review, name="session_review"),
     path("projects/<int:project_id>/", editor, name="editor"),
+    path("github/callback/", github_app_callback, name="github_callback"),
 ]

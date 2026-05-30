@@ -1,6 +1,8 @@
 from django.urls import path, re_path
 
 from .views import (
+    api_github_app_disconnect,
+    api_github_app_install_url,
     api_project_asset,
     api_project_asset_content,
     api_project_asset_rename,
@@ -28,6 +30,7 @@ from .views import (
     api_project_versions,
     api_projects,
     api_project_typst_import,
+    github_app_callback,
 )
 
 urlpatterns = [
@@ -53,6 +56,8 @@ urlpatterns = [
     path("projects/<int:project_id>/create-template/", api_project_create_template),
     path("projects/<int:project_id>/download-zip/", api_project_download_zip),
     path("projects/<int:project_id>/github-sync/", api_project_github_sync),
+    path("github/install-url/", api_github_app_install_url),
+    path("github/disconnect/", api_github_app_disconnect),
     path("projects/<int:project_id>/pdf/", api_project_pdf),
     path("projects/<int:project_id>/pdf-page-count/", api_project_pdf_page_count),
     path("projects/<int:project_id>/pdf-page-image/", api_project_pdf_page_image),

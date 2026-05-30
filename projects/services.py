@@ -8,11 +8,14 @@ import io
 import zipfile
 import os
 import logging
-from datetime import datetime, UTC
+import time
+import json
+from datetime import datetime, UTC, timedelta
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from urllib.request import urlopen, Request
 
 from django.conf import settings
 
@@ -331,10 +334,43 @@ _github_sync_timers: dict[int, threading.Timer] = {}
 _github_sync_lock = threading.Lock()
 
 
-def _build_github_push_url(repo_url: str, pat: str) -> str:
+def _get_github_app_token(installation_id: int) -> str:
+    try:
+        import cryptography.hazmat.primitives.serialization as serialization
+        from cryptography.hazmat.backends import default_backend
+        import cryptography.hazmat.primitives.asymmetric.padding as padding
+        from cryptography.hazmat.primitives import hashes
+    except ImportError:
+        raise RuntimeError("cryptography package is required for GitHub App auth")
+
+    app_id = os.environ["GITHUB_APP_ID"]
+    private_key_pem = os.environ["GITHUB_APP_PRIVATE_KEY"].replace("\\n", "\n")
+
+    private_key = serialization.load_pem_private_key(
+        private_key_pem.encode(), password=None, backend=default_backend()
+    )
+
+    now = int(time.time())
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256", "typ": "JWT"}).encode()).rstrip(b"=")
+    payload = base64.urlsafe_b64encode(json.dumps({"iat": now - 60, "exp": now + 540, "iss": app_id}).encode()).rstrip(b"=")
+    signing_input = header + b"." + payload
+    signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    jwt_token = (signing_input + b"." + base64.urlsafe_b64encode(signature).rstrip(b"=")).decode()
+
+    req = Request(
+        f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+        method="POST",
+        headers={"Authorization": f"Bearer {jwt_token}", "Accept": "application/vnd.github+json"},
+    )
+    with urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+    return data["token"]
+
+
+def _build_github_push_url(repo_url: str, token: str) -> str:
     url = repo_url.strip()
     if url.startswith("https://"):
-        url = "https://x-access-token:" + pat + "@" + url[len("https://"):]
+        url = "https://x-access-token:" + token + "@" + url[len("https://"):]
     return url
 
 
@@ -345,7 +381,11 @@ def _do_github_push(project_id: int) -> None:
         project = Project.objects.get(id=project_id)
     except Exception:
         return
-    if not project.github_sync_enabled or not project.github_repo_url or not project.github_pat:
+    if not project.github_sync_enabled or not project.github_repo_url:
+        return
+    try:
+        installation = project.owner.github_installation
+    except Exception:
         return
     try:
         push_to_github(project)
@@ -358,7 +398,12 @@ def push_to_github(project: "Project") -> None:
         raise RuntimeError("git executable is not available")
     if not _project_git_is_healthy(project):
         raise RuntimeError("Project git repo is not initialised")
-    push_url = _build_github_push_url(project.github_repo_url, project.github_pat)
+    try:
+        installation = project.owner.github_installation
+    except Exception:
+        raise RuntimeError("GitHub App not connected. Please reconnect via GitHub App.")
+    token = _get_github_app_token(installation.installation_id)
+    push_url = _build_github_push_url(project.github_repo_url, token)
     proc = _run_project_git(project, ["push", push_url, "HEAD:main", "--force"], check=False)
     if proc.returncode != 0:
         msg = (proc.stderr or proc.stdout or "git push failed").strip()
@@ -367,7 +412,8 @@ def push_to_github(project: "Project") -> None:
 
 
 def schedule_github_sync(project: "Project") -> None:
-    if not project.github_sync_enabled or not project.github_repo_url or not project.github_pat:
+    has_installation = hasattr(project.owner, "github_installation") and project.owner.github_installation_id is not None
+    if not project.github_sync_enabled or not project.github_repo_url or not has_installation:
         return
     project_id = project.id
     interval_minutes = max(

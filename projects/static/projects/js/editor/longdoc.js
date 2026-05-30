@@ -534,7 +534,7 @@ function renderSettingsPanel() {
   const gh = s.projectMeta?.github || {};
   const ghSyncEnabled = Boolean(gh.sync_enabled);
   const ghRepoUrl = String(gh.repo_url || "");
-  const ghPatSet = Boolean(gh.pat_set);
+  const ghAppConnected = Boolean(gh.app_connected);
   const ghIntervalMinutes = Number(gh.sync_interval_minutes) || 30;
 
   settingsPanelEl.innerHTML = `
@@ -579,13 +579,16 @@ function renderSettingsPanel() {
           </label>
         </div>
         <div class="e-modal-form" style="margin-top:10px">
+          <div class="e-form-field" style="margin-bottom:8px">
+            <span><strong>GitHub App: </strong>${ghAppConnected ? '<span style="color:var(--green,#22c55e)">підключено</span>' : '<span style="color:var(--muted,#888)">не підключено</span>'}</span>
+          </div>
+          ${ghAppConnected
+            ? `<div class="e-longdoc-actions" style="margin-bottom:10px; gap:8px">${button("Відключити GitHub App", "disconnect-github", "")}</div>`
+            : `<div class="e-longdoc-actions" style="margin-bottom:10px; gap:8px">${button("Підключити GitHub App", "connect-github", "primary")}</div>`
+          }
           <div class="e-form-field">
             <label for="gh-repo-url">Repository URL</label>
             <input type="text" id="gh-repo-url" placeholder="https://github.com/user/repo" value="${escHtml(ghRepoUrl)}">
-          </div>
-          <div class="e-form-field">
-            <label for="gh-pat">Personal Access Token${ghPatSet ? " (вже збережено — залиште порожнім щоб не змінювати)" : ""}</label>
-            <input type="password" id="gh-pat" placeholder="${ghPatSet ? "••••••••" : "ghp_…"}">
           </div>
           <div class="e-form-field">
             <label for="gh-interval">Інтервал автосинхронізації (хвилини)</label>
@@ -613,10 +616,30 @@ function renderSettingsPanel() {
       await refreshProjectMeta();
       await loadLongdocData();
     },
+    "connect-github": async () => {
+      const statusEl = settingsPanelEl.querySelector("#gh-status");
+      try {
+        const data = await api("/api/github/install-url/");
+        window.open(data.url, "_blank", "noopener");
+        if (statusEl) statusEl.textContent = "Відкрито GitHub App — після встановлення оновіть сторінку.";
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Помилка: ${err.message}`;
+      }
+    },
+    "disconnect-github": async () => {
+      const statusEl = settingsPanelEl.querySelector("#gh-status");
+      if (!confirm("Відключити GitHub App? Синхронізація перестане працювати.")) return;
+      try {
+        await api("/api/github/disconnect/", { method: "DELETE" });
+        await refreshProjectMeta();
+        renderSettingsPanel();
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Помилка: ${err.message}`;
+      }
+    },
     "save-github": async () => {
       const statusEl = settingsPanelEl.querySelector("#gh-status");
       const repoUrl = settingsPanelEl.querySelector("#gh-repo-url")?.value.trim() || "";
-      const pat = settingsPanelEl.querySelector("#gh-pat")?.value || "";
       const syncEnabled = Boolean(settingsPanelEl.querySelector("#gh-sync-enabled")?.checked);
       const intervalMinutes = parseInt(settingsPanelEl.querySelector("#gh-interval")?.value || "30", 10);
       const body = {
@@ -624,7 +647,6 @@ function renderSettingsPanel() {
         github_sync_enabled: syncEnabled,
         github_sync_interval_minutes: Number.isFinite(intervalMinutes) ? intervalMinutes : 30,
       };
-      if (pat) body.github_pat = pat;
       if (statusEl) statusEl.textContent = "Зберігаємо…";
       try {
         await api(`/api/projects/${cfg.projectId}/`, { method: "PATCH", body: JSON.stringify(body) });

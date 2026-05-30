@@ -22,7 +22,7 @@ from small_model.services.quota_service import SmallModelQuotaService
 from templates_lib.models import Template
 from templates_lib.services import normalize_template_main_file
 
-from .models import Project, ProjectVersion
+from .models import GitHubInstallation, Project, ProjectVersion
 from .services import (
     ALLOWED_UPLOAD_EXTENSIONS,
     build_project_zip,
@@ -173,7 +173,7 @@ def _project_payload(project: Project, user=None) -> dict:
         "github": {
             "sync_enabled": project.github_sync_enabled,
             "repo_url": project.github_repo_url,
-            "pat_set": bool(project.github_pat),
+            "app_connected": hasattr(project.owner, "github_installation"),
             "sync_interval_minutes": project.github_sync_interval_minutes,
         },
         "created_at": project.created_at.isoformat(),
@@ -478,9 +478,6 @@ def api_project_detail(request: HttpRequest, project_id: int) -> JsonResponse:
         if "github_repo_url" in body:
             project.github_repo_url = str(body["github_repo_url"] or "").strip()
             update_fields.append("github_repo_url")
-        if "github_pat" in body:
-            project.github_pat = str(body["github_pat"] or "").strip()
-            update_fields.append("github_pat")
         if "github_sync_enabled" in body:
             project.github_sync_enabled = bool(body["github_sync_enabled"])
             update_fields.append("github_sync_enabled")
@@ -1422,12 +1419,60 @@ def api_project_github_sync(request: HttpRequest, project_id: int) -> JsonRespon
     if not user:
         return _unauthorized()
     project = _project_with_owner(project_id, user)
-    if not project.github_repo_url or not project.github_pat:
-        return JsonResponse({"error": "GitHub repo URL and PAT must be configured"}, status=400)
+    if not project.github_repo_url:
+        return JsonResponse({"error": "GitHub repo URL must be configured"}, status=400)
+    if not hasattr(user, "github_installation"):
+        return JsonResponse({"error": "GitHub App not connected. Please connect via GitHub App."}, status=400)
     try:
         push_to_github(project)
     except Exception as exc:
         return JsonResponse({"error": str(exc)}, status=502)
+    return JsonResponse({"ok": True})
+
+
+@csrf_exempt
+@require_GET
+def api_github_app_install_url(request: HttpRequest) -> JsonResponse:
+    import os
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    app_slug = os.environ.get("GITHUB_APP_SLUG", "")
+    if not app_slug:
+        return JsonResponse({"error": "GitHub App not configured"}, status=503)
+    install_url = f"https://github.com/apps/{app_slug}/installations/new"
+    return JsonResponse({"url": install_url})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def github_app_callback(request: HttpRequest) -> JsonResponse:
+    import os
+    installation_id = request.GET.get("installation_id")
+    if not installation_id:
+        return JsonResponse({"error": "installation_id missing"}, status=400)
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    try:
+        installation_id = int(installation_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "invalid installation_id"}, status=400)
+    GitHubInstallation.objects.update_or_create(
+        user=user,
+        defaults={"installation_id": installation_id},
+    )
+    frontend_url = os.environ.get("FRONTEND_URL", "/")
+    return redirect(f"{frontend_url}?github_connected=1")
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def api_github_app_disconnect(request: HttpRequest) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    GitHubInstallation.objects.filter(user=user).delete()
     return JsonResponse({"ok": True})
 
 
