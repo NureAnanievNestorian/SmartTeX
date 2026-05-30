@@ -53,20 +53,15 @@ logger = logging.getLogger(__name__)
 
 
 def _canon_graph_path(value: str | None) -> str:
-    """Canonical project-relative path used for comparing graph/discovery names.
-
-    document_graph may return paths containing ``..`` (for example
-    ``template/../src/lib.typ``), while discovery sees the normalized path
-    (``src/lib.typ``). All reachability and edge comparisons must use this
-    canonical form.
-    """
     if not value:
         return ""
     raw = str(value).replace("\\", "/")
     normalized = posixpath.normpath(raw)
     if normalized == ".":
         return ""
-    return normalized.lstrip("./")
+    if normalized.startswith("./"):
+        return normalized[2:]
+    return normalized
 
 
 def _graph_get(graph, key: str, default=None):

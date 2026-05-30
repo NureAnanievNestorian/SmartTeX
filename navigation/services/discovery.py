@@ -71,12 +71,30 @@ def _is_skipped_dir(parts: Iterable[str]) -> bool:
 
 
 def _looks_binary(sample: bytes) -> bool:
-    if b"\x00" in sample:
-        return True
+    """Return True only for likely binary data.
+
+    Important: UTF-8 Ukrainian/Cyrillic text contains many bytes >= 128.
+    A byte-level ASCII printable ratio misclassifies it as binary, so first
+    try to decode as text.
+    """
     if not sample:
         return False
-    printable = sum(1 for b in sample if b in (9, 10, 13) or 32 <= b < 127)
-    return (printable / max(1, len(sample))) < 0.7
+
+    if b"\x00" in sample:
+        return True
+
+    try:
+        sample.decode("utf-8")
+        return False
+    except UnicodeDecodeError:
+        pass
+
+    textish = sum(
+        1
+        for b in sample
+        if b in (9, 10, 12, 13) or 32 <= b <= 126
+    )
+    return (textish / max(1, len(sample))) < 0.50
 
 
 def _hash_bytes(data: bytes) -> str:

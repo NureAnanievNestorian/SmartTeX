@@ -54,7 +54,9 @@ def _canon_graph_path(value: str | None) -> str:
     normalized = posixpath.normpath(raw)
     if normalized == ".":
         return ""
-    return normalized.lstrip("./")
+    if normalized.startswith("./"):
+        return normalized[2:]
+    return normalized
 
 
 @dataclass

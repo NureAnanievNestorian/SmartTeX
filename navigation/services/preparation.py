@@ -8,6 +8,7 @@ server-owned bookkeeping) and MAY write the preparation-result cache.
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -45,7 +46,9 @@ def _canon_graph_path(value: str | None) -> str:
     normalized = posixpath.normpath(raw)
     if normalized == ".":
         return ""
-    return normalized.lstrip("./")
+    if normalized.startswith("./"):
+        return normalized[2:]
+    return normalized
 
 
 _FRESH_TTL_SECONDS_DEFAULT = 600
