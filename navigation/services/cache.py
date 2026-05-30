@@ -93,6 +93,17 @@ def store(
     )
 
 
+def store_id_only(payload: dict[str, Any]) -> None:
+    """Store under the id-key only (no request-key). Used for non-reusable modes
+    so that enforcement lookup_by_id still succeeds even without an index."""
+    preparation_id = payload.get("preparation_id")
+    if not preparation_id:
+        return
+    p = deepcopy(payload)
+    p["fresh_until_seconds"] = _ttl()
+    cache.set(_id_key(preparation_id), p, timeout=_ttl())
+
+
 def bump_reuse(payload: dict[str, Any]) -> dict[str, Any]:
     payload = deepcopy(payload)
     payload["reuse_count"] = int(payload.get("reuse_count", 0)) + 1

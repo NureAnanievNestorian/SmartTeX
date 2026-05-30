@@ -737,7 +737,8 @@ def prepare_document_work(
         index_obj: Optional[ProjectNavigationIndex] = None
         if freshness.status == "absent":
             try:
-                build_navigation_index(project, use_small_model=False)
+                _sm = getattr(getattr(project, "small_model_settings", None), "nav_index_enrich_enabled", False)
+                build_navigation_index(project, use_small_model=bool(_sm))
                 freshness = fr.evaluate_index(project)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("inline navigation index build failed: %s", exc)
@@ -877,19 +878,27 @@ def prepare_document_work(
         # Strip private fields before caching and returning.
         _strip_private_fields(response)
 
-        # Cacheable modes — store the response.
-        cacheable_modes = {"indexed_keyword", "indexed_reranked", "fallback_structural", "cheap_direct"}
-        if response["mode"] in cacheable_modes and index_obj:
+        # Always store so lookup_by_id works for enforcement gate.
+        # Request-key deduplication is only useful for reusable modes; repair/minimal
+        # results should still be findable by ID so propose/validate don't fail.
+        reusable_modes = {"indexed_keyword", "indexed_reranked", "fallback_structural", "cheap_direct"}
+        if index_obj:
             try:
                 prep_cache.store(
                     payload=response,
                     project_id=project.id,
-                    user_request=user_request or "",
+                    user_request=user_request or "" if response["mode"] in reusable_modes else "",
                     schema_version=index_obj.schema_version,
                     version_number=index_obj.last_built_version_number,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("preparation cache write failed: %s", exc)
+        elif response.get("preparation_id"):
+            # No index but we still have an id — store id-only so enforcement finds it.
+            try:
+                prep_cache.store_id_only(response)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("preparation id-only cache write failed: %s", exc)
 
     except Exception as exc:
         logger.exception("prepare_document_work degraded to minimal: %s", exc)

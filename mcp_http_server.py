@@ -140,8 +140,33 @@ def _soft_read_check(
         is_broad: bool,
         tool_name: str,
 ) -> dict[str, Any] | None:
-    """Soft gate for read tools: warn or block based on preparation_enforcement_mode."""
+    """Gate for read tools.
+
+    When mcp_controlled_access is on: hard-block all reads until a fresh
+    preparation exists. When only preparation_enforcement_mode is set (without
+    full controlled mode): soft warn/block based on that setting.
+    Returns None if the read is allowed, a rejection/warning dict otherwise.
+    """
     longdoc = _project_longdoc_meta(project_id)
+    controlled = bool(longdoc.get("enabled") and longdoc.get("mcp_controlled_access"))
+
+    if controlled:
+        effective_id = preparation_id or _get_tracked_preparation(project_id)
+        check = _nav_prep_check(project_id, effective_id)
+        if check.get("fresh"):
+            _log_nav_metric("extra_reads_after_prepare", project_id, tool=tool_name, is_broad=is_broad)
+            return None
+        _log_nav_metric("read_without_preparation", project_id, tool=tool_name, is_broad=is_broad)
+        return _rejection(
+            "PREPARATION_REQUIRED",
+            f"prepare_document_work must be called before {tool_name}. "
+            "It returns read_targets with the exact files to read — exploratory reads are not needed.",
+            "Call prepare_document_work(project_id=<id>, user_request=<your intent>) first, "
+            "then read only the files listed in read_targets.",
+            tool=tool_name,
+            fresh_reason=check.get("fresh_reason", ""),
+        )
+
     mode = str(longdoc.get("preparation_enforcement_mode") or "off")
     if mode == "off":
         return None
@@ -1432,6 +1457,9 @@ def grep_file(
     )
     if budget_rejection and not budget_rejection.get("warning"):
         return budget_rejection
+    nav_check = _soft_read_check(project_id, None, is_broad=False, tool_name="grep_file")
+    if nav_check and nav_check.get("error"):
+        return nav_check
     info = _file_line_info(project_id, filename)
     if not info["is_text"]:
         return _attach_read_budget(
@@ -1846,6 +1874,9 @@ def get_project_section(
         content_preview_chars: int = 800,
 ) -> dict[str, Any]:
     """Get one section from the main source file by section index."""
+    nav_check = _soft_read_check(project_id, None, is_broad=False, tool_name="get_project_section")
+    if nav_check and nav_check.get("error"):
+        return nav_check
     payload = _call("GET", f"/api/projects/{project_id}/sections/{section_index}/")
     if not isinstance(payload, dict):
         return {}
