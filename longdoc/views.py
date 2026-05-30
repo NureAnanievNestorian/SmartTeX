@@ -156,6 +156,9 @@ def api_longdoc_settings(request: HttpRequest, project_id: int) -> JsonResponse:
         "diff_safety_reviewer_enabled",
         "compile_log_triage_enabled",
         "circuit_breaker_enabled",
+        "nav_index_enrich_enabled",
+        "nav_rerank_enabled",
+        "nav_repair_enabled",
     ):
         if key in body:
             smcl_changes[key] = bool(body[key])

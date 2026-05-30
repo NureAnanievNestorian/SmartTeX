@@ -37,6 +37,7 @@ urlpatterns = [
     path('api/', include('longdoc.api_urls')),
     path('api/', include('templates_lib.api_urls')),
     path('api/', include('projects.api_urls')),
+    path('api/', include('navigation.api_urls')),
 ]
 
 if settings.DEBUG:

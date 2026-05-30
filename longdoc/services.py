@@ -282,6 +282,9 @@ def update_small_model_settings(project, **changes):
         "diff_safety_reviewer_enabled",
         "compile_log_triage_enabled",
         "circuit_breaker_enabled",
+        "nav_index_enrich_enabled",
+        "nav_rerank_enabled",
+        "nav_repair_enabled",
     }
     dirty_fields: list[str] = []
     for field_name, value in changes.items():
@@ -327,6 +330,9 @@ def serialize_settings(
             "diff_safety_reviewer_enabled": bool(smcl and smcl.diff_safety_reviewer_enabled),
             "compile_log_triage_enabled": bool(smcl and smcl.compile_log_triage_enabled),
             "circuit_breaker_enabled": bool(smcl and smcl.circuit_breaker_enabled),
+            "nav_index_enrich_enabled": bool(smcl and smcl.nav_index_enrich_enabled),
+            "nav_rerank_enabled": bool(smcl and smcl.nav_rerank_enabled),
+            "nav_repair_enabled": bool(smcl and smcl.nav_repair_enabled),
         },
         "updated_at": settings_obj.updated_at.isoformat(),
     }

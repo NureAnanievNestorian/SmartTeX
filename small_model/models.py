@@ -128,6 +128,9 @@ class ProjectSmallModelSettings(models.Model):
     circuit_breaker_enabled = models.BooleanField(default=False)
     minimal_patch_generator_enabled = models.BooleanField(default=False)
     post_edit_success_judge_enabled = models.BooleanField(default=False)
+    nav_index_enrich_enabled = models.BooleanField(default=False)
+    nav_rerank_enabled = models.BooleanField(default=False)
+    nav_repair_enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -138,8 +141,18 @@ class ProjectSmallModelSettings(models.Model):
             "diff_safety_reviewer": "diff_safety_reviewer_enabled",
             "compile_log_triage": "compile_log_triage_enabled",
             "circuit_breaker": "circuit_breaker_enabled",
+            "nav_index_enrich": "nav_index_enrich_enabled",
+            "nav_rerank": "nav_rerank_enabled",
+            "nav_repair": "nav_repair_enabled",
         }.get(feature_key)
-        return bool(self.small_model_control_enabled and field and getattr(self, field, False))
+        if not field:
+            return False
+        # Navigation features are project-assistant capabilities, not part of
+        # the old safety-layer master switch. User/account access and quota are
+        # still enforced by SmallModelCallMixin before a provider call.
+        if feature_key in {"nav_index_enrich", "nav_rerank", "nav_repair"}:
+            return bool(getattr(self, field, False))
+        return bool(self.small_model_control_enabled and getattr(self, field, False))
 
     def __str__(self) -> str:
         return f"SMCL settings for project {self.project_id}"

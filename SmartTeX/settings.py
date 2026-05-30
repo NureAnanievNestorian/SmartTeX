@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'longdoc',
     'mcp',
     'small_model.apps.SmallModelAppConfig',
+    'navigation.apps.NavigationConfig',
 ]
 
 MIDDLEWARE = [

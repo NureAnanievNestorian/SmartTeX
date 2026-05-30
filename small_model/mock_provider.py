@@ -9,6 +9,10 @@ from .task_types import (
     TASK_CONTEXT_COMPRESS,
     TASK_DIFF_SAFETY_REVIEW,
     TASK_EDIT_INTENT_CLASSIFY,
+    TASK_NAV_FILE_CARD_ENRICH,
+    TASK_NAV_REGION_CARD_ENRICH,
+    TASK_NAV_RERANK_TARGETS,
+    TASK_NAV_REPAIR_GUIDANCE,
     TASK_PRE_PROPOSAL_ANALYZE,
 )
 
@@ -78,6 +82,36 @@ DEFAULT_RESPONSES: dict[str, dict[str, Any]] = {
         "decision": "continue",
         "reason": "",
         "suggested_scope_reduction": None,
+    },
+    TASK_NAV_FILE_CARD_ENRICH: {
+        "summary": "mock file summary",
+        "state": "real",
+        "state_confidence": "medium",
+        "summary_confidence": "medium",
+        "role_refinement": None,
+        "role_confidence": None,
+        "edit_triggers": [{"phrase": "mock-trigger", "weight": 1.0}],
+    },
+    TASK_NAV_REGION_CARD_ENRICH: {
+        "summary": "mock region summary",
+        "state": "real",
+        "state_confidence": "medium",
+        "summary_confidence": "medium",
+        "edit_triggers": [{"phrase": "mock-region", "weight": 1.0}],
+    },
+    TASK_NAV_RERANK_TARGETS: {
+        "ranked": [],
+        "scope_confidence": "medium",
+    },
+    TASK_NAV_REPAIR_GUIDANCE: {
+        "error_kind": "other",
+        "diagnosis": "mock diagnosis",
+        "fix_hint": {
+            "rewrite_op": None,
+            "add_op": None,
+            "additional_read_targets": [],
+            "notes": None,
+        },
     },
 }
 

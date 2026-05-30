@@ -895,7 +895,47 @@ mcp = FastMCP(
     - Never mix LaTeX and Typst syntax in one file.
     - The active main source file is `main_file_name` from project metadata (defaults to `main.tex` or `main.typ`).
 
-    ### Before any edit — mandatory orientation
+    ### Preparation before write workflows — mandatory
+    Call `prepare_document_work(project_id, user_request)` BEFORE any
+    document/project write workflow. This includes every proposal, every
+    direct edit, every multi-file change, every retry after validation /
+    compile failure, and every operation touching structure, sections,
+    templates, requirements, consistency, cleanup, or long-document
+    content.
+
+    Skip the call ONLY when:
+    - you are continuing the same workflow whose `preparation_id` is
+      still fresh (the previous response told you how long it stays
+      fresh via `fresh_until_seconds`); or
+    - the user is asking only for explanation/analysis and no write tool
+      will be invoked.
+
+    After a validation or compile failure, call it AGAIN with
+    `previous_error=<the error response>` and
+    `attempted_patch_ops=<the ops you tried>`. The response will include
+    `repair_guidance` with a targeted `fix_hint`.
+
+    Use the returned fields to plan reads and edits:
+    - `read_targets` — files / line ranges to read (in priority order);
+    - `likely_edit_targets` — what to edit, with confidence;
+    - `constraints` — edit_mode / max_changed_lines / max_files /
+      do_not_touch_files;
+    - `patch_op_schema_reminder` — the canonical patch-op shapes;
+    - `do_not` — hard prohibitions for this preparation;
+    - `capabilities` — what auxiliary features are active for this call.
+
+    Do not check settings or feature flags first — `capabilities` is the
+    authoritative report.
+
+    `prepare_document_work` never edits files, never creates or modifies
+    proposals, and never holds proposal locks. It is read-only with
+    respect to user content.
+
+    ### Before any edit — orientation fallback
+    The orientation steps below remain valid when `prepare_document_work`
+    is unavailable or has returned `mode == "minimal"`/`"fallback_structural"`.
+    Otherwise prefer the targets surfaced by `prepare_document_work`.
+
     1. Call `list_project_sections` (compact=True) — understand structure and get line ranges.
        Each section now includes `file_name` — note which file it belongs to before editing.
     2. Assume the document is NOT empty. Read before writing.
@@ -3361,6 +3401,60 @@ def resource_project_compile_log(project_id: int) -> dict[str, Any]:
 )
 def resource_project_file_info(project_id: int) -> dict[str, Any]:
     return _read_main_file_info(int(project_id))
+
+
+_PREPARE_DOCUMENT_WORK_DOCSTRING = """Prepare a document/project write workflow.
+
+Call this BEFORE any document/project write workflow: any proposal, any
+edit, any multi-file change, any retry after validation failure, any
+operation touching structure / sections / templates / requirements /
+consistency / cleanup / long-document content.
+
+Skip the call only when continuing the same workflow with a still-fresh
+``preparation_id`` from the previous call, or when the user is only
+asking for explanation/analysis (no write tool will be used).
+
+After a validation or compile failure, call this tool again with
+``previous_error=<error response>`` and ``attempted_patch_ops=<ops you
+tried>`` — the response will include ``repair_guidance``.
+
+Use the returned ``read_targets``, ``likely_edit_targets``,
+``constraints``, ``patch_op_schema_reminder``, and ``do_not`` to plan
+your reads and edits. Do not check settings or feature flags first —
+feature availability is reported inside ``capabilities``.
+
+This tool never edits source files, never creates or modifies proposals,
+and never takes proposal locks. It MAY build/refresh navigation index
+rows and write a short-lived preparation cache entry.
+"""
+
+
+@mcp.tool
+def prepare_document_work(
+    project_id: int,
+    user_request: str,
+    preparation_id: str | None = None,
+    previous_error: dict | None = None,
+    attempted_patch_ops: list[dict[str, Any]] | None = None,
+    selected_file: str | None = None,
+    selected_region_id: int | None = None,
+) -> dict[str, Any]:
+    """Prepare a document/project write workflow."""
+    body: dict[str, Any] = {"user_request": user_request or ""}
+    if preparation_id:
+        body["preparation_id"] = preparation_id
+    if previous_error is not None:
+        body["previous_error"] = previous_error
+    if attempted_patch_ops is not None:
+        body["attempted_patch_ops"] = attempted_patch_ops
+    if selected_file:
+        body["selected_file"] = selected_file
+    if selected_region_id is not None:
+        body["selected_region_id"] = int(selected_region_id)
+    return _call_allow_json_errors("POST", f"/api/projects/{int(project_id)}/navigation/prepare/", body)
+
+
+prepare_document_work.__doc__ = _PREPARE_DOCUMENT_WORK_DOCSTRING
 
 
 if __name__ == "__main__":

@@ -624,35 +624,47 @@ def api_project_write_window(request: HttpRequest, project_id: int) -> JsonRespo
         return JsonResponse({"detail": str(exc)}, status=400)
 
     target_file = str(body.get("file_name") or main_source_filename(project))
-    before_text = _read_text_target(project, target_file)
     try:
-        payload = write_project_window(
-            project,
-            file_name=target_file,
-            replacement=replacement,
-            start_line=_to_int(body.get("start_line")),
-            end_line=_to_int(body.get("end_line")),
-            start_char=_to_int(body.get("start_char")),
-            end_char=_to_int(body.get("end_char")),
-        )
-    except (ValueError, TypeError) as exc:
-        return JsonResponse({"detail": str(exc)}, status=400)
+        before_text = _read_text_target(project, target_file)
+        try:
+            payload = write_project_window(
+                project,
+                file_name=target_file,
+                replacement=replacement,
+                start_line=_to_int(body.get("start_line")),
+                end_line=_to_int(body.get("end_line")),
+                start_char=_to_int(body.get("start_char")),
+                end_char=_to_int(body.get("end_char")),
+            )
+        except (ValueError, TypeError) as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
 
-    project.last_status = Project.CompileStatus.PENDING
-    project.save(update_fields=["last_status", "updated_at"])
-    after_text = _read_text_target(project, target_file)
-    if before_text != after_text and meta["source"] == "mcp":
-        target = f"{payload.get('file_name', main_source_filename(project))}:{payload.get('mode', 'window')}"
-        create_text_project_version(
-            project=project,
-            actor=user,
-            source=meta["source"],
-            operation="write_project_window",
-            target=target,
-            target_file=str(payload.get("file_name") or target_file),
-            summary=meta["summary"] or _default_change_summary("write_project_window", str(payload.get("file_name") or target_file)),
+        project.last_status = Project.CompileStatus.PENDING
+        project.save(update_fields=["last_status", "updated_at"])
+        after_text = _read_text_target(project, target_file)
+        if before_text != after_text and meta["source"] == "mcp":
+            target = f"{payload.get('file_name', main_source_filename(project))}:{payload.get('mode', 'window')}"
+            create_text_project_version(
+                project=project,
+                actor=user,
+                source=meta["source"],
+                operation="write_project_window",
+                target=target,
+                target_file=str(payload.get("file_name") or target_file),
+                summary=meta["summary"] or _default_change_summary("write_project_window", str(payload.get("file_name") or target_file)),
+            )
+        return JsonResponse(payload)
+    except Exception as exc:
+        import logging, traceback
+        logging.getLogger(__name__).exception("write-window failed for project %s file=%r", project_id, target_file)
+        return JsonResponse(
+            {
+                "detail": f"{type(exc).__name__}: {exc}",
+                "file_name": target_file,
+                "traceback": traceback.format_exc().splitlines()[-6:],
+            },
+            status=500,
         )
-    return JsonResponse(payload)
 
 
 @csrf_exempt

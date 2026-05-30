@@ -140,6 +140,115 @@ COMPILE_LOG_TRIAGE_SCHEMA = {
     },
 }
 
+NAV_FILE_CARD_ENRICH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "state": {"type": "string", "enum": ["real", "demo", "placeholder", "unknown"]},
+        "state_confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "summary_confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "role_refinement": {"type": "string", "nullable": True},
+        "role_confidence": {"type": "string", "enum": ["low", "medium", "high"], "nullable": True},
+        "edit_triggers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "phrase": {"type": "string"},
+                    "weight": {"type": "number"},
+                },
+            },
+        },
+    },
+}
+
+NAV_REGION_CARD_ENRICH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "state": {"type": "string", "enum": ["real", "demo", "placeholder", "unknown"]},
+        "state_confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "summary_confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "edit_triggers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "phrase": {"type": "string"},
+                    "weight": {"type": "number"},
+                },
+            },
+        },
+    },
+}
+
+NAV_RERANK_TARGETS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ranked": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "candidate_id": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+        "scope_confidence": {"type": "string", "enum": ["low", "medium", "high"], "nullable": True},
+    },
+}
+
+NAV_REPAIR_GUIDANCE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "error_kind": {
+            "type": "string",
+            "enum": [
+                "unknown_op",
+                "include_required",
+                "graph_error",
+                "compile_error",
+                "out_of_bounds",
+                "stale_token",
+                "malformed_include_file",
+                "use_proposal_workflow",
+                "other",
+            ],
+        },
+        "diagnosis": {
+            "type": "string",
+            "maxLength": 240,
+        },
+        "fix_hint": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "rewrite_op": {
+                    "type": ["object", "null"],
+                    "additionalProperties": True,
+                },
+                "add_op": {
+                    "type": ["object", "null"],
+                    "additionalProperties": True,
+                },
+                "additional_read_targets": {
+                    "type": "array",
+                    "maxItems": 5,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                },
+            },
+            "required": ["rewrite_op", "add_op", "additional_read_targets"],
+        },
+    },
+    "required": ["error_kind", "diagnosis", "fix_hint"],
+}
+
 CIRCUIT_BREAKER_SCHEMA = {
     "type": "object",
     "properties": {

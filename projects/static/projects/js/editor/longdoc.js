@@ -516,6 +516,11 @@ function renderSettingsPanel() {
       ["mcp_controlled_access", "Контрольований MCP-доступ", "Обмежити MCP доступом через контрольовані інструменти."],
       ["mcp_write_context", "MCP може писати контекст", "Дозволити MCP створювати та оновлювати контекст."],
     ]],
+    ["Навігаційний індекс", [
+      ["nav_index_enrich_enabled", "Збагачення індексу", "Мала модель додає короткі описи, стани та пошукові тригери для файлів і секцій."],
+      ["nav_rerank_enabled", "Rerank цілей", "Мала модель переупорядковує кандидати read/edit targets для запиту."],
+      ["nav_repair_enabled", "Repair guidance", "Мала модель пояснює помилки валідації та підказує точні виправлення."],
+    ]],
     ...(userHasSmallModelAccess ? [["AI Safety Layer", [
       ["small_model_control_enabled", "Увімкнути safety layer", "Опційна перевірка читання й запропонованих змін."],
       ["context_compressor_enabled", "Context Compressor", "Стискає контекст перед роботою моделі."],
