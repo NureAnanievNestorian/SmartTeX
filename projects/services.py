@@ -412,7 +412,10 @@ def push_to_github(project: "Project") -> None:
 
 
 def schedule_github_sync(project: "Project") -> None:
-    has_installation = hasattr(project.owner, "github_installation") and project.owner.github_installation_id is not None
+    try:
+        has_installation = project.owner.github_installation is not None
+    except Exception:
+        has_installation = False
     if not project.github_sync_enabled or not project.github_repo_url or not has_installation:
         return
     project_id = project.id
