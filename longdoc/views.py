@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Sum
@@ -780,6 +783,7 @@ def api_change_proposal_accept(request: HttpRequest, project_id: int) -> JsonRes
     except SessionWriteError as exc:
         return JsonResponse(exc.payload(), status=exc.status_code)
     except Exception as exc:
+        logger.exception("accept_session failed for project %s", project_id)
         return JsonResponse({"error": "ACCEPT_FAILED", "message": str(exc)}, status=500)
     proposal.refresh_from_db()
     project.refresh_from_db()
