@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -131,11 +132,29 @@ def _authorization_from_legacy_request(request: Request) -> str | None:
     return None
 
 
+def _raise_with_body(response: httpx.Response, method: str, path: str) -> None:
+    ctype = response.headers.get("content-type", "")
+    if "application/json" in ctype:
+        try:
+            body_repr = json.dumps(response.json(), ensure_ascii=False)
+        except Exception:
+            body_repr = response.text
+    else:
+        body_repr = response.text
+    body_repr = (body_repr or "").strip()
+    if len(body_repr) > 2000:
+        body_repr = body_repr[:2000] + "...[truncated]"
+    raise RuntimeError(
+        f"Backend {method} {path} returned HTTP {response.status_code}: {body_repr or '<empty body>'}"
+    )
+
+
 def _call(method: str, path: str, data: dict[str, Any] | None = None) -> Any:
     url = f"{BASE_URL}{path}"
     with httpx.Client(timeout=60, headers=_headers()) as client:
         response = client.request(method, url, json=data)
-    response.raise_for_status()
+    if response.is_error:
+        _raise_with_body(response, method, path)
 
     ctype = response.headers.get("content-type", "")
     if "application/json" in ctype:
@@ -172,7 +191,8 @@ def _call_upload(path: str, file_bytes: bytes, filename: str = "upload.zip") -> 
     headers = {k: v for k, v in _headers().items() if k.lower() != "accept"}
     with httpx.Client(timeout=120, headers=headers) as client:
         response = client.post(url, files={"file": (filename, file_bytes, "application/octet-stream")})
-    response.raise_for_status()
+    if response.is_error:
+        _raise_with_body(response, "POST", path)
     ctype = response.headers.get("content-type", "")
     if "application/json" in ctype:
         return response.json()
