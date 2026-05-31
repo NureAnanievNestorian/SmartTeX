@@ -1924,9 +1924,26 @@ def compile_project(project: Project) -> CompileResult:
             compile_state="failed",
         )
 
-    from projects.pre_compile import run_pre_compile_jobs
+    from projects.pre_compile import run_pre_compile_jobs, PreCompileResult
     import projects.plantuml_job  # noqa: F401 — registers PlantUmlJob
-    run_pre_compile_jobs(project)
+    pre_compile_results = run_pre_compile_jobs(project)
+
+    def _pre_compile_diagnostics(results: list[PreCompileResult]) -> list[dict]:
+        diags: list[dict] = []
+        for result in results:
+            for error in result.errors:
+                if ": " in error:
+                    file_part, _, msg = error.partition(": ")
+                else:
+                    file_part, msg = "", error
+                diags.append({
+                    "file": file_part.strip(),
+                    "line": 1,
+                    "column": 1,
+                    "severity": "error",
+                    "message": f"[{result.job}] {msg.strip()}",
+                })
+        return diags
 
     host_project_root = str(getattr(settings, "HOST_PROJECT_ROOT", "")).strip()
 
@@ -2003,12 +2020,13 @@ def compile_project(project: Project) -> CompileResult:
         log_file_path(project).write_text(log_text, encoding="utf-8", errors="ignore")
 
         # Success when compiler exited cleanly with a PDF, or produced/updated PDF despite non-fatal issues.
+        pre_diags = _pre_compile_diagnostics(pre_compile_results)
         if pdf_exists_after and (proc.returncode == 0 or pdf_was_updated):
             logger.info("Project compile succeeded", extra={"project_id": project.id, "main_file": src_filename})
             return CompileResult(
                 status=Project.CompileStatus.SUCCESS,
                 log=log_text,
-                diagnostics=parse_compile_diagnostics(project, log_text),
+                diagnostics=pre_diags + parse_compile_diagnostics(project, log_text),
                 compile_state="synced",
             )
 
@@ -2017,7 +2035,7 @@ def compile_project(project: Project) -> CompileResult:
         return CompileResult(
             status=Project.CompileStatus.ERROR,
             log=failure_log,
-            diagnostics=parse_compile_diagnostics(project, failure_log),
+            diagnostics=pre_diags + parse_compile_diagnostics(project, failure_log),
             compile_state="failed",
         )
     except subprocess.TimeoutExpired:
@@ -2026,7 +2044,7 @@ def compile_project(project: Project) -> CompileResult:
         return CompileResult(
             status=Project.CompileStatus.ERROR,
             log=log_text,
-            diagnostics=parse_compile_diagnostics(project, log_text),
+            diagnostics=_pre_compile_diagnostics(pre_compile_results) + parse_compile_diagnostics(project, log_text),
             compile_state="failed",
         )
     except FileNotFoundError:
@@ -2038,7 +2056,7 @@ def compile_project(project: Project) -> CompileResult:
         return CompileResult(
             status=Project.CompileStatus.ERROR,
             log=log_text,
-            diagnostics=parse_compile_diagnostics(project, log_text),
+            diagnostics=_pre_compile_diagnostics(pre_compile_results) + parse_compile_diagnostics(project, log_text),
             compile_state="failed",
         )
     except Exception as exc:  # pragma: no cover
@@ -2048,7 +2066,7 @@ def compile_project(project: Project) -> CompileResult:
         return CompileResult(
             status=Project.CompileStatus.ERROR,
             log=log_text,
-            diagnostics=parse_compile_diagnostics(project, log_text),
+            diagnostics=_pre_compile_diagnostics(pre_compile_results) + parse_compile_diagnostics(project, log_text),
             compile_state="failed",
         )
     finally:
