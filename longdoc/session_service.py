@@ -292,6 +292,7 @@ def _update_section(
     section_index: int,
     new_content: str,
     project: Project,
+    **_: Any,
 ) -> None:
     source = path.read_text(encoding="utf-8", errors="ignore")
     chunks = _split_source_sections(project, source)
