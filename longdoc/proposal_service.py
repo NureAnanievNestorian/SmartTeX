@@ -388,6 +388,18 @@ def _normalize_patch_ops(
         # than the generic INVALID_FILENAME from _safe_session_rel_path.
         if op == "include_file":
             _validate_include_file_fields(raw, idx)
+        if op == "update_section":
+            if raw.get("section_index") is None:
+                raise SessionWriteError(
+                    "MISSING_FIELD",
+                    f"patch_ops[{idx}]: update_section requires section_index.",
+                    suggestion="Use list_project_sections to find the correct section_index before calling update_section.",
+                )
+            if "new_content" not in raw:
+                raise SessionWriteError(
+                    "MISSING_FIELD",
+                    f"patch_ops[{idx}]: update_section requires new_content.",
+                )
         rel = _safe_session_rel_path(str(raw.get("filename") or ""))
         item = {**raw, "filename": rel.as_posix(), "op": op}
         changed_files.add(item["filename"])
