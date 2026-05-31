@@ -1360,6 +1360,16 @@ def api_project_plantuml(request: HttpRequest, project_id: int) -> JsonResponse:
         or "api"
     ).strip().lower()
     version_source = raw_source if raw_source in {"mcp", "web", "api"} else "api"
+    summary = str(body.get("change_summary") or "").strip() or f"Render PlantUML diagram {svg_rel}"
+
+    # Commit both .puml source and rendered .svg to git so they are tracked and can be deleted later.
+    commit_info = commit_project_changes(
+        project,
+        summary=summary,
+        operation="plantuml_render",
+        source=version_source,
+        target_files=[puml_rel, svg_rel],
+    )
     create_project_version(
         project=project,
         actor=user,
@@ -1367,11 +1377,16 @@ def api_project_plantuml(request: HttpRequest, project_id: int) -> JsonResponse:
         operation="plantuml_render",
         target=svg_rel,
         target_file=svg_rel,
-        summary=f"Render PlantUML diagram {svg_rel}",
+        summary=summary,
         before_content="",
         after_content="",
         snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
-        event_payload={"puml_file": puml_rel, "svg_file": svg_rel, "kind": "plantuml_render"},
+        event_payload={
+            "puml_file": puml_rel,
+            "svg_file": svg_rel,
+            "kind": "plantuml_render",
+            "git_commit": commit_info.commit_hash or "",
+        },
         is_revertible=False,
     )
 

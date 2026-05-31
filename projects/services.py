@@ -284,7 +284,14 @@ def commit_project_changes(
 
     try:
         add_args = ["add", "-A", "--", *normalized]
-        _run_project_git(project, add_args)
+        add_result = _run_project_git(project, add_args, check=False)
+        if add_result.returncode != 0 and "did not match any files" in (add_result.stderr or ""):
+            # File(s) never tracked by git (e.g. created outside of git-tracked writes).
+            # Fall back to staging all working-tree changes so deletions of other tracked
+            # files still land in the commit.
+            _run_project_git(project, ["add", "-A"])
+        elif add_result.returncode != 0:
+            raise RuntimeError((add_result.stderr or add_result.stdout or "git add failed").strip())
         status = _run_project_git(project, ["status", "--short", "--", *normalized], check=False)
         if status.returncode != 0:
             raise RuntimeError((status.stderr or status.stdout or "git status failed").strip())

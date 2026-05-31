@@ -1594,7 +1594,21 @@ async def generate_plantuml_diagram(
     (e.g. `"diagrams/architecture"`).
 
     `source` — full PlantUML diagram text starting with `@startuml`.
+
+    In controlled MCP mode this tool is disabled. Submit the `.puml` source via
+    `propose_document_change` with a `create_new_file` op instead — the SVG will
+    be rendered automatically when the proposal is accepted.
     """
+    if _project_controlled_mode_enabled(project_id):
+        base = filename.removesuffix(".puml").removesuffix(".svg")
+        puml_file = f"{base}.puml"
+        return _rejection(
+            "USE_PROPOSAL_WORKFLOW",
+            "Direct PlantUML rendering is disabled in controlled MCP mode.",
+            f'Submit the diagram source via propose_document_change with op "create_new_file", '
+            f'filename="{puml_file}", content=<your @startuml source>. '
+            f"The SVG will be rendered automatically when the proposal is accepted.",
+        )
     payload = _call(
         "POST",
         f"/api/projects/{project_id}/plantuml/",
