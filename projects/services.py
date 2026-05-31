@@ -286,13 +286,13 @@ def commit_project_changes(
         add_args = ["add", "-A", "--", *normalized]
         add_result = _run_project_git(project, add_args, check=False)
         if add_result.returncode != 0:
-            stderr = add_result.stderr or ""
-            if "did not match any files" in stderr or "paths are ignored" in stderr:
+            add_output = (add_result.stderr or "") + (add_result.stdout or "")
+            if "did not match any files" in add_output or "paths are ignored" in add_output:
                 # Either the file was never tracked, or it's gitignored (e.g. main.pdf).
                 # Fall back to staging all working-tree changes that git will accept.
                 _run_project_git(project, ["add", "-A"])
             else:
-                raise RuntimeError((stderr or add_result.stdout or "git add failed").strip())
+                raise RuntimeError((add_result.stderr or add_result.stdout or "git add failed").strip())
         status = _run_project_git(project, ["status", "--short", "--", *normalized], check=False)
         if status.returncode != 0:
             raise RuntimeError((status.stderr or status.stdout or "git status failed").strip())
