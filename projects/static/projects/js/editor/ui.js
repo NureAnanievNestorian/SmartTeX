@@ -14,6 +14,7 @@ export const diagCountClosedEl = document.getElementById("diag-count-closed");
 export const sbCompileEl     = document.getElementById("sb-compile");
 export const sbLangEl        = document.getElementById("sb-lang");
 export const sbLineColEl     = document.getElementById("sb-linecol");
+export const sbWrapBtnEl     = document.getElementById("sb-wrap-toggle");
 export const statusbarEl     = document.getElementById("statusbar");
 export const editorTabNameEl = document.getElementById("editor-tab-name");
 export const editorTabDirtyEl= document.getElementById("editor-tab-dirty");
@@ -65,6 +66,13 @@ export function updateStatusBarLang(filename) {
 export function updateEditorTab(filename) {
   if (editorTabNameEl) editorTabNameEl.textContent = filename || "untitled";
   updateStatusBarLang(filename);
+}
+
+export function updateWrapToggle(enabled) {
+  if (!sbWrapBtnEl) return;
+  sbWrapBtnEl.classList.toggle("active", Boolean(enabled));
+  sbWrapBtnEl.setAttribute("aria-pressed", enabled ? "true" : "false");
+  sbWrapBtnEl.title = enabled ? "Вимкнути перенос рядків" : "Увімкнути перенос рядків";
 }
 
 const COMPILE_ICONS = {

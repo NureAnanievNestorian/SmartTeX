@@ -1587,7 +1587,13 @@ async function openSessionDiffModal({ forceReload = false } = {}) {
         <span>${warnings.map(w => escHtml(w.message || w.code || "")).join(" · ")}</span>
       </div>
     ` : "";
-    if (content) content.innerHTML = warningHtml + renderDiffContent(data.diff_text || "");
+    let diffHtml;
+    if (!data.diff_text && data.compile_error_summary) {
+      diffHtml = `<pre class="diff-empty diff-compile-error">${escHtml(data.compile_error_summary)}</pre>`;
+    } else {
+      diffHtml = renderDiffContent(data.diff_text || "");
+    }
+    if (content) content.innerHTML = warningHtml + diffHtml;
 
   } catch (err) {
     if (content) content.innerHTML = `<span class="diff-empty">Помилка завантаження diff: ${escHtml(err.message)}</span>`;

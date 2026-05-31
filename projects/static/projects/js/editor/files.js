@@ -16,6 +16,9 @@ let _selectFile = null;
 export function setSelectFileRef(fn) { _selectFile = fn; }
 export function selectFile(file) { return _selectFile?.(file); }
 
+let _openFileContextMenu = null;
+export function setFileContextMenuRef(fn) { _openFileContextMenu = fn; }
+
 // ── File type utils ──────────────────────────────────────────────────────────
 
 const FTYPE_MAP = {
@@ -70,6 +73,14 @@ export function splitPath(path) {
 
 export function pathBaseName(path) { return splitPath(path)[1]; }
 export function pathDirName(path)  { return splitPath(path)[0]; }
+
+function joinProjectPath(parentPath, childName) {
+  const parent = String(parentPath || "").replace(/\/+$/, "");
+  const child = String(childName || "").replace(/^\/+/, "");
+  if (!parent) return child;
+  if (!child) return parent;
+  return `${parent}/${child}`;
+}
 
 export function compareTreeNodes(a, b) {
   if (a.file?.is_dir && !b.file?.is_dir) return -1;
@@ -179,6 +190,12 @@ export function renderFileList() {
     } else {
       btn.addEventListener("click", () => _selectFile?.(file));
     }
+    btn.addEventListener("contextmenu", e => {
+      if (!_openFileContextMenu) return;
+      e.preventDefault();
+      e.stopPropagation();
+      _openFileContextMenu(file, e);
+    });
 
     if (!cfg.sessionReview && !file.is_dir && file.name !== s.mainFileName) {
       btn.draggable = true;
@@ -325,6 +342,7 @@ export async function renameFile(file) {
     if (labelEl) labelEl.textContent = trimmed;
   }
   setSaveHint(`${file?.is_dir ? "Папку" : "Файл"} перейменовано: ${currentName} → ${trimmed}`, "saved");
+  return trimmed;
 }
 
 export async function deleteFile(file) {
@@ -339,28 +357,36 @@ export async function deleteFile(file) {
   return wasSelected;
 }
 
-export async function createFolder() {
+export async function createFolder(parentPath = "") {
   const { showCreateEntryDialog } = await import("./ui.js");
-  const folderName = await showCreateEntryDialog("directory");
+  const basePath = String(parentPath || "").replace(/\/+$/, "");
+  const folderName = await showCreateEntryDialog("directory", {
+    hint: basePath ? `Нова папка в ${basePath}` : "Назва папки",
+  });
   if (!folderName) return null;
+  const targetPath = joinProjectPath(basePath, folderName);
   await api(`/api/projects/${cfg.projectId}/files/`, {
     method: "POST",
-    body: JSON.stringify({ filename: folderName, entry_kind: "directory" }),
+    body: JSON.stringify({ filename: targetPath, entry_kind: "directory" }),
   });
-  setSaveHint(`Папку створено: ${folderName}`, "saved");
-  return folderName;
+  setSaveHint(`Папку створено: ${targetPath}`, "saved");
+  return targetPath;
 }
 
-export async function createEmptyTextFile() {
+export async function createEmptyTextFile(parentPath = "") {
   const { showCreateEntryDialog } = await import("./ui.js");
-  const fileName = await showCreateEntryDialog("file");
+  const basePath = String(parentPath || "").replace(/\/+$/, "");
+  const fileName = await showCreateEntryDialog("file", {
+    hint: basePath ? `Новий файл у ${basePath} (напр. note.typ)` : "Назва файлу (напр. chapter1.typ)",
+  });
   if (!fileName) return null;
+  const targetPath = joinProjectPath(basePath, fileName);
   await api(`/api/projects/${cfg.projectId}/files/`, {
     method: "POST",
-    body: JSON.stringify({ filename: fileName, text_content: "" }),
+    body: JSON.stringify({ filename: targetPath, text_content: "" }),
   });
-  setSaveHint(`Файл створено: ${fileName}`, "saved");
-  return fileName;
+  setSaveHint(`Файл створено: ${targetPath}`, "saved");
+  return targetPath;
 }
 
 export async function uploadFile(file) {

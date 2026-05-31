@@ -735,6 +735,8 @@ def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonRespo
         {
             "diff_text": proposal.diff_summary,
             "proposal_id": proposal.id,
+            "status": proposal.status,
+            "compile_error_summary": proposal.compile_error_summary or "",
             "smcl_risk_level": proposal.smcl_risk_level or "low",
             "smcl_warnings": proposal.smcl_warnings or [],
         }

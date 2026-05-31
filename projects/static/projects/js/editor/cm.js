@@ -2,7 +2,7 @@ import {
   EditorView, keymap,
   lineNumbers, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, rectangularSelection, crosshairCursor,
-  highlightActiveLine,
+  highlightActiveLine, hoverTooltip,
 } from "https://esm.sh/@codemirror/view@6";
 import { EditorState, Compartment } from "https://esm.sh/@codemirror/state@6";
 import {
@@ -14,8 +14,10 @@ import {
 } from "https://esm.sh/@codemirror/language@6";
 import {
   autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap,
+  completeAnyWord, snippetCompletion,
 } from "https://esm.sh/@codemirror/autocomplete@6";
 import { highlightSelectionMatches, searchKeymap } from "https://esm.sh/@codemirror/search@6";
+import { lintGutter, lintKeymap, setDiagnostics } from "https://esm.sh/@codemirror/lint@6";
 import { tags } from "https://esm.sh/@lezer/highlight@1";
 import { stex } from "https://esm.sh/@codemirror/legacy-modes@6/mode/stex";
 import * as state from "./state.js";
@@ -30,6 +32,7 @@ const basicSetup = [
   highlightSpecialChars(),
   history(),
   foldGutter(),
+  lintGutter(),
   drawSelection(),
   dropCursor(),
   rectangularSelection(),
@@ -41,13 +44,13 @@ const basicSetup = [
   syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
   bracketMatching(),
   closeBrackets(),
-  autocompletion(),
   keymap.of([
     ...closeBracketsKeymap,
     ...defaultKeymap,
     ...searchKeymap,
     ...historyKeymap,
     ...foldKeymap,
+    ...lintKeymap,
     ...completionKeymap,
   ]),
 ];
@@ -135,7 +138,10 @@ const typstParser = {
     if (stream.match("//")) { stream.skipToEnd(); return "comment"; }
     if (stream.match("/*")) { state.inBlockComment = true; return "comment"; }
     if (stream.sol() && stream.match(/^=+ .+/)) { stream.skipToEnd(); return "heading"; }
+    if (stream.match(/^@[A-Za-z0-9:_-]+/)) return "link";
+    if (stream.match(/^<[A-Za-z0-9:_-]+>/)) return "tag";
     if (stream.match(/^#[a-zA-Z][a-zA-Z0-9._-]*/)) return "keyword";
+    if (stream.match(/^[A-Za-z_][A-Za-z0-9_-]*(?=\s*:)/)) return "property";
     if (stream.match(/^\$[^$\n]*\$/)) return "string";
     if (stream.match(/^"(?:[^"\\]|\\.)*"/)) return "string";
     if (stream.match(/^`[^`]*`/)) return "string";
@@ -147,6 +153,169 @@ const typstParser = {
 };
 
 export const langCompartment = new Compartment();
+export const wrapCompartment = new Compartment();
+
+const TYPOGRAPHIC_QUOTES = /["'`]/;
+const typstKeywordOptions = [
+  { label: "#let", type: "keyword", detail: "binding", info: "Bind a value or function in Typst." },
+  { label: "#set", type: "keyword", detail: "style rule", info: "Set styling defaults for following content." },
+  { label: "#show", type: "keyword", detail: "transform rule", info: "Transform matching elements before rendering." },
+  { label: "#import", type: "keyword", detail: "module", info: "Import definitions from another Typst file or package." },
+  { label: "#include", type: "keyword", detail: "content", info: "Include another Typst file into the document." },
+  { label: "#if", type: "keyword", detail: "control flow", info: "Conditional Typst expression." },
+  { label: "#for", type: "keyword", detail: "control flow", info: "Loop over Typst content or collections." },
+  { label: "#context", type: "keyword", detail: "layout context", info: "Read contextual layout information." },
+  { label: "#here", type: "variable", detail: "location", info: "Current document location." },
+  snippetCompletion("#let ${name} = ${value}", { label: "#let …", type: "keyword", detail: "snippet", boost: 90 }),
+  snippetCompletion("#show ${selector}: it => ${body}", { label: "#show …", type: "keyword", detail: "snippet", boost: 85 }),
+  snippetCompletion("#set ${rule}(${value})", { label: "#set …", type: "keyword", detail: "snippet", boost: 80 }),
+  snippetCompletion("#import \"${path}.typ\": ${member}", { label: "#import …", type: "keyword", detail: "snippet", boost: 75 }),
+  snippetCompletion("#figure(\n\t${body},\n\tcaption: [${caption}],\n) <${label}>", { label: "figure", type: "function", detail: "snippet", boost: 70 }),
+  snippetCompletion("#table(\n\tcolumns: (${columns}),\n\t${body},\n) <${label}>", { label: "table", type: "function", detail: "snippet", boost: 68 }),
+  snippetCompletion("= ${title}\n${}", { label: "heading 1", type: "text", detail: "snippet", boost: 66 }),
+  snippetCompletion("== ${title}\n${}", { label: "heading 2", type: "text", detail: "snippet", boost: 64 }),
+];
+
+function uniqueSorted(values) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function collectTypstSymbols(docText) {
+  const imports = uniqueSorted([...docText.matchAll(/#import\s+"([^"]+)"/g)].map(match => match[1]));
+  const labels = uniqueSorted([...docText.matchAll(/<([A-Za-z0-9:_-]+)>/g)].map(match => match[1]));
+  const refs = uniqueSorted([...docText.matchAll(/@([A-Za-z0-9:_-]+)/g)].map(match => match[1]));
+  const headings = uniqueSorted(docText
+    .split("\n")
+    .map(line => line.match(/^\s*(=+)\s+(.+?)\s*$/))
+    .filter(Boolean)
+    .map(match => match[2]));
+  return { imports, labels, refs, headings };
+}
+
+function buildTypstCompletions(docText) {
+  const symbols = collectTypstSymbols(docText);
+  const dynamic = [
+    ...symbols.labels.map(label => ({ label: `@${label}`, type: "variable", detail: "reference", boost: 88 })),
+    ...symbols.labels.map(label => ({ label: `<${label}>`, type: "property", detail: "label", boost: 60 })),
+    ...symbols.imports.map(path => ({ label: path, type: "namespace", detail: "import path", boost: 56 })),
+    ...symbols.headings.map(title => ({ label: title, type: "text", detail: "heading", boost: 40 })),
+    ...symbols.refs.filter(ref => !symbols.labels.includes(ref)).map(ref => ({ label: `@${ref}`, type: "variable", detail: "reference", boost: 54 })),
+  ];
+  return [...typstKeywordOptions, ...dynamic];
+}
+
+function findTypstTokenAt(docText, pos) {
+  const before = docText.slice(0, pos);
+  const refMatch = before.match(/@([A-Za-z0-9:_-]+)$/);
+  if (refMatch) {
+    return {
+      kind: "ref",
+      name: refMatch[1],
+      from: pos - refMatch[0].length,
+      to: pos,
+    };
+  }
+
+  const labelStart = before.lastIndexOf("<");
+  if (labelStart >= 0) {
+    const after = docText.slice(labelStart);
+    const labelMatch = after.match(/^<([A-Za-z0-9:_-]+)>/);
+    if (labelMatch) {
+      const from = labelStart;
+      const to = labelStart + labelMatch[0].length;
+      if (pos >= from && pos <= to) {
+        return {
+          kind: "label",
+          name: labelMatch[1],
+          from,
+          to,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function findTypstLabelDefinition(docText, labelName) {
+  const escaped = String(labelName || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`<(${escaped})>`, "g");
+  const match = re.exec(docText);
+  if (!match) return null;
+  return {
+    name: labelName,
+    from: match.index,
+    to: match.index + match[0].length,
+  };
+}
+
+function lineNumberAt(doc, pos) {
+  return doc.lineAt(pos).number;
+}
+
+function typstRefTooltip(view, pos) {
+  const docText = view.state.doc.toString();
+  const token = findTypstTokenAt(docText, pos);
+  if (!token) return null;
+  const definition = findTypstLabelDefinition(docText, token.name);
+  const dom = document.createElement("div");
+  dom.className = "cm-typst-tooltip";
+  if (token.kind === "ref") {
+    dom.textContent = definition
+      ? `Reference @${token.name} -> line ${lineNumberAt(view.state.doc, definition.from)}`
+      : `Reference @${token.name} (label not found in this file)`;
+  } else {
+    dom.textContent = `Label <${token.name}> on line ${lineNumberAt(view.state.doc, token.from)}`;
+  }
+  return {
+    pos: token.from,
+    end: token.to,
+    above: true,
+    create() {
+      return { dom };
+    },
+  };
+}
+
+function jumpToTypstDefinition(targetPos = null) {
+  if (!view || !s.selectedFile?.is_text || s.selectedFile?.is_dir) return false;
+  const pos = typeof targetPos === "number" ? targetPos : view.state.selection.main.head;
+  const docText = view.state.doc.toString();
+  const token = findTypstTokenAt(docText, pos);
+  if (!token) return false;
+  const destination = token.kind === "label" ? token : findTypstLabelDefinition(docText, token.name);
+  if (!destination) return false;
+  view.dispatch({
+    selection: { anchor: destination.from, head: destination.to },
+    scrollIntoView: true,
+  });
+  view.focus();
+  return true;
+}
+
+function typstClickHandler(event) {
+  if (!view || (!event.metaKey && !event.ctrlKey)) return false;
+  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  if (typeof pos !== "number") return false;
+  if (!findTypstTokenAt(view.state.doc.toString(), pos)) return false;
+  if (!jumpToTypstDefinition(pos)) return false;
+  event.preventDefault();
+  return true;
+}
+
+function typstCompletionSource(context) {
+  const word = context.matchBefore(/[#@<]?[A-Za-z0-9:_./-]*/);
+  const prevChar = context.pos > 0 ? context.state.sliceDoc(context.pos - 1, context.pos) : "";
+  const explicitTrigger = prevChar === "#" || prevChar === "@" || prevChar === "<";
+  if ((!word || word.from === word.to) && !context.explicit && !explicitTrigger) return null;
+  if (TYPOGRAPHIC_QUOTES.test(prevChar)) return null;
+
+  const from = word ? word.from : context.pos;
+  return {
+    from,
+    options: buildTypstCompletions(context.state.doc.toString()),
+    validFor: /^[#@<]?[A-Za-z0-9:_./-]*$/,
+  };
+}
 
 export function getLanguageExt(filename) {
   const ext = String(filename || "").split(".").pop().toLowerCase();
@@ -165,13 +334,28 @@ export let view = null;
 
 // Per-tab EditorState cache — preserves independent undo/redo history per tab
 const _tabStates = new Map();
+let _lineWrappingEnabled = true;
 
 function makeExtensions(filename) {
+  const isTypst = String(filename || "").toLowerCase().endsWith(".typ");
   return [
     basicSetup,
     darkTheme,
     syntaxHighlighting(vscodeHighlight),
     langCompartment.of(filename ? getLanguageExt(filename) : []),
+    wrapCompartment.of(_lineWrappingEnabled ? EditorView.lineWrapping : []),
+    autocompletion(isTypst ? { override: [typstCompletionSource, completeAnyWord] } : {}),
+    ...(isTypst ? [
+      hoverTooltip((view, pos) => typstRefTooltip(view, pos)),
+      keymap.of([
+        { key: "F12", run: () => jumpToTypstDefinition() },
+      ]),
+      EditorView.domEventHandlers({
+        mousedown(event) {
+          return typstClickHandler(event);
+        },
+      }),
+    ] : []),
     keymap.of([
       indentWithTab,
       { key: "Mod-s",     run: () => { _onInputCallback("save");    return true; } },
@@ -238,6 +422,65 @@ export function getContent() {
   return view ? view.state.doc.toString() : "";
 }
 
+export function getSelectionSnapshot(fromState = null) {
+  const source = fromState || view?.state;
+  if (!source?.selection) return null;
+  return {
+    ranges: source.selection.ranges.map(range => ({
+      anchor: range.anchor,
+      head: range.head,
+    })),
+    mainIndex: source.selection.mainIndex,
+  };
+}
+
+export function setSelectionSnapshot(snapshot) {
+  if (!view || !snapshot?.ranges?.length) return;
+  try {
+    const docLen = view.state.doc.length;
+    const ranges = snapshot.ranges.map(range => ({
+      anchor: Math.max(0, Math.min(Number(range.anchor) || 0, docLen)),
+      head: Math.max(0, Math.min(Number(range.head) || 0, docLen)),
+    }));
+    view.dispatch({
+      selection: {
+        ranges,
+        mainIndex: Math.max(0, Math.min(Number(snapshot.mainIndex) || 0, ranges.length - 1)),
+      },
+    });
+  } catch (_) {}
+}
+
+function resolveDiagnosticRange(doc, lineNumber, column = 1) {
+  const lineNum = Math.max(1, Math.min(Number(lineNumber) || 1, doc.lines));
+  const line = doc.line(lineNum);
+  const anchor = Math.min(line.from + Math.max(0, Number(column || 1) - 1), line.to);
+  let to = Math.min(anchor + 1, line.to);
+  if (to <= anchor) to = line.to > anchor ? line.to : anchor;
+  return { from: anchor, to };
+}
+
+export function setEditorDiagnostics(filename, diagnostics = []) {
+  if (!view) return;
+  const target = String(filename || "");
+  const current = String(s.activeTabName || s.selectedFile?.name || "");
+  const activeDiagnostics = target && current === target
+    ? diagnostics
+        .filter(item => String(item?.file || "") === target)
+        .map(item => {
+          const range = resolveDiagnosticRange(view.state.doc, item.line, item.column || 1);
+          return {
+            from: range.from,
+            to: range.to,
+            severity: item.severity === "warning" ? "warning" : "error",
+            message: String(item.message || "Typst diagnostic"),
+            source: "compile",
+          };
+        })
+    : [];
+  view.dispatch(setDiagnostics(view.state, activeDiagnostics));
+}
+
 export function setContent(text) {
   if (!view) return;
   _settingContent = true;
@@ -261,6 +504,18 @@ export function jumpToLine(n, column = 1) {
 export function switchLanguage(filename) {
   if (!view) return;
   view.dispatch({ effects: langCompartment.reconfigure(getLanguageExt(filename)) });
+}
+
+export function setLineWrapping(enabled) {
+  _lineWrappingEnabled = Boolean(enabled);
+  if (!view) return;
+  view.dispatch({
+    effects: wrapCompartment.reconfigure(_lineWrappingEnabled ? EditorView.lineWrapping : []),
+  });
+}
+
+export function isLineWrappingEnabled() {
+  return _lineWrappingEnabled;
 }
 
 export function focusEditor() { view?.focus(); }

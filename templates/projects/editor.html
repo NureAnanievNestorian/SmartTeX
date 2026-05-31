@@ -222,9 +222,24 @@
             display: block;
         }
 
+        .e-context-menu {
+            position: fixed;
+            top: 0;
+            left: 0;
+            min-width: 220px;
+            max-width: 280px;
+            z-index: 160;
+            border-radius: 8px;
+            padding: 6px;
+            background: #252526;
+            border: 1px solid rgba(255, 255, 255, .08);
+            box-shadow: 0 18px 48px rgba(0, 0, 0, .42);
+        }
+
         .e-menu-item {
             width: 100%;
-            padding: 7px 14px;
+            min-height: 34px;
+            padding: 7px 10px;
             border: 0;
             background: transparent;
             color: var(--e-text2);
@@ -232,6 +247,11 @@
             font-size: 13px;
             font-weight: 400;
             cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+            border-radius: 6px;
         }
 
         .e-menu-item:hover {
@@ -244,8 +264,57 @@
         }
 
         .e-menu-item.danger:hover {
-            background: rgba(244, 71, 71, .12);
+            background: rgba(244, 71, 71, .16);
             color: #fca5a5;
+        }
+
+        .e-menu-item:disabled {
+            opacity: .45;
+            cursor: default;
+            background: transparent !important;
+            color: var(--e-text2) !important;
+        }
+
+        .e-menu-separator {
+            height: 1px;
+            margin: 6px 2px;
+            background: rgba(255, 255, 255, .08);
+        }
+
+        .e-menu-item-icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            opacity: .9;
+        }
+
+        .e-menu-item-icon svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .e-menu-item-label {
+            min-width: 0;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .e-menu-item-shortcut {
+            flex-shrink: 0;
+            margin-left: 12px;
+            font-size: 11px;
+            color: var(--e-muted);
+            letter-spacing: .02em;
+        }
+
+        .e-menu-item.danger .e-menu-item-shortcut {
+            color: inherit;
+            opacity: .8;
         }
 
         /* ── Editor grid with optional assistant side pane ──── */
@@ -1012,6 +1081,11 @@
             color: var(--e-text);
         }
 
+        .e-file-row:has(.e-file-btn:hover) .e-file-actions,
+        .e-file-row:has(.e-file-btn.active) .e-file-actions {
+            opacity: 1;
+        }
+
         .e-file-btn.drag-target {
             background: rgba(34, 197, 94, .15);
             color: #d4d4d4;
@@ -1277,6 +1351,19 @@
             font-style: italic;
             display: block;
             padding: 4px 0;
+        }
+
+        .diff-compile-error {
+            font-style: normal;
+            font-family: var(--e-mono, monospace);
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--e-text2);
+            background: var(--e-bg2);
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin: 4px 0 0;
         }
 
         .diff-summary {
@@ -2536,6 +2623,16 @@
             background: rgba(255, 255, 255, .14);
         }
 
+        .e-sb-item.toggle-btn {
+            border: 0;
+            background: transparent;
+        }
+
+        .e-sb-item.toggle-btn.active {
+            background: rgba(255, 255, 255, .18);
+            color: #fff;
+        }
+
         .e-sb-item svg {
             width: 13px;
             height: 13px;
@@ -3190,12 +3287,7 @@
         }
 
         .session-diff-modal-footer {
-            padding: 10px 14px 12px;
-            border-top: 1px solid var(--e-border);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
+            display: none;
         }
 
         .session-diff-modal-actions {
@@ -3631,6 +3723,103 @@
             justify-content: flex-end;
             gap: 8px;
             padding: 14px 20px 18px;
+        }
+
+        .command-palette-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 210;
+            background: rgba(0, 0, 0, .44);
+            display: none;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 12vh 20px 20px;
+        }
+
+        .command-palette-overlay.open {
+            display: flex;
+        }
+
+        .command-palette {
+            width: min(720px, 100%);
+            background: #202123;
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: 12px;
+            box-shadow: 0 28px 80px rgba(0, 0, 0, .55);
+            overflow: hidden;
+        }
+
+        .command-palette-input {
+            width: 100%;
+            border: 0;
+            border-bottom: 1px solid rgba(255, 255, 255, .08);
+            background: transparent;
+            color: var(--e-text);
+            font-size: 15px;
+            padding: 15px 18px;
+            outline: none;
+        }
+
+        .command-palette-list {
+            max-height: min(52vh, 420px);
+            overflow-y: auto;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .cp-item {
+            width: 100%;
+            border: 0;
+            background: transparent;
+            color: var(--e-text);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            text-align: left;
+            border-radius: 8px;
+            padding: 10px 12px;
+            cursor: pointer;
+        }
+
+        .cp-item:hover,
+        .cp-item.active {
+            background: rgba(255, 255, 255, .07);
+        }
+
+        .cp-item:disabled {
+            opacity: .45;
+            cursor: default;
+        }
+
+        .cp-item.danger {
+            color: #fca5a5;
+        }
+
+        .cp-main {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .cp-label {
+            font-size: 13px;
+            color: inherit;
+        }
+
+        .cp-hint {
+            font-size: 11px;
+            color: var(--e-muted);
+        }
+
+        .cp-shortcut {
+            flex-shrink: 0;
+            font-size: 11px;
+            color: var(--e-muted);
+            white-space: nowrap;
         }
 
         /* ── Smart Search panel ────────────────────────────── */
@@ -4123,6 +4312,7 @@
                         <span>{% if session_review %}Перегляд зміни доступний тільки для читання{% else %}Редактор доступний тільки для читання, доки запропонована зміна активна{% endif %}</span>
                     </div>
                 </div>
+                <div id="editor-context-menu" class="e-menu" role="menu"></div>
                 <div class="e-asset-view" id="asset-view">
                     <div class="e-asset-box" id="asset-box">
                         <div class="e-empty-card"><strong>Виберіть файл</strong>Оберіть текстовий ресурс, допоміжний PDF або
@@ -4349,6 +4539,13 @@
             </div>
         </div>
 
+        <div class="command-palette-overlay" id="command-palette-overlay">
+            <div class="command-palette" role="dialog" aria-modal="true" aria-labelledby="command-palette-input">
+                <input id="command-palette-input" class="command-palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="Введіть команду…">
+                <div id="command-palette-list" class="command-palette-list"></div>
+            </div>
+        </div>
+
         <!-- ── Create-template modal (admin only) ────────────── -->
         {% if user_is_staff %}
         <div class="e-overlay" id="create-template-overlay" style="display:none">
@@ -4387,6 +4584,16 @@
       </span>
             </div>
             <div class="e-sb-right">
+                <button class="e-sb-item toggle-btn active" id="sb-wrap-toggle" type="button" title="Вимкнути перенос рядків" aria-pressed="true">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 4.5h8.5a2.5 2.5 0 1 1 0 5H8"/>
+                        <path d="M2 8h6"/>
+                        <path d="m6 10.5 2 2-2 2"/>
+                        <path d="M2 12.5h4"/>
+                    </svg>
+                    Wrap
+                </button>
+                <span class="e-sb-sep">│</span>
                 <span class="e-sb-item" id="sb-linecol">Ln 1, Col 1</span>
                 <span class="e-sb-sep">│</span>
                 <span class="e-sb-item" id="sb-lang">Typst</span>

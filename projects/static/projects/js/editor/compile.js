@@ -7,7 +7,7 @@ import * as pdfviewer from "./pdfviewer.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
-const { getContent, saveTabState, activateTab } = cm;
+const { getContent, saveTabState, activateTab, setEditorDiagnostics } = cm;
 const { utf8ByteSize, refreshOpenAsset } = files;
 const { setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics } = ui;
 const { loadPdfViewer, pdfEmpty } = pdfviewer;
@@ -56,6 +56,7 @@ export function updateCompileArtifacts(logText = "", compilePayload = null) {
     ? compilePayload.diagnostics
     : parseDiagnostics(logText);
   renderDiagnostics(s.diagnostics, _openOutlineLocation);
+  setEditorDiagnostics(s.activeTabName || s.selectedFile?.name || "", s.diagnostics);
 
   if (!logText.trim() && s.diagnostics.length === 0) {
     pdfEmpty.innerHTML = `
