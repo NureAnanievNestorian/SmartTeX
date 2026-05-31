@@ -28,6 +28,7 @@ from .services import (
     build_project_zip,
     build_version_diff,
     cancel_github_sync,
+    schedule_github_sync,
     compile_state_for_status,
     commit_project_changes,
     commit_project_text_changes,
@@ -493,6 +494,8 @@ def api_project_detail(request: HttpRequest, project_id: int) -> JsonResponse:
             project.github_sync_interval_minutes = minutes
             update_fields.append("github_sync_interval_minutes")
         project.save(update_fields=update_fields)
+        if project.github_sync_enabled:
+            schedule_github_sync(project)
         return JsonResponse(_project_payload(project, user))
 
     delete_project_files(project)
