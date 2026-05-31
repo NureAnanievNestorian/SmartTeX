@@ -285,15 +285,18 @@ def commit_project_changes(
     try:
         add_args = ["add", "-A", "--", *normalized]
         add_result = _run_project_git(project, add_args, check=False)
+        used_fallback = False
         if add_result.returncode != 0:
             add_output = (add_result.stderr or "") + (add_result.stdout or "")
             if "did not match any files" in add_output or "paths are ignored" in add_output:
                 # Either the file was never tracked, or it's gitignored (e.g. main.pdf).
                 # Fall back to staging all working-tree changes that git will accept.
                 _run_project_git(project, ["add", "-A"])
+                used_fallback = True
             else:
                 raise RuntimeError((add_result.stderr or add_result.stdout or "git add failed").strip())
-        status = _run_project_git(project, ["status", "--short", "--", *normalized], check=False)
+        path_filter = [] if used_fallback else ["--", *normalized]
+        status = _run_project_git(project, ["status", "--short", *path_filter], check=False)
         if status.returncode != 0:
             raise RuntimeError((status.stderr or status.stdout or "git status failed").strip())
         if not (status.stdout or "").strip():
@@ -308,7 +311,7 @@ def commit_project_changes(
                 "tracked: all-files",
             ]
         )
-        _run_project_git(project, ["commit", "--quiet", "-m", message, "--", *normalized])
+        _run_project_git(project, ["commit", "--quiet", "-m", message, *path_filter])
         proc = _run_project_git(project, ["rev-parse", "HEAD"])
         commit_hash = (proc.stdout or "").strip() or None
         if commit_hash:
