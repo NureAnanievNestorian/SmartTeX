@@ -597,6 +597,58 @@ def generate_diff(session: AISession) -> str:
     return diff
 
 
+def _render_puml_files(project: Project, proj_dir: Path, changed_files: list[str]) -> None:
+    """After a session merge, render any .puml files to .svg and commit the result."""
+    puml_files = [f for f in changed_files if Path(f).suffix.lower() == ".puml"]
+    if not puml_files:
+        return
+
+    try:
+        from projects.plantuml_job import _load_hashes, _save_hashes, _sha256, render_plantuml_svg
+        from projects.services import commit_project_changes, ensure_project_dir
+    except ImportError:
+        logger.warning("plantuml_job not available — skipping auto-render on accept")
+        return
+
+    workdir = ensure_project_dir(project)
+    hashes = _load_hashes(workdir)
+    rendered: list[str] = []
+
+    for puml_rel in puml_files:
+        puml_path = proj_dir / puml_rel
+        if not puml_path.exists():
+            continue
+        try:
+            source = puml_path.read_text(encoding="utf-8")
+            svg_bytes = render_plantuml_svg(source)
+        except Exception as exc:
+            logger.warning("plantuml render failed for %s in project %s: %s", puml_rel, project.id, exc)
+            continue
+
+        base = puml_rel.removesuffix(".puml")
+        svg_rel = f"{base}.svg"
+        svg_path = proj_dir / svg_rel
+        svg_path.parent.mkdir(parents=True, exist_ok=True)
+        svg_path.write_bytes(svg_bytes)
+        hashes[puml_rel] = _sha256(source.encode("utf-8"))
+        rendered.append(svg_rel)
+
+    if not rendered:
+        return
+
+    _save_hashes(workdir, hashes)
+    try:
+        commit_project_changes(
+            project,
+            summary="Render PlantUML diagrams after session accept",
+            operation="plantuml_render",
+            source="web",
+            target_files=rendered,
+        )
+    except Exception as exc:
+        logger.warning("Failed to commit rendered SVGs for project %s: %s", project.id, exc)
+
+
 def _cleanup_session_files(project: Project, session: AISession) -> None:
     """Remove worktree, delete git branch, and delete the session directory."""
     errors: list[str] = []
@@ -785,6 +837,9 @@ def accept_session(session: AISession, user=None) -> None:
             target = proj_dir / fname
             if target.exists():
                 target.unlink(missing_ok=True)
+
+    # 3b. Auto-render any .puml files that were added or modified in this session.
+    _render_puml_files(project, proj_dir, changed_files)
 
     if session.staging_pdf_path:
         staging_pdf = proj_dir / session.staging_pdf_path
