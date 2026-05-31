@@ -1354,6 +1354,27 @@ def api_project_plantuml(request: HttpRequest, project_id: int) -> JsonResponse:
     hashes[puml_rel] = _sha256(source.encode("utf-8"))
     _save_hashes(workdir, hashes)
 
+    raw_source = (
+        request.headers.get("X-Change-Source")
+        or body.get("change_source")
+        or "api"
+    ).strip().lower()
+    version_source = raw_source if raw_source in {"mcp", "web", "api"} else "api"
+    create_project_version(
+        project=project,
+        actor=user,
+        source=version_source,
+        operation="plantuml_render",
+        target=svg_rel,
+        target_file=svg_rel,
+        summary=f"Render PlantUML diagram {svg_rel}",
+        before_content="",
+        after_content="",
+        snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+        event_payload={"puml_file": puml_rel, "svg_file": svg_rel, "kind": "plantuml_render"},
+        is_revertible=False,
+    )
+
     return JsonResponse({"success": True, "puml_file": puml_rel, "svg_file": svg_rel})
 
 

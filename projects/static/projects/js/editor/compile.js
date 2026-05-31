@@ -8,7 +8,7 @@ import * as pdfviewer from "./pdfviewer.js";
 const { s, cfg } = state;
 const { api } = apiMod;
 const { getContent, saveTabState, activateTab } = cm;
-const { utf8ByteSize } = files;
+const { utf8ByteSize, refreshOpenAsset } = files;
 const { setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics } = ui;
 const { loadPdfViewer, pdfEmpty } = pdfviewer;
 
@@ -233,8 +233,8 @@ export async function pollUntilCompileDone(maxMs = 45000, stepMs = 600) {
 
 async function handleMcpUpdate() {
   setSaveHint("Проєкт оновлено через MCP. Оновлюємо…", "saving");
+  const { loadMainFile, loadFiles, loadVersions } = await import("./app.js");
   try {
-    const { loadMainFile, loadFiles, loadVersions } = await import("./app.js");
     await loadMainFile();
     // Refresh non-main text file if currently open
     if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
@@ -245,7 +245,10 @@ async function handleMcpUpdate() {
         s.hasUnsavedChanges = false;
       } catch (_) {}
     }
+  } catch (_) {}
+  try {
     await Promise.all([loadFiles(), loadVersions(true)]);
+    refreshOpenAsset();
     await pollUntilCompileDone();
   } catch (err) {
     setSaveHint(`MCP: помилка оновлення: ${err.message}`, "error");
@@ -278,6 +281,7 @@ async function handleProjectUpdate(source = "web") {
       main.loadVersions(true),
       import("./longdoc.js").then(m => m.loadLongdocData()),
     ]);
+    refreshOpenAsset();
     if (source === "mcp") {
       await pollUntilCompileDone();
       return;
@@ -332,11 +336,14 @@ export function connectProjectUpdatesSse() {
     const incoming = Number(data.version_id || 0);
     if (!incoming || incoming <= s.lastSeenMcpVersionId) return;
     s.lastSeenMcpVersionId = incoming;
-    if (s.hasUnsavedChanges && data.source === "mcp") {
-      setSaveHint("Проєкт змінено через MCP. Спершу збережіть локальні правки або перезавантажте сторінку.", "error");
-      return;
-    }
     if (data.source === "mcp") {
+      if (s.hasUnsavedChanges) {
+        setSaveHint("Проєкт змінено через MCP. Список файлів оновлено; збережіть локальні правки.", "error");
+        import("./app.js").then(({ loadFiles, loadVersions }) =>
+          Promise.all([loadFiles(), loadVersions(true)])
+        ).then(() => refreshOpenAsset()).catch(() => {});
+        return;
+      }
       handleMcpUpdate().catch(() => {});
       return;
     }

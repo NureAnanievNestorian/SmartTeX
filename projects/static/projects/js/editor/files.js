@@ -419,3 +419,10 @@ export function showAssetViewer(file) {
   }
   assetBox.innerHTML = `<div class="e-empty-card"><strong>${escHtml(file.name)}</strong>Binary file. <a class="e-btn" href="${url}" target="_blank" style="margin-top:10px;">Open or download</a></div>`;
 }
+
+export function refreshOpenAsset() {
+  const f = s.selectedFile;
+  if (!f || f.is_text || f.is_dir || !f.name) return;
+  if (assetView.style.display === "none") return;
+  showAssetViewer(f);
+}
