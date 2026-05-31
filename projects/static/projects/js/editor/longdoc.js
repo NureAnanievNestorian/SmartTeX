@@ -411,6 +411,7 @@ async function loadRequirements() {
 }
 
 async function loadActiveSession() {
+  const previousSession = s.longdoc.activeSession;
   try {
     const payload = await api(`/api/projects/${cfg.projectId}/change-proposals/status/`, { method: "GET" });
     s.longdoc.activeSession = payload.proposal || null;
@@ -418,6 +419,7 @@ async function loadActiveSession() {
     s.longdoc.activeSession = null;
   }
   renderSessionBanner();
+  syncSessionModalState(previousSession, s.longdoc.activeSession);
 }
 
 function _showPanelLoading(root) {
@@ -1418,6 +1420,83 @@ const sessionBannerEl = document.getElementById("session-banner");
 const sessionBannerGoalEl = document.getElementById("session-banner-goal");
 const editorWrapEl = document.getElementById("editor-wrap");
 const pdfTabbarEl = document.getElementById("pdf-tabbar");
+const sessionDiffOverlayEl = document.getElementById("session-diff-overlay");
+const sessionDiffContentEl = document.getElementById("session-diff-content");
+const sessionDiffSubtitleEl = document.getElementById("session-diff-subtitle");
+const sessionDiffFooterTitleEl = document.getElementById("session-diff-footer-title");
+const sessionDiffFooterMetaEl = document.getElementById("session-diff-footer-meta");
+const sessionDiffHeaderAcceptBtn = document.getElementById("session-diff-accept-btn");
+const sessionDiffHeaderDiscardBtn = document.getElementById("session-diff-discard-btn");
+const sessionDiffFooterAcceptBtn = document.getElementById("session-diff-footer-accept-btn");
+const sessionDiffFooterDiscardBtn = document.getElementById("session-diff-footer-discard-btn");
+const sessionDiffDetailsBtn = document.getElementById("session-diff-details-btn");
+const sessionDiffFooterDetailsBtn = document.getElementById("session-diff-footer-details-btn");
+
+function activeSessionSignature(session) {
+  if (!session || !session.id) return "";
+  return `${session.id}:${session.updated_at || ""}:${session.status || ""}`;
+}
+
+function sessionReviewUrl() {
+  return cfg.sessionReviewUrl || `/projects/${cfg.projectId}/session/`;
+}
+
+function sessionStatusLabel(status) {
+  return ({
+    validating: "Готується",
+    failed_validation: "Потребує уваги",
+    failed_compile: "Не компілюється",
+    ready_for_review: "Готово до перегляду",
+  })[status] || status || "";
+}
+
+function isSessionAcceptable(session) {
+  return Boolean(session && session.status === "ready_for_review");
+}
+
+function updateSessionModalActions(session) {
+  const canAccept = isSessionAcceptable(session);
+  [sessionDiffHeaderAcceptBtn, sessionDiffFooterAcceptBtn].forEach(btn => {
+    if (!btn) return;
+    btn.disabled = !canAccept;
+    btn.title = canAccept ? "" : "Зміну можна прийняти після підготовки diff і успішної перевірки.";
+    btn.style.display = cfg.sessionReview || session ? "" : "none";
+  });
+  [sessionDiffHeaderDiscardBtn, sessionDiffFooterDiscardBtn].forEach(btn => {
+    if (!btn) return;
+    btn.disabled = !session;
+    btn.style.display = session ? "" : "none";
+  });
+  [sessionDiffDetailsBtn, sessionDiffFooterDetailsBtn].forEach(link => {
+    if (!link) return;
+    link.href = sessionReviewUrl();
+    link.style.display = cfg.sessionReview ? "none" : "";
+  });
+}
+
+function syncSessionModalState(previousSession, nextSession) {
+  const previousSig = activeSessionSignature(previousSession);
+  const nextSig = activeSessionSignature(nextSession);
+  updateSessionModalActions(nextSession);
+
+  if (!nextSession) {
+    closeSessionDiffModal();
+    s.longdoc.proposalModalDiffSignature = "";
+    return;
+  }
+
+  const isNewSignature = Boolean(nextSig && nextSig !== previousSig);
+  const isUnseen = Boolean(nextSig && s.longdoc.proposalModalSeenSignature !== nextSig);
+  if (!cfg.sessionReview && isUnseen && isNewSignature) {
+    s.longdoc.proposalModalSeenSignature = nextSig;
+    openSessionDiffModal({ forceReload: true, autoOpened: true }).catch(() => {});
+    return;
+  }
+
+  if (sessionDiffOverlayEl?.classList.contains("open") && nextSig && nextSig !== s.longdoc.proposalModalDiffSignature) {
+    openSessionDiffModal({ forceReload: true }).catch(() => {});
+  }
+}
 
 export function renderSessionBanner() {
   const session = s.longdoc.activeSession;
@@ -1435,15 +1514,8 @@ export function renderSessionBanner() {
   }
 
   if (sessionBannerGoalEl) sessionBannerGoalEl.textContent = session.goal || "";
-
-  const statusLabels = {
-    validating: "Готується",
-    failed_validation: "Потребує уваги",
-    failed_compile: "Не компілюється",
-    ready_for_review: "Готово до перегляду",
-  };
   const statusEl = document.getElementById("session-banner-status");
-  if (statusEl) statusEl.textContent = statusLabels[session.status] || session.status;
+  if (statusEl) statusEl.textContent = sessionStatusLabel(session.status);
 }
 
 function renderDiffContent(diffText) {
@@ -1484,19 +1556,30 @@ function renderDiffContent(diffText) {
     <div class="diff-table">${rows.join("")}</div>`;
 }
 
-async function openSessionDiffModal() {
-  const overlay = document.getElementById("session-diff-overlay");
-  const content = document.getElementById("session-diff-content");
-  const subtitle = document.getElementById("session-diff-subtitle");
-  if (!overlay) return;
+async function openSessionDiffModal({ forceReload = false } = {}) {
+  const overlay = sessionDiffOverlayEl;
+  const content = sessionDiffContentEl;
+  const subtitle = sessionDiffSubtitleEl;
+  const session = s.longdoc.activeSession;
+  if (!overlay || !session) return;
 
+  const signature = activeSessionSignature(session);
   overlay.classList.add("open");
-    if (content) content.innerHTML = `<span class="diff-empty">Завантаження diff...</span>`;
+  updateSessionModalActions(session);
+
+  if (subtitle) subtitle.textContent = `Запропонована зміна #${session.id} · ${sessionStatusLabel(session.status)}`;
+  if (sessionDiffFooterTitleEl) sessionDiffFooterTitleEl.textContent = session.goal || "Зміни AI-сесії";
+  if (sessionDiffFooterMetaEl) {
+    sessionDiffFooterMetaEl.textContent = `${sessionStatusLabel(session.status)}${session.updated_at ? ` · ${session.updated_at}` : ""}`;
+  }
+  if (!forceReload && s.longdoc.proposalModalDiffSignature === signature && content?.innerHTML) return;
+  if (content) content.innerHTML = `<span class="diff-empty">Завантаження diff...</span>`;
 
   try {
     const data = await api(`/api/projects/${cfg.projectId}/change-proposals/diff/`, { method: "GET" });
-    const session = s.longdoc.activeSession;
-    if (subtitle) subtitle.textContent = session ? `Suggested change #${session.id} · ${session.status}` : "";
+    const currentSession = s.longdoc.activeSession;
+    if (!currentSession || activeSessionSignature(currentSession) !== signature) return;
+    s.longdoc.proposalModalDiffSignature = signature;
     const warnings = data.smcl_warnings || session?.smcl_warnings || [];
     const warningHtml = warnings.length ? `
       <div class="diff-summary">
@@ -1506,17 +1589,13 @@ async function openSessionDiffModal() {
     ` : "";
     if (content) content.innerHTML = warningHtml + renderDiffContent(data.diff_text || "");
 
-    const footer = document.getElementById("session-diff-footer");
-    if (footer && session?.goal) {
-      footer.innerHTML = `<span class="e-session-goal-label">Підсумок:</span> ${escHtml(session.goal || "")}`;
-    }
   } catch (err) {
     if (content) content.innerHTML = `<span class="diff-empty">Помилка завантаження diff: ${escHtml(err.message)}</span>`;
   }
 }
 
 function closeSessionDiffModal() {
-  const overlay = document.getElementById("session-diff-overlay");
+  const overlay = sessionDiffOverlayEl;
   if (overlay) overlay.classList.remove("open");
 }
 
@@ -1602,6 +1681,8 @@ export function initSessionUI() {
   document.getElementById("session-diff-close-btn")?.addEventListener("click", closeSessionDiffModal);
   document.getElementById("session-diff-accept-btn")?.addEventListener("click", acceptSession);
   document.getElementById("session-diff-discard-btn")?.addEventListener("click", discardSession);
+  document.getElementById("session-diff-footer-accept-btn")?.addEventListener("click", acceptSession);
+  document.getElementById("session-diff-footer-discard-btn")?.addEventListener("click", discardSession);
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();
   });

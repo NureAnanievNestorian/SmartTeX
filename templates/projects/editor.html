@@ -3023,6 +3023,11 @@
 
         .e-session-btn:hover { opacity: .85; }
 
+        .e-session-btn:disabled {
+            opacity: .45;
+            cursor: not-allowed;
+        }
+
         .e-session-btn.diff {
             background: rgba(59, 130, 246, .12);
             border-color: rgba(59, 130, 246, .35);
@@ -3191,6 +3196,33 @@
             align-items: center;
             justify-content: space-between;
             gap: 10px;
+        }
+
+        .session-diff-modal-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .session-diff-footer-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .session-diff-footer-title {
+            color: var(--e-text);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .session-diff-footer-meta {
+            color: var(--e-text2);
+            font-size: 11px;
         }
 
         .ai-log-modal-overlay {
@@ -4267,6 +4299,7 @@
                         <div class="session-diff-modal-subtitle" id="session-diff-subtitle"></div>
                     </div>
                     <div class="session-diff-modal-actions">
+                        <a class="e-session-btn diff" id="session-diff-details-btn" href="{% url 'projects:session_review' project.id %}">Детальніше</a>
                         <button class="e-session-btn accept" id="session-diff-accept-btn" type="button">Прийняти зміни</button>
                         <button class="e-session-btn discard" id="session-diff-discard-btn" type="button">Відхилити</button>
                         <button class="e-icon-btn" id="session-diff-close-btn" type="button" title="Закрити" aria-label="Закрити diff">
@@ -4282,7 +4315,17 @@
                         <span class="diff-empty">Завантаження diff...</span>
                     </div>
                 </div>
-                <div class="session-diff-modal-footer" id="session-diff-footer"></div>
+                <div class="session-diff-modal-footer" id="session-diff-footer">
+                    <div class="session-diff-footer-main">
+                        <div class="session-diff-footer-title" id="session-diff-footer-title">Зміни AI-сесії</div>
+                        <div class="session-diff-footer-meta" id="session-diff-footer-meta"></div>
+                    </div>
+                    <div class="session-diff-modal-actions">
+                        <a class="e-session-btn diff" id="session-diff-footer-details-btn" href="{% url 'projects:session_review' project.id %}">Подивитися детальніше</a>
+                        <button class="e-session-btn accept" id="session-diff-footer-accept-btn" type="button">Прийняти</button>
+                        <button class="e-session-btn discard" id="session-diff-footer-discard-btn" type="button">Відхилити</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -4359,6 +4402,7 @@
             projectId: {{ project.id }},
             csrfToken: "{{ csrf_token }}",
             sessionReview: {% if session_review %}true{% else %}false{% endif %},
+            sessionReviewUrl: "{% url 'projects:session_review' project.id %}",
             isAdmin: {% if user_is_staff %}true{% else %}false{% endif %},
         };
     </script>

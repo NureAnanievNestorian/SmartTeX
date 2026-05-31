@@ -57,5 +57,7 @@ export const s = {
     noteSections: [],
     requirements: [],
     activeSession: null,
+    proposalModalSeenSignature: "",
+    proposalModalDiffSignature: "",
   },
 };

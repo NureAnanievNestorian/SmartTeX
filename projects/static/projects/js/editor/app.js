@@ -41,6 +41,7 @@ const editorConfig = window.EDITOR_CONFIG || {};
 cfg.projectId  = editorConfig.projectId  || 0;
 cfg.csrfToken  = editorConfig.csrfToken  || "";
 cfg.sessionReview = Boolean(editorConfig.sessionReview);
+cfg.sessionReviewUrl = editorConfig.sessionReviewUrl || "";
 
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
