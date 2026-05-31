@@ -807,16 +807,8 @@ def accept_session(session: AISession, user=None) -> None:
         merge_output = (merge_proc.stderr or merge_proc.stdout or "").strip()
         # Handle both "untracked files" and "local changes" that would be overwritten.
         if "would be overwritten by merge" in merge_output:
-            reset_proc = _run_project_git(project, ["reset", "--hard", "HEAD"], check=False)
-            logger.warning(
-                "accept_session merge conflict pre-reset result: rc=%s stderr=%r",
-                reset_proc.returncode, reset_proc.stderr,
-            )
-            clean_proc = _run_project_git(project, ["clean", "-fd"], check=False)
-            logger.warning(
-                "accept_session merge conflict pre-clean result: rc=%s stderr=%r stdout=%r",
-                clean_proc.returncode, clean_proc.stderr, clean_proc.stdout,
-            )
+            _run_project_git(project, ["reset", "--hard", "HEAD"], check=False)
+            _run_project_git(project, ["clean", "-fd"], check=False)
             merge_proc = _run_project_git(
                 project,
                 ["merge", "--no-ff", "--no-edit", session.branch_name],
