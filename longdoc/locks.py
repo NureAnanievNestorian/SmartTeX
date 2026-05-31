@@ -15,11 +15,24 @@ class ProjectLockedError(RuntimeError):
 
 
 def get_locking_session(project: Project) -> AISession | None:
-    return (
+    sessions = (
         AISession.objects.filter(project=project, status__in=AISession.locking_statuses())
+        .select_related("change_proposal")
         .order_by("created_at", "id")
-        .first()
     )
+    for session in sessions:
+        proposal = getattr(session, "change_proposal", None)
+        if (
+            proposal is not None
+            and proposal.created_by == ChangeProposal.CreatedBy.MCP
+            and proposal.status in (
+                ChangeProposal.Status.FAILED_VALIDATION,
+                ChangeProposal.Status.FAILED_COMPILE,
+            )
+        ):
+            continue
+        return session
+    return None
 
 
 def get_locking_change_proposal(project: Project) -> ChangeProposal | None:

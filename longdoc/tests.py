@@ -1176,6 +1176,65 @@ class ChangeProposalServiceTests(TestCase):
         self.assertEqual(proposal.compile_status, AISession.CompileStatus.ERROR)
         self.assertNotEqual(proposal.internal_session.status, AISession.Status.READY_FOR_REVIEW)
 
+    def test_propose_document_change_retries_after_failed_compile_without_ai_session_lock(self) -> None:
+        from longdoc.proposal_service import propose_document_change
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_error):
+            first = propose_document_change(
+                self.project,
+                goal="Break compile",
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello World",
+                        "new_text": "\\undefinedcommand",
+                        "change_summary": "Introduce compile error",
+                    }
+                ],
+            )
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_success):
+            second = propose_document_change(
+                self.project,
+                goal="Retry after failed compile",
+                created_by=ChangeProposal.CreatedBy.MCP,
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello World",
+                        "new_text": "Hello Retry",
+                        "change_summary": "Retry with safe text",
+                    }
+                ],
+            )
+
+        first.refresh_from_db()
+        self.assertEqual(first.status, ChangeProposal.Status.DISCARDED)
+        self.assertEqual(second.status, ChangeProposal.Status.READY_FOR_REVIEW)
+        self.assertEqual(second.auto_discarded_previous_failed_proposal_id, first.id)
+
+    def test_retry_lock_suggestion_guides_mcp_retry_workflow(self) -> None:
+        from longdoc.proposal_service import _retry_lock_suggestion
+        from longdoc.session_service import create_session
+
+        session = create_session(self.project, goal="Failed MCP proposal")
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            goal="Failed MCP proposal",
+            status=ChangeProposal.Status.FAILED_COMPILE,
+            created_by=ChangeProposal.CreatedBy.MCP,
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        suggestion = _retry_lock_suggestion(proposal)
+
+        self.assertIn("Retry via the proposal workflow", suggestion)
+        self.assertIn("validate_document_change", suggestion)
+        self.assertIn("propose_document_change", suggestion)
+
     def test_source_file_creation_without_include_is_rejected_before_session_create(self) -> None:
         from longdoc.proposal_service import propose_document_change
         from longdoc.session_service import SessionWriteError

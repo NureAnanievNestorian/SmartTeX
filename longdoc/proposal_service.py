@@ -579,6 +579,22 @@ def _serialize_compile_failure(result: dict[str, Any]) -> str:
     return "\n".join(lines[:12])[:4000]
 
 
+def _retry_lock_suggestion(proposal: ChangeProposal) -> str:
+    if (
+        proposal.created_by == ChangeProposal.CreatedBy.MCP
+        and proposal.status in (
+            ChangeProposal.Status.FAILED_VALIDATION,
+            ChangeProposal.Status.FAILED_COMPILE,
+        )
+    ):
+        return (
+            f"Retry via the proposal workflow: call validate_document_change or propose_document_change again "
+            f"to iterate on failed MCP proposal #{proposal.id}. Do not use direct project file-write tools while "
+            f"this proposal is active."
+        )
+    return f"Ask the user to review/discard proposal #{proposal.id} before trying again."
+
+
 def _active_proposal(project) -> ChangeProposal | None:
     return get_locking_change_proposal(project)
 
@@ -698,10 +714,7 @@ def propose_document_change(
                 "PROJECT_LOCKED",
                 f"Project {project.id} already has suggested change #{blocking.id} in status {blocking.status}: {blocking.goal}",
                 status_code=423,
-                suggestion=(
-                    f"Ask the user to review/discard proposal #{blocking.id} in the UI, "
-                    f"or call the proposal cancellation/discard tool if available before submitting another proposal."
-                ),
+                suggestion=_retry_lock_suggestion(blocking),
             )
 
     user = project.owner
@@ -1075,7 +1088,7 @@ def validate_document_change(
                 "PROJECT_LOCKED",
                 f"Project {project.id} already has suggested change #{proposal.id} in status {proposal.status}: {proposal.goal}",
                 status_code=423,
-                suggestion=f"Ask the user to review/discard proposal #{proposal.id} before validating another change.",
+                suggestion=_retry_lock_suggestion(proposal),
                 details={"proposal_id": proposal.id, "proposal_goal": proposal.goal, "proposal_status": proposal.status},
             )
 
