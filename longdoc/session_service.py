@@ -807,24 +807,10 @@ def accept_session(session: AISession, user=None) -> None:
         merge_output = (merge_proc.stderr or merge_proc.stdout or "").strip()
         # Handle both "untracked files" and "local changes" that would be overwritten.
         if "would be overwritten by merge" in merge_output:
-            proj_dir = get_project_dir(project)
-            conflicting_paths: list[str] = []
-            for line in merge_output.splitlines():
-                line = line.strip()
-                if line and not line.startswith(("error:", "Please", "Aborting", "Merge", "hint:")):
-                    conflicting_paths.append(line)
-
-            for rel_path in conflicting_paths:
-                # Try resetting to HEAD first (handles tracked-but-modified files).
-                reset_proc = _run_project_git(
-                    project, ["checkout", "HEAD", "--", rel_path], check=False
-                )
-                if reset_proc.returncode != 0:
-                    # Untracked file — just remove it.
-                    conflicting = proj_dir / rel_path
-                    if conflicting.exists() and not conflicting.is_dir():
-                        conflicting.unlink(missing_ok=True)
-
+            # Reset tracked-but-modified files to HEAD (e.g. plantuml SVGs written directly to disk).
+            _run_project_git(project, ["checkout", "HEAD", "--", "."], check=False)
+            # Remove any remaining untracked files/dirs that would still block the merge.
+            _run_project_git(project, ["clean", "-fd"], check=False)
             merge_proc = _run_project_git(
                 project,
                 ["merge", "--no-ff", "--no-edit", session.branch_name],
