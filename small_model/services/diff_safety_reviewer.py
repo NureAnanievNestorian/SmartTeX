@@ -12,6 +12,17 @@ class DiffSafetyReviewService(SmallModelCallMixin):
     feature_key = FEATURE_DIFF_SAFETY_REVIEWER
     task_type = TASK_DIFF_SAFETY_REVIEW
 
+    @staticmethod
+    def _deterministic_review_payload(review_input, stats) -> dict[str, Any]:
+        return {
+            "diff_stats": stats,
+            "changed_files": review_input.changed_files,
+            "touched_headings": review_input.touched_headings,
+            "deleted_labels_or_refs": review_input.deleted_labels_or_refs,
+            "changed_imports_or_includes": review_input.changed_imports_or_includes,
+            "unified_diff": review_input.unified_diff,
+        }
+
     def review(
         self,
         *,
@@ -113,36 +124,29 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                 )
             )
 
-        # Hard reject: scattered changes across too many files or hunks (not advisory).
-        hard_reject_reason: str | None = None
-        if files_changed > max_files and not effective_advisory:
-            hard_reject_reason = f"Diff touches {files_changed} files but the declared scope allows {max_files}."
-        elif hunks > max_hunks and total_changed > max_changed and not effective_advisory:
-            hard_reject_reason = (
-                f"Diff has {hunks} scattered hunks and {total_changed} changed lines, "
-                f"exceeding the budget ({max_hunks} hunks, {max_changed} lines)."
+        if (
+            (files_changed > max_files) or (hunks > max_hunks and total_changed > max_changed) or (total_changed > max_changed)
+        ) and not effective_advisory:
+            deterministic_warnings.append(
+                warning(
+                    "medium",
+                    "DETERMINISTIC_BUDGET_MISMATCH",
+                    (
+                        "The diff exceeded the declared patch budget. Treat the scope limits as advisory and "
+                        "verify that each touched file and hunk is necessary for the user's request."
+                    ),
+                    "deterministic_diff_stats",
+                )
             )
-        elif total_changed > max_changed and not effective_advisory:
-            hard_reject_reason = "Diff exceeds the deterministic patch budget."
-
-        if hard_reject_reason:
-            return {
-                "action": "reject",
-                "reason": hard_reject_reason,
-                "risk_level": "high",
-                "warnings": deterministic_warnings,
-                "review_payload": {
-                    "diff_stats": stats,
-                    "changed_files": review_input.changed_files,
-                    "touched_headings": review_input.touched_headings,
-                    "deleted_labels_or_refs": review_input.deleted_labels_or_refs,
-                    "changed_imports_or_includes": review_input.changed_imports_or_includes,
-                    "unified_diff": review_input.unified_diff,
-                },
-            }
         if deterministic_warnings and not self._should_consult_provider(stats, review_input, max_changed):
-            return {"action": "warn", "reason": None, "risk_level": "medium", "warnings": deterministic_warnings, "review_payload": {}}
-        if self._is_tiny_low_risk_diff(stats, review_input):
+            return {
+                "action": "warn",
+                "reason": None,
+                "risk_level": "medium",
+                "warnings": deterministic_warnings,
+                "review_payload": self._deterministic_review_payload(review_input, stats),
+            }
+        if not deterministic_warnings and self._is_tiny_low_risk_diff(stats, review_input):
             return {"action": "allow", "reason": None, "risk_level": "low", "warnings": [], "review_payload": {}}
 
         if (
@@ -150,13 +154,14 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             and stats["total_changed_lines"] > max_changed * 2
             and not budget_advisory
         ):
-            return {
-                "action": "reject",
-                "reason": "Diff is too large for the declared edit scope.",
-                "risk_level": "high",
-                "warnings": deterministic_warnings,
-                "review_payload": self._payload(proposal_goal, edit_mode, patch_budget, review_input),
-            }
+            deterministic_warnings.append(
+                warning(
+                    "medium",
+                    "DIFF_TOO_LARGE_FOR_DIRECT_REVIEW",
+                    "The diff is very large for the declared scope; inspect for unrelated changes before accepting.",
+                    "deterministic_diff_stats",
+                )
+            )
 
         enabled, _, _ = self.is_enabled(user, project)
         if not enabled:
@@ -174,8 +179,10 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             project=project,
             system_instruction=(
                 "Review the diff for over-editing, drift, accidental deletions, and unrelated changes. "
+                "Patch-budget mismatches are advisory signals, not standalone rejection grounds. "
                 "If scope_confidence is 'low' or 'medium', the patch budget is advisory — judge whether "
-                "the diff is legitimate for the user's request rather than rejecting on size alone."
+                "the diff is legitimate for the user's request rather than rejecting on size alone. "
+                "Reject only for substantive problems such as unrelated edits, suspicious deletions, or semantic drift."
             ),
             input_payload=payload,
             response_schema=schemas.DIFF_SAFETY_SCHEMA,
@@ -199,6 +206,16 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                 )
             )
         if result.get("recommendation") == "reject_and_request_narrower_patch":
+            if not self._provider_reject_has_substantive_basis(result):
+                warnings.append(
+                    warning(
+                        "medium",
+                        "SMCL_REJECT_DOWNGRADED",
+                        "AI safety reviewer requested a narrower patch without identifying a substantive semantic risk; downgraded to warning.",
+                        "diff_safety_reviewer",
+                    )
+                )
+                return {"action": "warn", "reason": None, "risk_level": risk, "warnings": warnings, "review_payload": payload}
             return {
                 "action": "reject",
                 "reason": result.get("rejection_reason") or "AI safety reviewer requested a narrower patch.",
@@ -230,6 +247,15 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             and len(review_input.touched_headings) <= 1
         )
 
+    def _provider_reject_has_substantive_basis(self, result: dict[str, Any]) -> bool:
+        if bool(result.get("overedit_detected")) or bool(result.get("unrelated_changes_detected")):
+            return True
+        if result.get("suspicious_deletions"):
+            return True
+        if result.get("deleted_labels_or_refs"):
+            return True
+        return False
+
     def _payload(self, goal, edit_mode, patch_budget, review_input):
         return {
             "proposal_goal": goal,
@@ -252,29 +278,26 @@ class DiffSafetyReviewService(SmallModelCallMixin):
         single_block = hunks == 1 and files_changed == 1
         effective_advisory = budget_advisory or (single_block and total_changed > max_changed)
 
-        reject_reason: str | None = None
-        if files_changed > max_files and not effective_advisory:
-            reject_reason = f"Diff touches {files_changed} files but the declared scope allows {max_files}."
-        elif hunks > max_hunks and total_changed > max_changed and not effective_advisory:
-            reject_reason = f"Diff has {hunks} scattered hunks and {total_changed} changed lines, exceeding the budget."
-        elif total_changed > max_changed and not effective_advisory:
-            reject_reason = "Diff exceeds the deterministic patch budget."
-
-        if reject_reason:
-            return {
-                "action": "reject",
-                "reason": reject_reason,
-                "risk_level": "high",
-                "warnings": warnings,
-                "review_payload": {
-                    "diff_stats": stats,
-                    "changed_files": review_input.changed_files,
-                    "touched_headings": review_input.touched_headings,
-                    "deleted_labels_or_refs": review_input.deleted_labels_or_refs,
-                    "changed_imports_or_includes": review_input.changed_imports_or_includes,
-                    "unified_diff": review_input.unified_diff,
-                },
-            }
+        if (
+            (files_changed > max_files) or (hunks > max_hunks and total_changed > max_changed) or (total_changed > max_changed)
+        ) and not effective_advisory:
+            warnings = list(warnings) + [
+                warning(
+                    "medium",
+                    "DETERMINISTIC_BUDGET_MISMATCH",
+                    (
+                        "The diff exceeded the declared patch budget. Treat the scope limits as advisory and "
+                        "verify that each touched file and hunk is necessary for the user's request."
+                    ),
+                    "deterministic_diff_stats",
+                )
+            ]
         if warnings:
-            return {"action": "warn", "reason": None, "risk_level": "medium", "warnings": warnings, "review_payload": {}}
+            return {
+                "action": "warn",
+                "reason": None,
+                "risk_level": "medium",
+                "warnings": warnings,
+                "review_payload": self._deterministic_review_payload(review_input, stats),
+            }
         return {"action": "allow", "reason": None, "risk_level": "low", "warnings": [], "review_payload": {}}

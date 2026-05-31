@@ -12,6 +12,7 @@ from small_model.services.edit_intent_classifier import (
 )
 from small_model.services.payload import PayloadSanitizer
 from small_model.task_types import FEATURE_EDIT_INTENT_CLASSIFIER, TASK_PRE_PROPOSAL_ANALYZE
+from projects.services import main_source_filename
 
 _REPLACE_VERBS_RE = re.compile(r"\b(замінити|replace|change|rename|поміняти)\b", re.I)
 _BROAD_SCOPE_RE = re.compile(
@@ -54,6 +55,14 @@ _SYSTEM_INSTRUCTION = (
     "Prefer range_only when uncertain about reads. For patch budgets: classify the real scope first; "
     "if the request looks larger than the chosen mode's budget, mark scope_confidence='low' instead of "
     "silently shrinking the request.\n"
+    "When the request mentions two distinct targets (for example, 'fix X and Y', an introduction plus section 3.1, "
+    "or two separate headings), do not collapse it into a single-paragraph scope with high confidence.\n"
+    "When a concrete section number or named chapter is mentioned, prefer content/source files that likely contain "
+    "that section before helper/style/library files, unless the request explicitly asks for a global formatting rule.\n"
+    "Use navigation_context.retrieved_targets as the primary location hint when it is present. "
+    "Treat those targets as higher-signal than generic file summaries.\n"
+    "The editing_limits are advisory guidance for planning reads and patches. Do not pretend the task fits a smaller "
+    "budget than it really needs just to satisfy those limits.\n"
     "Do not include raw document text. Do not suggest reading entire main files."
 )
 
@@ -128,6 +137,56 @@ def _sanitize_read_plan(raw: list) -> list:
     return result
 
 
+def _build_navigation_context(project, user_request: str, *, selected_file: str | None = None) -> dict:
+    payload = {
+        "entrypoint_file": str(main_source_filename(project) or ""),
+        "retrieved_targets": [],
+        "navigation_warnings": [],
+        "navigation_mode": "unavailable",
+    }
+    text = str(user_request or "").strip()
+    if not text:
+        return payload
+    try:
+        from navigation.services.smart_search import smart_search
+
+        result = smart_search(
+            project,
+            query=text,
+            scope="current_file" if selected_file else "reachable_document",
+            selected_file=selected_file,
+            use_small_model=False,
+            max_results=4,
+        )
+    except Exception:
+        return payload
+
+    payload["navigation_mode"] = str(result.get("mode") or "unavailable")
+    payload["navigation_warnings"] = [str(item)[:80] for item in (result.get("warnings") or [])[:5]]
+    targets: list[dict] = []
+    for item in (result.get("results") or [])[:4]:
+        if not isinstance(item, dict):
+            continue
+        filename = str(item.get("filename") or "")[:200]
+        if not _is_safe_path(filename):
+            continue
+        targets.append(
+            {
+                "filename": filename,
+                "region_title": str(item.get("region_title") or "")[:160],
+                "line_start": int(item.get("line_start") or 1),
+                "line_end": int(item.get("line_end") or 1),
+                "reason": str(item.get("reason") or "")[:200],
+                "confidence": str(item.get("confidence") or "low")[:10],
+                "match_kind": str(item.get("match_kind") or "")[:40],
+                "file_role": str(item.get("file_role") or "")[:40],
+                "snippet": PayloadSanitizer.trim_text(str(item.get("snippet") or ""), max_chars=240),
+            }
+        )
+    payload["retrieved_targets"] = targets
+    return payload
+
+
 class PreProposalAnalysisService(SmallModelCallMixin):
     feature_key = FEATURE_EDIT_INTENT_CLASSIFIER
     task_type = TASK_PRE_PROPOSAL_ANALYZE
@@ -146,6 +205,7 @@ class PreProposalAnalysisService(SmallModelCallMixin):
                 "outline_items": [],
                 "task_metadata": {},
                 "document_graph_summary": _build_document_graph_summary(project),
+                "navigation_context": _build_navigation_context(project, user_request, selected_file=selected_file),
                 "user_request": PayloadSanitizer.trim_text(user_request, max_chars=2000),
                 "selected_file": selected_file,
                 "selected_section_id": selected_section_id,

@@ -141,7 +141,7 @@ class SmallModelControlLayerTests(TestCase):
         self.assertFalse(result.smcl_used)
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
-    def test_reviewer_enabled_rejects_over_budget_when_provider_unavailable(self) -> None:
+    def test_reviewer_enabled_warns_over_budget_when_provider_unavailable(self) -> None:
         access = UserSmallModelAccess.objects.create(user=self.user, enabled=True)
         UserSmallModelQuota.objects.create(user=self.user)
         ProjectSmallModelSettings.objects.create(
@@ -156,12 +156,19 @@ class SmallModelControlLayerTests(TestCase):
         )
         diff = "diff --git a/main.tex b/main.tex\n--- a/main.tex\n+++ b/main.tex\n@@ -1,1 +1,3 @@\n-a\n+b\n+c\n+d\n"
 
-        with mock.patch("small_model.services.base.get_provider", side_effect=RuntimeError("no provider")):
+        provider = mock.Mock()
+        provider.provider_name = "mock"
+        provider.model_name = "mock"
+        provider.generate_json.side_effect = RuntimeError("no provider")
+
+        with mock.patch("small_model.services.base.get_provider", return_value=provider):
             result = ProposalPolicyEngine.post_patch_check(self.user, self.project, proposal, diff)
 
-        self.assertEqual(result.action, "reject")
-        self.assertEqual(result.risk_level, "high")
+        self.assertEqual(result.action, "warn")
+        self.assertEqual(result.risk_level, "medium")
         self.assertEqual(result.warnings[0]["code"], "OVEREDIT_RISK")
+        self.assertIn("SMCL_BUDGET_ADVISORY", {item["code"] for item in result.warnings})
+        self.assertTrue(result.smcl_used)
 
     def test_diff_review_skips_provider_for_tiny_low_risk_diff(self) -> None:
         diff = (
@@ -186,6 +193,54 @@ class SmallModelControlLayerTests(TestCase):
 
         self.assertEqual(result.action, "allow")
         self.assertFalse(result.smcl_used)
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_provider_narrower_patch_reject_without_semantic_risk_is_downgraded_to_warning(self) -> None:
+        UserSmallModelAccess.objects.create(user=self.user, enabled=True)
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            diff_safety_reviewer_enabled=True,
+        )
+        proposal = ChangeProposal(
+            project=self.project,
+            goal="Revise two nearby blocks",
+            smcl_metadata={"edit_intent": {"max_changed_lines": 10, "max_files": 1, "edit_mode": "paragraph_edit"}},
+        )
+        diff = (
+            "diff --git a/main.tex b/main.tex\n"
+            "--- a/main.tex\n"
+            "+++ b/main.tex\n"
+            "@@ -1,3 +1,5 @@\n"
+            "-a\n-b\n-c\n+d\n+e\n+f\n"
+        )
+        provider = mock.Mock()
+        provider.provider_name = "mock"
+        provider.model_name = "mock"
+        provider.generate_json.return_value = SmallModelResponse(
+            success=True,
+            parsed_json={
+                "risk_level": "medium",
+                "overedit_detected": False,
+                "unrelated_changes_detected": False,
+                "suspicious_deletions": [],
+                "deleted_labels_or_refs": [],
+                "changed_imports_or_includes": [],
+                "recommendation": "reject_and_request_narrower_patch",
+                "rejection_reason": "Too broad for paragraph scope.",
+            },
+            provider_name="mock",
+            model_name="mock",
+            input_tokens_estimate=10,
+            output_tokens_estimate=10,
+        )
+
+        with mock.patch("small_model.services.base.get_provider", return_value=provider):
+            result = ProposalPolicyEngine.post_patch_check(self.user, self.project, proposal, diff)
+
+        self.assertEqual(result.action, "warn")
+        self.assertIn("SMCL_REJECT_DOWNGRADED", {item["code"] for item in result.warnings})
 
     def test_serializer_exposes_smcl_fields_at_top_level(self) -> None:
         proposal = ChangeProposal.objects.create(
@@ -328,6 +383,72 @@ class SmallModelControlLayerTests(TestCase):
         self.assertEqual(result.action, "allow")
         self.assertIn("context_compressor", result.metadata)
         self.assertEqual(result.metadata["edit_intent"]["max_changed_lines"], 10)
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_pre_proposal_includes_navigation_context_in_provider_payload(self) -> None:
+        UserSmallModelAccess.objects.create(user=self.user, enabled=True)
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            edit_intent_classifier_enabled=True,
+        )
+        provider = mock.Mock()
+        provider.provider_name = "mock"
+        provider.model_name = "mock"
+        provider.generate_json.return_value = SmallModelResponse(
+            success=True,
+            parsed_json={
+                "task_brief": "tight scope",
+                "relevant_files": [],
+                "relevant_section_ids": [],
+                "relevant_summaries": [],
+                "do_not_touch_files": [],
+                "do_not_touch_section_ids": [],
+                "recommended_read_strategy": "range_only",
+                "max_read_lines": 40,
+                "edit_mode": "paragraph_edit",
+                "allowed_ops": ["patch_file_lines"],
+                "forbidden_ops": ["update_project_file"],
+                "max_files": 1,
+                "max_changed_lines": 10,
+                "read_strategy": "range_only",
+                "compile_required": False,
+                "requires_user_clarification": False,
+                "clarification_reason": None,
+            },
+            provider_name="mock",
+            model_name="mock",
+            input_tokens_estimate=10,
+            output_tokens_estimate=10,
+        )
+
+        with mock.patch("small_model.services.base.get_provider", return_value=provider), mock.patch(
+            "small_model.services.pre_proposal._build_navigation_context",
+            return_value={
+                "entrypoint_file": "main.typ",
+                "navigation_mode": "indexed_keyword",
+                "navigation_warnings": [],
+                "retrieved_targets": [
+                    {
+                        "filename": "sections/ch3.typ",
+                        "region_title": "3.1 Аналіз",
+                        "line_start": 10,
+                        "line_end": 30,
+                        "reason": "title match",
+                        "confidence": "high",
+                        "match_kind": "exact_match",
+                        "file_role": "content_section",
+                        "snippet": "3.1 Аналіз...",
+                    }
+                ],
+            },
+        ):
+            ProposalPolicyEngine.pre_proposal_check(self.user, self.project, "Adjust section 3.1 ordering.")
+
+        payload = provider.generate_json.call_args.kwargs["input_payload"]
+        self.assertEqual(payload["navigation_context"]["entrypoint_file"], "main.typ")
+        self.assertEqual(payload["navigation_context"]["retrieved_targets"][0]["filename"], "sections/ch3.typ")
 
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_compile_triage_skips_provider_for_obvious_log(self) -> None:
@@ -660,7 +781,7 @@ class SmclEnumValidationTests(TestCase):
         )
 
         with mock.patch("small_model.services.base.get_provider", return_value=provider):
-            result = ProposalPolicyEngine.pre_proposal_check(self.user, self.project, "Fix bibliography path.")
+            result = ProposalPolicyEngine.pre_proposal_check(self.user, self.project, "Adjust references configuration.")
 
         compressor = result.metadata.get("context_compressor", {})
         candidate_paths = [f["path"] for f in compressor.get("candidate_files", [])]

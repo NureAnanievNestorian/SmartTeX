@@ -16,6 +16,7 @@ from django.utils import timezone
 from projects.models import Project, ProjectVersion
 from projects.services import write_source_content
 from small_model.models import SmallModelUsageLog
+from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from templates_lib.models import Template, TemplateContextFile, TemplateLongDocDefaults, TemplateNoteSection, TemplateOutlineItem, TemplateRequirement, TemplateTask
 
 from .audit import audit_assistant_change
@@ -1108,6 +1109,50 @@ class ChangeProposalServiceTests(TestCase):
         self.assertNotIn("worktree_path", payload)
         self.assertNotIn("diff_summary", payload)
         self.assertTrue(payload["preview_pdf_available"])
+
+    @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
+    def test_propose_document_change_budget_warning_does_not_fail_proposal(self) -> None:
+        from longdoc.proposal_service import propose_document_change
+
+        UserSmallModelAccess.objects.create(user=self.user, enabled=True)
+        UserSmallModelQuota.objects.create(user=self.user)
+        ProjectSmallModelSettings.objects.create(
+            project=self.project,
+            small_model_control_enabled=True,
+            diff_safety_reviewer_enabled=True,
+        )
+
+        write_source_content(self.project, "chapter.tex", "\\section{Chapter}\nOriginal text\n")
+        write_source_content(self.project, "main.tex", "\\documentclass{article}\n\\input{chapter.tex}\nHello World\n")
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_success), mock.patch(
+            "small_model.services.base.get_provider", side_effect=RuntimeError("no provider")
+        ):
+            proposal = propose_document_change(
+                self.project,
+                goal="Revise greeting and chapter text",
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello World",
+                        "new_text": "Hello Proposal",
+                        "change_summary": "Revise greeting",
+                    },
+                    {
+                        "filename": "chapter.tex",
+                        "op": "replace_text",
+                        "old_text": "Original text",
+                        "new_text": "Updated chapter text",
+                        "change_summary": "Revise chapter text",
+                    },
+                ],
+            )
+
+        self.assertEqual(proposal.status, ChangeProposal.Status.READY_FOR_REVIEW)
+        self.assertEqual(proposal.compile_status, AISession.CompileStatus.SUCCESS)
+        self.assertIn("TOO_MANY_FILES", {item["code"] for item in proposal.smcl_warnings})
+        self.assertIn("DETERMINISTIC_BUDGET_MISMATCH", {item["code"] for item in proposal.smcl_warnings})
 
     def test_propose_document_change_failed_compile_does_not_become_ready(self) -> None:
         from longdoc.proposal_service import propose_document_change
