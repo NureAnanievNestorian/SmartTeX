@@ -805,15 +805,26 @@ def accept_session(session: AISession, user=None) -> None:
     )
     if merge_proc.returncode != 0:
         merge_output = (merge_proc.stderr or merge_proc.stdout or "").strip()
-        # If untracked files would be overwritten, remove them and retry once.
+        # Handle both "untracked files" and "local changes" that would be overwritten.
         if "would be overwritten by merge" in merge_output:
             proj_dir = get_project_dir(project)
+            conflicting_paths: list[str] = []
             for line in merge_output.splitlines():
                 line = line.strip()
-                if line and not line.startswith(("error:", "Please", "Aborting", "Merge")):
-                    conflicting = proj_dir / line
+                if line and not line.startswith(("error:", "Please", "Aborting", "Merge", "hint:")):
+                    conflicting_paths.append(line)
+
+            for rel_path in conflicting_paths:
+                # Try resetting to HEAD first (handles tracked-but-modified files).
+                reset_proc = _run_project_git(
+                    project, ["checkout", "HEAD", "--", rel_path], check=False
+                )
+                if reset_proc.returncode != 0:
+                    # Untracked file — just remove it.
+                    conflicting = proj_dir / rel_path
                     if conflicting.exists() and not conflicting.is_dir():
-                        conflicting.unlink()
+                        conflicting.unlink(missing_ok=True)
+
             merge_proc = _run_project_git(
                 project,
                 ["merge", "--no-ff", "--no-edit", session.branch_name],
