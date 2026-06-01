@@ -1796,6 +1796,7 @@ def build_compiler_cmd(
     docker_mount_source – host path mounted at /workspace inside Docker.
     """
     fonts_dir = str(getattr(settings, "TYPST_FONTS_DIR", "")).strip()
+    packages_dir = str(getattr(settings, "TYPST_PACKAGES_DIR", "")).strip()
     use_native_typst = markup_type == MarkupType.TYPST and bool(
         getattr(settings, "TYPST_USE_NATIVE", False)
     )
@@ -1807,7 +1808,10 @@ def build_compiler_cmd(
         if fonts_dir:
             cmd += ["--font-path", fonts_dir]
         cmd += [src_filename, "main.pdf"]
-        run_kwargs: dict = {"cwd": str(source_dir)}
+        env = os.environ.copy()
+        if packages_dir:
+            env["XDG_DATA_HOME"] = packages_dir
+        run_kwargs: dict = {"cwd": str(source_dir), "env": env}
     elif markup_type == MarkupType.TYPST:
         image = getattr(settings, "TYPST_DOCKER_IMAGE", "ghcr.io/typst/typst:latest")
         timeout = int(getattr(settings, "TYPST_TIMEOUT_SECONDS", 60))
@@ -1816,6 +1820,12 @@ def build_compiler_cmd(
         if fonts_dir:
             docker_font_args = ["-v", f"{fonts_dir}:/fonts:ro"]
             compiler_args += ["--font-path", "/fonts"]
+        docker_pkg_args: list[str] = []
+        if packages_dir:
+            docker_pkg_args = [
+                "-v", f"{packages_dir}:/typst-data:rw",
+                "-e", "XDG_DATA_HOME=/typst-data",
+            ]
         compiler_args += [src_filename, "main.pdf"]
         cmd = [
             "docker", "run", "--rm",
@@ -1824,6 +1834,7 @@ def build_compiler_cmd(
             "-v", f"{docker_mount_source}:/workspace:rw",
             "-w", "/workspace",
             *docker_font_args,
+            *docker_pkg_args,
             image,
             *compiler_args,
         ]

@@ -191,6 +191,17 @@ TINYMIST_DEBUG = _env_bool('TINYMIST_DEBUG', DEBUG)
 # For Docker: mounted at /fonts read-only; for native: passed via --font-path.
 # Example: TYPST_FONTS_DIR=/srv/fonts
 TYPST_FONTS_DIR = os.getenv('TYPST_FONTS_DIR', '').strip() or ''
+# Directory used as XDG_DATA_HOME for Typst, so packages live at
+# {TYPST_PACKAGES_DIR}/typst/packages/preview/<name>/<version>/.
+# Pre-populate it via: python manage.py install_typst_packages
+TYPST_PACKAGES_DIR = os.getenv('TYPST_PACKAGES_DIR', '').strip() or ''
+# Comma-separated list of Typst packages to pre-install, e.g.:
+#   preview/cetz:0.3.0,preview/tablex:0.0.9
+TYPST_PREINSTALLED_PACKAGES = [
+    p.strip()
+    for p in os.getenv('TYPST_PREINSTALLED_PACKAGES', '').split(',')
+    if p.strip()
+]
 
 PLANTUML_URL = os.getenv('PLANTUML_URL', 'http://plantuml:8080').rstrip('/')
 
