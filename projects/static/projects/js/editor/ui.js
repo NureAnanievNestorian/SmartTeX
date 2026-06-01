@@ -217,7 +217,13 @@ export function showRenameDialog(fileName) {
     const input   = document.getElementById("rename-input");
     if (input) { input.value = fileName; }
     overlay?.classList.add("open");
-    setTimeout(() => { input?.select(); }, 40);
+    setTimeout(() => {
+      if (!input) return;
+      input.focus();
+      const dotIdx = fileName.lastIndexOf(".");
+      const end = dotIdx > 0 ? dotIdx : fileName.length;
+      input.setSelectionRange(0, end);
+    }, 40);
   });
 }
 

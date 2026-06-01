@@ -27,9 +27,9 @@ const {
 } = ui;
 const {
   renderFileList, renderOutline, showEditorForText, showAssetViewer, showEmptyEditor,
-  setSelectFileRef, setFileContextMenuRef, uploadFile, uploadZip, normalizeClipboardFile,
+  setSelectFileRef, setFileContextMenuRef, uploadFile, uploadImageWithRename, uploadZip, normalizeClipboardFile,
   createFolder, createEmptyTextFile, moveFileToFolder, deleteFile,
-  isUploadableProjectFile, utf8ByteSize, pathBaseName, getFileTypeClass,
+  isUploadableProjectFile, isImageFile, utf8ByteSize, pathBaseName, getFileTypeClass,
   setMainFile,
 } = files;
 const { renderVersions, initVersionsPanel, closeDiffModal } = versions;
@@ -1484,7 +1484,10 @@ export function initEditorApp() {
   fileUploadInput?.addEventListener("change", async e => {
     if (cfg.sessionReview) return;
     for (const f of [...(e.target.files || [])]) {
-      try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+      try {
+        if (isImageFile(f)) { await uploadImageWithRename(f); }
+        else { await uploadFile(f); }
+      } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
     }
     fileUploadInput.value = "";
     await Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]);
@@ -1512,6 +1515,8 @@ export function initEditorApp() {
     for (const f of [...(e.dataTransfer.files || [])]) {
       if (f.name.toLowerCase().endsWith(".zip")) {
         try { await uploadZip(f); } catch (err) { setSaveHint(`Помилка ZIP: ${err.message}`, "error"); }
+      } else if (isImageFile(f)) {
+        try { await uploadImageWithRename(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
       } else {
         try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
       }
@@ -1545,7 +1550,10 @@ export function initEditorApp() {
     e.preventDefault();
     for (let i = 0; i < files.length; i++) {
       const f = normalizeClipboardFile(files[i], i);
-      try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка upload: ${err.message}`, "error"); }
+      try {
+        if (isImageFile(f)) { await uploadImageWithRename(f); }
+        else { await uploadFile(f); }
+      } catch (err) { setSaveHint(`Помилка upload: ${err.message}`, "error"); }
     }
     await Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]);
   });

@@ -409,6 +409,22 @@ export async function uploadFile(file) {
   setSaveHint(`Завантажено: ${file.name}`, "saved");
 }
 
+export async function uploadImageWithRename(file) {
+  await uploadFile(file);
+  const { showRenameDialog } = await import("./ui.js");
+  const uploadedName = file.name;
+  const newName = await showRenameDialog(uploadedName);
+  if (!newName) return uploadedName;
+  const trimmed = newName.trim();
+  if (!trimmed || trimmed === uploadedName) return uploadedName;
+  await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(uploadedName)}/rename/`, {
+    method: "POST",
+    body: JSON.stringify({ new_filename: trimmed }),
+  });
+  setSaveHint(`Перейменовано: ${uploadedName} → ${trimmed}`, "saved");
+  return trimmed;
+}
+
 export async function uploadZip(file) {
   const fd = new FormData(); fd.append("file", file);
   const result = await api(`/api/projects/${cfg.projectId}/files/`, { method: "POST", body: fd });
