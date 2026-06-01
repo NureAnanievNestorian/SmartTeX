@@ -123,7 +123,10 @@ _TINYMIST_PREVIEW_BRIDGE = """
   window.WebSocket = function(url, protocols) {
     try {
       const resolved = new URL(String(url), window.location.href);
-      if ((resolved.pathname === "/" || resolved.pathname === "") && !resolved.searchParams.has("preview_project")) {
+      if (resolved.pathname === "/" || resolved.pathname === "") {
+        resolved.pathname = "/ws/typst-preview/";
+      }
+      if (resolved.pathname === "/ws/typst-preview/" && !resolved.searchParams.has("preview_project")) {
         resolved.searchParams.set("preview_project", String(PREVIEW_PROJECT_ID));
         const previewTheme = new URL(window.location.href).searchParams.get("theme");
         if (previewTheme && !resolved.searchParams.has("preview_theme")) {

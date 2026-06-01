@@ -26,7 +26,7 @@ async def application(scope, receive, send):
             await tinymist_websocket(scope, receive, send)
         elif path.startswith("/ws/projects/") and path.endswith("/typst-preview/control/"):
             await tinymist_preview_control_websocket(scope, receive, send)
-        elif path == "/":
+        elif path in {"/", "/ws/typst-preview", "/ws/typst-preview/"}:
             await tinymist_preview_websocket(scope, receive, send)
         else:
             await send({"type": "websocket.close", "code": 1008})
