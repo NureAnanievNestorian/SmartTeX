@@ -3,15 +3,18 @@ import base64
 import binascii
 import mimetypes
 import posixpath
+import urllib.error
+import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.http import FileResponse, HttpRequest, HttpResponseForbidden, HttpResponseNotFound, JsonResponse
+from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseForbidden, HttpResponseNotFound, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
+from asgiref.sync import async_to_sync
 
 from accounts.auth_helpers import get_api_user
 from SmartTeX.markup import MarkupType, source_filename_for_markup
@@ -93,6 +96,282 @@ DEFAULT_TYPST = """= SmartTeX
 
 Hello, SmartTeX!
 """
+
+_TINYMIST_PREVIEW_BRIDGE = """
+<script>
+(() => {
+  if (window.__smarttexPreviewBridgeInstalled) return;
+  window.__smarttexPreviewBridgeInstalled = true;
+  const PREVIEW_PROJECT_ID = __SMARTTEX_PREVIEW_PROJECT_ID__;
+
+  const STYLE_ID = "smarttex-preview-sync-style";
+  const HIGHLIGHT_CLASS = "smarttex-preview-sync-highlight";
+
+  function debugEnabled() {
+    try {
+      return window.localStorage.getItem("smarttex.preview.debug") === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function debug(...args) {
+    if (debugEnabled()) console.log("[smarttex-preview-bridge]", ...args);
+  }
+
+  const NativeWebSocket = window.WebSocket;
+  window.WebSocket = function(url, protocols) {
+    try {
+      const resolved = new URL(String(url), window.location.href);
+      if ((resolved.pathname === "/" || resolved.pathname === "") && !resolved.searchParams.has("preview_project")) {
+        resolved.searchParams.set("preview_project", String(PREVIEW_PROJECT_ID));
+        const previewTheme = new URL(window.location.href).searchParams.get("theme");
+        if (previewTheme && !resolved.searchParams.has("preview_theme")) {
+          resolved.searchParams.set("preview_theme", previewTheme);
+        }
+        url = resolved.toString();
+      }
+      debug("patched websocket url", url);
+    } catch (_) {}
+    return protocols !== undefined ? new NativeWebSocket(url, protocols) : new NativeWebSocket(url);
+  };
+  window.WebSocket.prototype = NativeWebSocket.prototype;
+  Object.setPrototypeOf(window.WebSocket, NativeWebSocket);
+
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      .${HIGHLIGHT_CLASS} {
+        outline: 2px solid rgba(59,130,246,.9) !important;
+        outline-offset: 4px !important;
+        border-radius: 6px !important;
+        transition: outline-color .18s ease;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function normalize(text) {
+    return String(text || "")
+      .replace(/\\s+/g, " ")
+      .replace(/[“”«»"]/g, '"')
+      .replace(/[’']/g, "'")
+      .trim()
+      .toLowerCase();
+  }
+
+  function findTextElement(targets) {
+    const wanted = targets
+      .map(item => ({ ...item, norm: normalize(item.value) }))
+      .filter(item => item.norm.length >= 3);
+    if (!wanted.length) return null;
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const text = normalize(node.nodeValue || "");
+        return text.length >= 3 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+
+    let best = null;
+    let node;
+    while ((node = walker.nextNode())) {
+      const hay = normalize(node.nodeValue || "");
+      let score = 0;
+      for (const target of wanted) {
+        if (hay === target.norm) score = Math.max(score, target.weight + 60);
+        else if (hay.includes(target.norm)) score = Math.max(score, target.weight + 25);
+        else if (target.norm.includes(hay) && hay.length >= 8) score = Math.max(score, target.weight + 10);
+      }
+      if (!score) continue;
+      const el = node.parentElement?.closest("svg text, h1, h2, h3, h4, h5, h6, p, div, span, li, td, th");
+      if (!el) continue;
+      if (!best || score > best.score) best = { el, score };
+    }
+    return best?.el || null;
+  }
+
+  let highlightTimer = null;
+  function revealElement(el) {
+    if (!el) return false;
+    ensureStyle();
+    el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    document.querySelectorAll("." + HIGHLIGHT_CLASS).forEach(node => node.classList.remove(HIGHLIGHT_CLASS));
+    el.classList.add(HIGHLIGHT_CLASS);
+    clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(() => el.classList.remove(HIGHLIGHT_CLASS), 1600);
+    return true;
+  }
+
+  function bestClickableText(event) {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const item of path) {
+      if (!(item instanceof Element)) continue;
+      const text = normalize(item.innerText || item.textContent || "");
+      if (text.length >= 3) return text.slice(0, 220);
+    }
+    return "";
+  }
+
+  function isVisualOnlyTarget(event) {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const item of path) {
+      if (!(item instanceof Element)) continue;
+      const tag = String(item.tagName || "").toLowerCase();
+      if (["img", "image", "canvas", "svg", "path", "rect", "g", "figure", "foreignobject"].includes(tag)) return true;
+      if (item.closest?.("img, image, canvas, path, rect, g, figure, foreignObject")) return true;
+      if (item.classList?.contains("typst-page-inner")) return true;
+    }
+    return false;
+  }
+
+  function isTextNavigationTarget(event) {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const item of path) {
+      if (!(item instanceof Element)) continue;
+      const tag = String(item.tagName || "").toLowerCase();
+      if (["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "span", "code", "text"].includes(tag)) return true;
+      if (tag === "div") {
+        const text = normalize(item.textContent || "");
+        if (text.length >= 3 && text.length <= 240) return true;
+      }
+    }
+    return false;
+  }
+
+  function parseSourceLocation(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+
+    const direct = raw.match(/([^\\s]+\\.typ):(\\d+)(?::(\\d+))?/);
+    if (direct) {
+      return {
+        filename: direct[1].replace(/^file:\\/\\//, ""),
+        line: Number(direct[2] || 1),
+        column: Number(direct[3] || 1),
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        const filename = parsed.filename || parsed.file || parsed.path || parsed.uri;
+        const line = Number(parsed.line || parsed.lineNumber || parsed.row || 1);
+        const column = Number(parsed.column || parsed.character || parsed.col || 1);
+        if (filename && Number.isFinite(line)) {
+          return { filename: String(filename).replace(/^file:\\/\\//, ""), line, column: Number.isFinite(column) ? column : 1 };
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const url = new URL(raw, window.location.origin);
+      const filename = url.searchParams.get("file") || url.searchParams.get("filename") || url.searchParams.get("path") || url.searchParams.get("uri");
+      const line = Number(url.searchParams.get("line") || url.searchParams.get("row") || 1);
+      const column = Number(url.searchParams.get("column") || url.searchParams.get("character") || url.searchParams.get("col") || 1);
+      if (filename && Number.isFinite(line)) {
+        return { filename: String(filename).replace(/^file:\\/\\//, ""), line, column: Number.isFinite(column) ? column : 1 };
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  function extractSourceLocation(event) {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const item of path) {
+      if (!(item instanceof Element)) continue;
+      const attrs = item.getAttributeNames ? item.getAttributeNames() : [];
+      for (const name of attrs) {
+        const loc = parseSourceLocation(item.getAttribute(name));
+        if (loc) return loc;
+      }
+      for (const value of Object.values(item.dataset || {})) {
+        const loc = parseSourceLocation(value);
+        if (loc) return loc;
+      }
+    }
+    return null;
+  }
+
+  function nearestHeadingText(event) {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const item of path) {
+      if (!(item instanceof Element)) continue;
+      let current = item;
+      while (current && current !== document.body) {
+        const prevHeading = current.previousElementSibling;
+        if (prevHeading && /^(H[1-6]|text)$/i.test(prevHeading.tagName || "")) {
+          const text = normalize(prevHeading.textContent || "");
+          if (text.length >= 3) return text.slice(0, 220);
+        }
+        current = current.parentElement;
+      }
+    }
+    return "";
+  }
+
+  window.addEventListener("message", event => {
+    if (event.origin !== window.location.origin) return;
+    const data = event.data || {};
+    if (data?.type !== "smarttex-preview-reveal") return;
+    const payload = data.payload || {};
+    debug("reveal request", payload);
+    const el = findTextElement([
+      { value: payload.heading, weight: 100 },
+      { value: payload.lineText, weight: 70 },
+      { value: payload.excerpt, weight: 40 },
+    ]);
+    debug("reveal target", el, {
+      heading: payload.heading,
+      lineText: payload.lineText,
+      excerpt: payload.excerpt,
+    });
+    revealElement(el);
+  });
+
+  document.addEventListener("click", event => {
+    const visualOnly = isVisualOnlyTarget(event);
+    if (visualOnly || !isTextNavigationTarget(event)) {
+      debug("click ignored visual target", event.target);
+      return;
+    }
+    const location = extractSourceLocation(event);
+    const text = bestClickableText(event);
+    if (!location && !text) return;
+    const payload = {
+      text,
+      heading: nearestHeadingText(event),
+      location,
+    };
+    debug("click payload", payload, event.target);
+    window.parent.postMessage({
+      type: "smarttex-preview-click",
+      payload
+    }, window.location.origin);
+  }, true);
+
+  debug("bridge ready");
+  window.parent.postMessage({ type: "smarttex-preview-ready" }, window.location.origin);
+})();
+</script>
+"""
+
+
+def _inject_typst_preview_bridge(body: bytes, project_id: int) -> bytes:
+    try:
+        html = body.decode("utf-8")
+    except UnicodeDecodeError:
+        html = body.decode("utf-8", errors="ignore")
+    bridge = _TINYMIST_PREVIEW_BRIDGE.replace("__SMARTTEX_PREVIEW_PROJECT_ID__", str(int(project_id)))
+    lower = html.lower()
+    marker = "</body>"
+    idx = lower.rfind(marker)
+    if idx == -1:
+        return (html + bridge).encode("utf-8")
+    return (html[:idx] + bridge + html[idx:]).encode("utf-8")
 
 
 def _json_body(request: HttpRequest) -> dict:
@@ -1592,6 +1871,108 @@ def api_project_synctex_pdf(request: HttpRequest, project_id: int) -> JsonRespon
     except (ValueError, TypeError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
     return JsonResponse(payload)
+
+
+@csrf_exempt
+@require_GET
+def api_project_typst_preview(request: HttpRequest, project_id: int, subpath: str = ""):
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if project.markup_type != MarkupType.TYPST:
+        return JsonResponse({"detail": "Typst preview is only available for Typst projects"}, status=400)
+
+    from .tinymist_preview_service import get_or_create_preview_session, restart_preview_session
+
+    try:
+        session = async_to_sync(get_or_create_preview_session)(
+            project.id,
+            user.id,
+            request.GET.get("theme"),
+        )
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist preview unavailable: {exc}"}, status=502)
+
+    target_path = "/" + str(subpath or "").lstrip("/")
+    query = request.META.get("QUERY_STRING", "")
+    target_url = f"http://127.0.0.1:{session.port}{target_path}"
+    if query:
+        target_url = f"{target_url}?{query}"
+
+    proxy_req = urllib.request.Request(
+        target_url,
+        headers={
+            "Accept": request.headers.get("Accept", "*/*"),
+            "User-Agent": request.headers.get("User-Agent", "SmartTeX"),
+        },
+        method="GET",
+    )
+    def _fetch_upstream(preview_session):
+        resolved_target = f"http://127.0.0.1:{preview_session.port}{target_path}"
+        if query:
+            resolved_target = f"{resolved_target}?{query}"
+        req = urllib.request.Request(
+            resolved_target,
+            headers={
+                "Accept": request.headers.get("Accept", "*/*"),
+                "User-Agent": request.headers.get("User-Agent", "SmartTeX"),
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=20) as upstream:
+            body = upstream.read()
+            status = int(getattr(upstream, "status", 200) or 200)
+            content_type = upstream.headers.get("Content-Type", "text/html; charset=utf-8")
+            if target_path == "/" and content_type.startswith("text/html"):
+                body = _inject_typst_preview_bridge(body, project.id)
+            response = HttpResponse(body, status=status, content_type=content_type)
+            for header in ("Cache-Control", "ETag", "Last-Modified"):
+                value = upstream.headers.get(header)
+                if value:
+                    response[header] = value
+            return response
+
+    try:
+        return _fetch_upstream(session)
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+        return HttpResponse(body, status=exc.code, content_type=exc.headers.get("Content-Type", "text/plain; charset=utf-8"))
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, OSError) and getattr(reason, "errno", None) == 111:
+            try:
+                session = async_to_sync(restart_preview_session)(project.id, user.id, request.GET.get("theme"))
+                return _fetch_upstream(session)
+            except Exception as restart_exc:
+                return JsonResponse({"detail": f"Tinymist preview proxy error: {restart_exc}"}, status=502)
+        return JsonResponse({"detail": f"Tinymist preview proxy error: {exc}"}, status=502)
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist preview proxy error: {exc}"}, status=502)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_typst_preview_restart(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if project.markup_type != MarkupType.TYPST:
+        return JsonResponse({"detail": "Typst preview is only available for Typst projects"}, status=400)
+
+    from .tinymist_preview_service import restart_preview_session
+
+    body = _json_body(request)
+    try:
+        session = async_to_sync(restart_preview_session)(
+            project.id,
+            user.id,
+            body.get("theme") or request.GET.get("theme"),
+        )
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist preview restart failed: {exc}"}, status=502)
+    return JsonResponse({"ok": True, "port": session.port})
 
 
 @login_required

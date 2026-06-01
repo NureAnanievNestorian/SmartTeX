@@ -182,6 +182,11 @@ TYPST_USE_NATIVE = os.getenv('TYPST_USE_NATIVE', 'false').lower() in {'1', 'true
 # Override with an absolute path when the binary is not on the server's PATH,
 # e.g. TYPST_BINARY=/opt/homebrew/bin/typst on macOS or /usr/local/bin/typst on Linux.
 TYPST_BINARY = os.getenv('TYPST_BINARY', 'typst').strip() or 'typst'
+# Path to the tinymist binary (LSP server for Typst).
+# Override with an absolute path when tinymist is not on PATH,
+# e.g. TINYMIST_BIN=/usr/local/bin/tinymist
+TINYMIST_BIN = os.getenv('TINYMIST_BIN', 'tinymist').strip() or 'tinymist'
+TINYMIST_DEBUG = _env_bool('TINYMIST_DEBUG', DEBUG)
 # Optional directory of extra fonts (.ttf/.otf) to make available during Typst compilation.
 # For Docker: mounted at /fonts read-only; for native: passed via --font-path.
 # Example: TYPST_FONTS_DIR=/srv/fonts
@@ -208,6 +213,16 @@ LOGGING = {
             'propagate': False,
         },
         'longdoc': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'projects.tinymist_service': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'SmartTeX.tinymist_ws': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

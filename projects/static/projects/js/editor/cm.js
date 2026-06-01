@@ -1,20 +1,20 @@
 import {
-  EditorView, keymap,
+  EditorView, keymap, Decoration,
   lineNumbers, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, rectangularSelection, crosshairCursor,
   highlightActiveLine, hoverTooltip,
 } from "https://esm.sh/@codemirror/view@6";
-import { EditorState, Compartment } from "https://esm.sh/@codemirror/state@6";
+import { EditorState, Compartment, StateEffect, StateField, RangeSetBuilder } from "https://esm.sh/@codemirror/state@6";
 import {
-  defaultKeymap, historyKeymap, history, indentWithTab,
+  defaultKeymap, historyKeymap, history, indentWithTab, undo, redo,
 } from "https://esm.sh/@codemirror/commands@6";
 import {
   StreamLanguage, syntaxHighlighting, defaultHighlightStyle, HighlightStyle,
-  bracketMatching, foldGutter, foldKeymap, indentOnInput,
+  bracketMatching, foldGutter, foldKeymap, indentOnInput, foldService,
 } from "https://esm.sh/@codemirror/language@6";
 import {
   autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap,
-  completeAnyWord, snippetCompletion,
+  snippetCompletion, startCompletion,
 } from "https://esm.sh/@codemirror/autocomplete@6";
 import { highlightSelectionMatches, searchKeymap } from "https://esm.sh/@codemirror/search@6";
 import { lintGutter, lintKeymap, setDiagnostics } from "https://esm.sh/@codemirror/lint@6";
@@ -184,17 +184,25 @@ function collectTypstSymbols(docText) {
   const imports = uniqueSorted([...docText.matchAll(/#import\s+"([^"]+)"/g)].map(match => match[1]));
   const labels = uniqueSorted([...docText.matchAll(/<([A-Za-z0-9:_-]+)>/g)].map(match => match[1]));
   const refs = uniqueSorted([...docText.matchAll(/@([A-Za-z0-9:_-]+)/g)].map(match => match[1]));
+  const bindings = uniqueSorted([...docText.matchAll(/#let\s+([A-Za-z_][A-Za-z0-9_-]*)/g)].map(match => match[1]));
+  const functions = uniqueSorted(
+    [...docText.matchAll(/#let\s+([A-Za-z_][A-Za-z0-9_-]*)\s*\(/g)].map(match => match[1])
+  );
   const headings = uniqueSorted(docText
     .split("\n")
     .map(line => line.match(/^\s*(=+)\s+(.+?)\s*$/))
     .filter(Boolean)
     .map(match => match[2]));
-  return { imports, labels, refs, headings };
+  return { imports, labels, refs, headings, bindings, functions };
 }
 
 function buildTypstCompletions(docText) {
   const symbols = collectTypstSymbols(docText);
   const dynamic = [
+    ...symbols.functions.map(name => ({ label: name, type: "function", detail: "local function", boost: 82 })),
+    ...symbols.bindings
+      .filter(name => !symbols.functions.includes(name))
+      .map(name => ({ label: name, type: "variable", detail: "local binding", boost: 74 })),
     ...symbols.labels.map(label => ({ label: `@${label}`, type: "variable", detail: "reference", boost: 88 })),
     ...symbols.labels.map(label => ({ label: `<${label}>`, type: "property", detail: "label", boost: 60 })),
     ...symbols.imports.map(path => ({ label: path, type: "namespace", detail: "import path", boost: 56 })),
@@ -302,19 +310,140 @@ function typstClickHandler(event) {
   return true;
 }
 
-function typstCompletionSource(context) {
-  const word = context.matchBefore(/[#@<]?[A-Za-z0-9:_./-]*/);
+// LSP providers — set by tinymist.js when connected, cleared on disconnect
+let _lspCompletionFn = null;
+let _lspHoverFn = null;
+let _lspDefinitionFn = null;
+let _lspMetaClickFn = null;
+let _lspFoldFn = null;
+
+export function setLspCompletionProvider(fn)  { _lspCompletionFn = fn; }
+export function setLspHoverProvider(fn)        { _lspHoverFn = fn; }
+export function setLspDefinitionProvider(fn)   { _lspDefinitionFn = fn; }
+export function setLspMetaClickProvider(fn)    { _lspMetaClickFn = fn; }
+export function setLspFoldProvider(fn)         { _lspFoldFn = fn; }
+export function clearLspProviders() {
+  _lspCompletionFn = null;
+  _lspHoverFn = null;
+  _lspDefinitionFn = null;
+  _lspMetaClickFn = null;
+  _lspFoldFn = null;
+  _clearSemanticTokens();
+}
+
+// ── Semantic tokens ──────────────────────────────────────────────────────────
+
+const _setSemanticTokensEffect = StateEffect.define();
+
+const _semanticTokensField = StateField.define({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(_setSemanticTokensEffect)) return e.value;
+    }
+    return value.map(tr.changes);
+  },
+  provide: f => EditorView.decorations.from(f),
+});
+
+function _decodeSemanticTokens(data, legend, doc) {
+  const builder = new RangeSetBuilder();
+  let lineNum = 0;
+  let charNum = 0;
+  for (let i = 0; i + 4 < data.length; i += 5) {
+    const deltaLine = data[i];
+    const deltaChar = data[i + 1];
+    const length    = data[i + 2];
+    const tokenType = data[i + 3];
+    if (deltaLine > 0) { lineNum += deltaLine; charNum = deltaChar; }
+    else { charNum += deltaChar; }
+    const typeName = legend.tokenTypes?.[tokenType];
+    if (!typeName || lineNum + 1 > doc.lines) continue;
+    const docLine = doc.line(lineNum + 1);
+    const from = docLine.from + charNum;
+    const to   = Math.min(from + length, docLine.to);
+    if (from >= doc.length || to <= from) continue;
+    builder.add(from, to, Decoration.mark({ class: `cm-st-${typeName}` }));
+  }
+  return builder.finish();
+}
+
+export function applySemanticTokens(tokenData, legend) {
+  if (!view || !Array.isArray(tokenData)) return;
+  try {
+    const decos = _decodeSemanticTokens(tokenData, legend, view.state.doc);
+    view.dispatch({ effects: _setSemanticTokensEffect.of(decos) });
+  } catch (_) {}
+}
+
+export function clearSemanticTokens() {
+  if (view) {
+    try {
+      view.dispatch({ effects: _setSemanticTokensEffect.of(Decoration.none) });
+    } catch (_) {}
+  }
+}
+
+function _clearSemanticTokens() {
+  clearSemanticTokens();
+}
+
+// ── Text edits (LSP formatting) ──────────────────────────────────────────────
+
+export function applyTextEdits(edits) {
+  if (!view || !edits?.length) return;
+  const doc = view.state.doc;
+  const sorted = [...edits].sort((a, b) => {
+    const la = a.range.start.line, lb = b.range.start.line;
+    if (la !== lb) return lb - la;
+    return b.range.start.character - a.range.start.character;
+  });
+  const changes = sorted.map(edit => {
+    const sl = Math.min(edit.range.start.line + 1, doc.lines);
+    const el = Math.min(edit.range.end.line + 1, doc.lines);
+    const startLine = doc.line(sl);
+    const endLine   = doc.line(el);
+    const from = Math.min(startLine.from + (edit.range.start.character || 0), startLine.to);
+    const to   = Math.min(endLine.from   + (edit.range.end.character   || 0), endLine.to);
+    return { from, to, insert: String(edit.newText ?? "") };
+  });
+  view.dispatch({ changes });
+}
+
+async function typstCompletionSource(context) {
+  const word = context.matchBefore(/[#@<]?[A-Za-z0-9:_./-]*$/);
   const prevChar = context.pos > 0 ? context.state.sliceDoc(context.pos - 1, context.pos) : "";
   const explicitTrigger = prevChar === "#" || prevChar === "@" || prevChar === "<";
   if ((!word || word.from === word.to) && !context.explicit && !explicitTrigger) return null;
   if (TYPOGRAPHIC_QUOTES.test(prevChar)) return null;
 
   const from = word ? word.from : context.pos;
-  return {
-    from,
-    options: buildTypstCompletions(context.state.doc.toString()),
-    validFor: /^[#@<]?[A-Za-z0-9:_./-]*$/,
-  };
+  const typed = context.state.sliceDoc(from, context.pos);
+  const trigger = /^[#@<]/.test(typed) ? typed[0] : "";
+  const localOptions = buildTypstCompletions(context.state.doc.toString());
+
+  if (_lspCompletionFn) {
+    try {
+      const lspResult = await Promise.race([
+        _lspCompletionFn(context, {
+          from,
+          typed,
+          trigger,
+        }),
+        new Promise(resolve => setTimeout(() => resolve(null), 400)),
+      ]);
+      if (lspResult?.options?.length > 0) {
+        return {
+          from: typeof lspResult.from === "number" ? lspResult.from : from,
+          options: lspResult.options,
+          validFor: lspResult.validFor || /^[#@<]?[A-Za-z0-9:_./-]*$/,
+          filter: lspResult.filter,
+        };
+      }
+    } catch (_) {}
+  }
+
+  return { from, options: localOptions, validFor: /^[#@<]?[A-Za-z0-9:_./-]*$/ };
 }
 
 export function getLanguageExt(filename) {
@@ -344,15 +473,60 @@ function makeExtensions(filename) {
     syntaxHighlighting(vscodeHighlight),
     langCompartment.of(filename ? getLanguageExt(filename) : []),
     wrapCompartment.of(_lineWrappingEnabled ? EditorView.lineWrapping : []),
-    autocompletion(isTypst ? { override: [typstCompletionSource, completeAnyWord] } : {}),
+    autocompletion(isTypst ? { override: [typstCompletionSource], activateOnTyping: true } : {}),
     ...(isTypst ? [
-      hoverTooltip((view, pos) => typstRefTooltip(view, pos)),
+      foldService.of((state, lineStart, lineEnd) => _lspFoldFn ? _lspFoldFn(state, lineStart, lineEnd) : null),
+      EditorView.updateListener.of(update => {
+        if (!update.docChanged || !update.view.hasFocus) return;
+        let shouldTrigger = false;
+        update.changes.iterChanges((_fromA, _toA, _fromB, _toB, inserted) => {
+          if (shouldTrigger || !inserted.length) return;
+          const text = inserted.toString();
+          if (text.includes("#") || text.includes("@") || text.includes("<")) {
+            shouldTrigger = true;
+          }
+        });
+        if (shouldTrigger) {
+          queueMicrotask(() => startCompletion(update.view));
+        }
+      }),
+      _semanticTokensField,
+      hoverTooltip((view, pos) => _lspHoverFn ? _lspHoverFn(view, pos) : typstRefTooltip(view, pos)),
       keymap.of([
-        { key: "F12", run: () => jumpToTypstDefinition() },
+        {
+          key: "F12",
+          run: (v) => {
+            const pos = v.state.selection.main.head;
+            if (_lspDefinitionFn) {
+              _lspDefinitionFn(v, pos).catch(() => null).then(handled => {
+                if (!handled) jumpToTypstDefinition(pos);
+              });
+              return true;
+            }
+            return jumpToTypstDefinition(pos);
+          },
+        },
+        { key: "Ctrl-Space", run: v => { startCompletion(v); return true; } },
+        { key: "Mod-Space",  run: v => { startCompletion(v); return true; } },
       ]),
       EditorView.domEventHandlers({
         mousedown(event) {
-          return typstClickHandler(event);
+          if (!event.metaKey && !event.ctrlKey) return false;
+          const pos = view?.posAtCoords({ x: event.clientX, y: event.clientY });
+          if (typeof pos !== "number") return false;
+          event.preventDefault();
+          if (_lspMetaClickFn) {
+            _lspMetaClickFn(view, pos).catch(() => null);
+            return true;
+          }
+          if (_lspDefinitionFn) {
+            _lspDefinitionFn(view, pos).catch(() => null).then(handled => {
+              if (!handled) jumpToTypstDefinition(pos);
+            });
+            return true;
+          }
+          if (!jumpToTypstDefinition(pos)) return typstClickHandler(event);
+          return true;
         },
       }),
     ] : []),
@@ -402,6 +576,11 @@ export function activateTab(name, content, filename, forceFresh = false, cacheOn
 
 export function dropTabState(name) {
   _tabStates.delete(name);
+}
+
+export function getTabStateContent(name) {
+  const st = _tabStates.get(name);
+  return st ? st.doc.toString() : null;
 }
 
 export function initCodeMirror(parent, onInput, onSelection) {
@@ -460,25 +639,45 @@ function resolveDiagnosticRange(doc, lineNumber, column = 1) {
   return { from: anchor, to };
 }
 
+// Per-file diagnostic stores — both sources are merged before display
+const _compileDiagsPerFile = new Map(); // filename -> raw diag[]
+const _lspDiagsPerFile = new Map();     // filename -> raw diag[]
+
+function _toCmDiag(item, source) {
+  const range = resolveDiagnosticRange(view.state.doc, item.line, item.column || 1);
+  return {
+    from: range.from,
+    to: range.to,
+    severity: item.severity === "warning" ? "warning" : "error",
+    message: String(item.message || "Typst diagnostic"),
+    source,
+  };
+}
+
+function _applyDiagnostics(forFilename) {
+  if (!view) return;
+  const current = String(s.activeTabName || s.selectedFile?.name || "");
+  if (forFilename && current !== forFilename) return;
+  const compile = (_compileDiagsPerFile.get(current) || []).map(d => _toCmDiag(d, "compile"));
+  const lsp     = (_lspDiagsPerFile.get(current) || []).map(d => _toCmDiag(d, "lsp"));
+  view.dispatch(setDiagnostics(view.state, [...compile, ...lsp]));
+}
+
 export function setEditorDiagnostics(filename, diagnostics = []) {
   if (!view) return;
   const target = String(filename || "");
   const current = String(s.activeTabName || s.selectedFile?.name || "");
-  const activeDiagnostics = target && current === target
-    ? diagnostics
-        .filter(item => String(item?.file || "") === target)
-        .map(item => {
-          const range = resolveDiagnosticRange(view.state.doc, item.line, item.column || 1);
-          return {
-            from: range.from,
-            to: range.to,
-            severity: item.severity === "warning" ? "warning" : "error",
-            message: String(item.message || "Typst diagnostic"),
-            source: "compile",
-          };
-        })
-    : [];
-  view.dispatch(setDiagnostics(view.state, activeDiagnostics));
+  if (target && current === target) {
+    _compileDiagsPerFile.set(target, diagnostics.filter(d => String(d?.file || "") === target));
+  } else {
+    _compileDiagsPerFile.set(target, []);
+  }
+  _applyDiagnostics(target);
+}
+
+export function setLspDiagnostics(filename, diagnostics = []) {
+  _lspDiagsPerFile.set(String(filename || ""), diagnostics);
+  _applyDiagnostics(String(filename || ""));
 }
 
 export function setContent(text) {
@@ -487,6 +686,32 @@ export function setContent(text) {
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
   if (s.activeTabName) _tabStates.set(s.activeTabName, view.state);
   _settingContent = false;
+}
+
+export function replaceContentPreservingViewport(text, tabName = s.activeTabName) {
+  if (!view) return;
+  const nextText = String(text || "");
+  const currentText = view.state.doc.toString();
+  if (currentText === nextText) return;
+
+  const prevSelection = getSelectionSnapshot();
+  const prevScrollTop = view.scrollDOM?.scrollTop;
+
+  _settingContent = true;
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: nextText },
+  });
+  _settingContent = false;
+
+  if (prevSelection?.ranges?.length) {
+    setSelectionSnapshot(prevSelection);
+  }
+  if (typeof prevScrollTop === "number" && view.scrollDOM) {
+    requestAnimationFrame(() => {
+      if (view?.scrollDOM) view.scrollDOM.scrollTop = prevScrollTop;
+    });
+  }
+  if (tabName) _tabStates.set(tabName, view.state);
 }
 
 
@@ -520,3 +745,5 @@ export function isLineWrappingEnabled() {
 
 export function focusEditor() { view?.focus(); }
 export function refreshLayout() { view?.requestMeasure(); }
+export function runUndo() { return view ? undo(view) : false; }
+export function runRedo() { return view ? redo(view) : false; }

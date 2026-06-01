@@ -6,7 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-ARG TYPST_VERSION=0.13.1
+ARG TYPST_VERSION=0.14.2
+ARG TINYMIST_VERSION=0.14.18
 
 RUN set -eux; \
     sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources; \
@@ -42,6 +43,17 @@ RUN set -eux; \
     curl -fsSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${TYPST_ARCH}.tar.xz" \
       | tar -xJ --strip-components=1 -C /usr/local/bin "typst-${TYPST_ARCH}/typst"; \
     typst --version
+
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    case "$ARCH" in \
+      amd64) TM_ARCH="x86_64-unknown-linux-musl" ;; \
+      arm64) TM_ARCH="aarch64-unknown-linux-musl" ;; \
+      *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/Myriad-Dreamin/tinymist/releases/download/v${TINYMIST_VERSION}/tinymist-${TM_ARCH}.tar.gz" \
+      | tar -xz --strip-components=1 -C /usr/local/bin; \
+    tinymist --version
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt

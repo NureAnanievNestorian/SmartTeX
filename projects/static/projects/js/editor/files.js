@@ -274,13 +274,24 @@ const OL_CLASS  = { 0: "e-ol-0", 1: "e-ol-2", 2: "e-ol-2", 3: "e-ol-3", 4: "e-ol
 export function renderOutline(openOutlineLocation) {
   if (!outlineEl) return;
   outlineEl.innerHTML = "";
-  s.sections.forEach(sec => {
-    const lvl = Math.min(sec.level, 6);
+  const sourceItems = Array.isArray(s.lspOutlineItems) && s.lspOutlineItems.length
+    ? s.lspOutlineItems.map(item => ({
+        title: item.title,
+        level: item.level,
+        file_name: item.file_name,
+        start_line: item.start_line,
+        end_line: item.end_line,
+        detail: item.detail,
+      }))
+    : s.sections;
+  sourceItems.forEach(sec => {
+    const lvl = Math.min(Number(sec.level || 1), 6);
     const li  = document.createElement("li");
     const btn = document.createElement("button");
     btn.className   = `e-outline-btn ${OL_CLASS[lvl] || "e-ol-3"}`;
     btn.textContent = sec.title;
-    btn.title       = `${sec.file_name || s.mainFileName} · ${sec.command} · Рядки ${sec.start_line}–${sec.end_line}`;
+    const detail = sec.detail ? ` · ${sec.detail}` : "";
+    btn.title       = `${sec.file_name || s.mainFileName}${detail} · Рядки ${sec.start_line}–${sec.end_line || sec.start_line}`;
     btn.addEventListener("click", () => openOutlineLocation(sec.file_name || s.mainFileName, sec.start_line));
     li.appendChild(btn); outlineEl.appendChild(li);
   });

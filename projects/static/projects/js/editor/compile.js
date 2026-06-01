@@ -4,13 +4,14 @@ import * as cm from "./cm.js";
 import * as files from "./files.js";
 import * as ui from "./ui.js";
 import * as pdfviewer from "./pdfviewer.js";
+import * as tinymist from "./tinymist.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
-const { getContent, saveTabState, activateTab, setEditorDiagnostics } = cm;
+const { getContent, saveTabState, activateTab, hasTabState, setEditorDiagnostics, replaceContentPreservingViewport } = cm;
 const { utf8ByteSize, refreshOpenAsset } = files;
 const { setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics } = ui;
-const { loadPdfViewer, pdfEmpty } = pdfviewer;
+const { loadPdfViewer, pdfEmpty, getPreviewMode, resyncTypstPreview, refreshTypstPreviewStatus } = pdfviewer;
 
 const openPdfLink = document.getElementById("open-pdf");
 const logEl       = document.getElementById("log");
@@ -21,22 +22,16 @@ export function setOutlineLocationRef(fn) { _openOutlineLocation = fn; }
 
 function syncTabContent(name, text, filename) {
   if (!cm.view || !name) return;
+  const targetFilename = filename || name;
   if (name === s.activeTabName) {
-    const current = cm.view.state.doc.toString();
-    if (current === text) return;
-    const prevSel = cm.view.state.selection;
-    activateTab(name, text, filename || name, true);
-    try {
-      const docLen = cm.view.state.doc.length;
-      const clampedRanges = prevSel.ranges.map(range => ({
-        anchor: Math.min(range.anchor, docLen),
-        head: Math.min(range.head, docLen),
-      }));
-      cm.view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
-    } catch (_) {}
+    if (!hasTabState(name)) {
+      activateTab(name, text, targetFilename, true, false);
+      return;
+    }
+    replaceContentPreservingViewport(text, name);
     return;
   }
-  activateTab(name, text, filename || name, true, !!s.activeTabName);
+  activateTab(name, text, targetFilename, true, !!s.activeTabName);
 }
 
 // ── Compile state helpers ─────────────────────────────────────────────────────
@@ -55,6 +50,7 @@ export function updateCompileArtifacts(logText = "", compilePayload = null) {
   s.diagnostics = Array.isArray(compilePayload?.diagnostics) && compilePayload.diagnostics.length
     ? compilePayload.diagnostics
     : parseDiagnostics(logText);
+  const blockingDiagnostics = s.diagnostics.filter(item => String(item?.severity || "error").toLowerCase() !== "warning");
   renderDiagnostics(s.diagnostics, _openOutlineLocation);
   setEditorDiagnostics(s.activeTabName || s.selectedFile?.name || "", s.diagnostics);
 
@@ -62,7 +58,7 @@ export function updateCompileArtifacts(logText = "", compilePayload = null) {
     pdfEmpty.innerHTML = `
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       <div><strong style="display:block;color:var(--e-text);margin-bottom:6px;">Preview not generated yet</strong><span class="e-state-copy">Compile the project to generate the first PDF.</span></div>`;
-  } else if (s.diagnostics.length) {
+  } else if (s.compileState === "failed" && blockingDiagnostics.length) {
     pdfEmpty.innerHTML = `
       <svg viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
       <div><strong style="display:block;color:var(--e-text);margin-bottom:6px;">Preview blocked by diagnostics</strong><span class="e-state-copy">Review the structured diagnostics or raw log, then compile again.</span></div>`;
@@ -71,6 +67,7 @@ export function updateCompileArtifacts(logText = "", compilePayload = null) {
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       <div><strong style="display:block;color:var(--e-text);margin-bottom:6px;">Preview is out of date</strong><span class="e-state-copy">There are unsynced changes waiting for the next compile.</span></div>`;
   }
+  refreshTypstPreviewStatus();
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
@@ -93,8 +90,14 @@ export async function saveCurrentFile() {
       || (s.selectedFile?.name === targetName ? s.selectedFile : null)
       || { name: targetName, type: "asset", is_text: true, is_dir: false }
     );
-  if (s.saving || !targetFile.is_text || targetFile.is_dir) return;
+  if (!targetFile.is_text || targetFile.is_dir) return;
+  if (s.saving) {
+    s.saveQueued = true;
+    return;
+  }
+  s.saveQueued = false;
   s.saving = true;
+  const saveGeneration = s.editGeneration;
   setSaveHint("Збереження…", "saving");
   try {
     const content = getContent();
@@ -118,17 +121,45 @@ export async function saveCurrentFile() {
       );
     }
     saveTabState(targetName);
-    s.hasUnsavedChanges = false;
-    setSaveHint("Збережено", "saved");
-    setCompileState("out_of_date", "pending");
+    const settled = s.editGeneration === saveGeneration;
+    s.hasUnsavedChanges = !settled;
+    if (settled) {
+      setSaveHint("Збережено", "saved");
+      setCompileState("out_of_date", "pending");
+    } else {
+      setSaveHint("Є незбережені зміни…", "saving");
+    }
     import("./app.js").then(m => m.renderEditorTabs?.()).catch(() => {});
     const { renderFileList } = await import("./files.js");
     renderFileList();
     import("./app.js").then(m => m.loadVersions(true)).catch(() => {});
+    if (settled) {
+      const shouldCompile = s.pendingRealtimeCompile;
+      const shouldRefreshSections = s.pendingSectionsRefresh && targetName === s.mainFileName;
+      s.pendingRealtimeCompile = false;
+      s.pendingSectionsRefresh = false;
+      if (s.projectMeta?.markup_type === "typst" && String(targetName).toLowerCase().endsWith(".typ")) {
+        tinymist.didSave(targetName);
+        if (getPreviewMode() === "web") resyncTypstPreview({ reveal: false });
+      }
+      if (shouldCompile) {
+        runCompile("realtime").catch(() => {});
+      }
+      if (shouldRefreshSections) {
+        import("./app.js").then(m => m.loadSections?.()).catch(() => {});
+      }
+    }
   } catch (err) {
     setSaveHint(`Помилка: ${err.message}`, "error");
   } finally {
     s.saving = false;
+    if (s.saveQueued || s.hasUnsavedChanges) {
+      s.saveQueued = false;
+      clearTimeout(s.saveTimer);
+      s.saveTimer = setTimeout(() => {
+        saveCurrentFile().catch(() => {});
+      }, 120);
+    }
   }
 }
 
@@ -169,6 +200,9 @@ export async function runCompile(mode = "manual") {
       const url = `${data.pdf_url}?t=${s.lastPdfVersion}`;
       if (openPdfLink) openPdfLink.href = data.pdf_url;
       await loadPdfViewer(url);
+      if (s.projectMeta?.markup_type === "typst" && getPreviewMode() === "web") {
+        resyncTypstPreview({ reveal: false });
+      }
     } else {
       pdfEmpty.style.display = "flex";
     }
@@ -202,6 +236,9 @@ export async function pollCompileStatus() {
       s.lastPdfVersion = d.pdf_version;
       if (openPdfLink) openPdfLink.href = d.pdf_url;
       await loadPdfViewer(`${d.pdf_url}?t=${s.lastPdfVersion}`);
+      if (s.projectMeta?.markup_type === "typst" && getPreviewMode() === "web") {
+        resyncTypstPreview({ reveal: false });
+      }
     }
     if (!d.pdf_url) pdfEmpty.style.display = "flex";
   } catch (_) {}
@@ -218,6 +255,9 @@ export async function pollUntilCompileDone(maxMs = 45000, stepMs = 600) {
       s.lastPdfVersion = d.pdf_version;
       if (openPdfLink) openPdfLink.href = d.pdf_url;
       await loadPdfViewer(`${d.pdf_url}?t=${s.lastPdfVersion}`);
+      if (s.projectMeta?.markup_type === "typst" && getPreviewMode() === "web") {
+        resyncTypstPreview({ reveal: false });
+      }
     }
     if (!d.pdf_url) pdfEmpty.style.display = "flex";
     if (d.compile_state && d.compile_state !== "out_of_date") {
@@ -324,6 +364,9 @@ export function connectProjectUpdatesSse() {
         s.lastPdfVersion = data.pdf_version;
         if (openPdfLink) openPdfLink.href = data.pdf_url;
         loadPdfViewer(`${data.pdf_url}?t=${s.lastPdfVersion}`).catch(() => {});
+        if (s.projectMeta?.markup_type === "typst" && getPreviewMode() === "web") {
+          resyncTypstPreview({ reveal: false });
+        }
       }
       if (!data.pdf_url) pdfEmpty.style.display = "flex";
       return;

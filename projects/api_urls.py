@@ -23,6 +23,8 @@ from .views import (
     api_project_search,
     api_project_synctex_line,
     api_project_synctex_pdf,
+    api_project_typst_preview,
+    api_project_typst_preview_restart,
     api_project_section,
     api_project_sections,
     api_project_version_detail,
@@ -63,4 +65,6 @@ urlpatterns = [
     path("projects/<int:project_id>/pdf-page-image/", api_project_pdf_page_image),
     path("projects/<int:project_id>/synctex/line/", api_project_synctex_line),
     path("projects/<int:project_id>/synctex/pdf/", api_project_synctex_pdf),
+    path("projects/<int:project_id>/typst-preview/restart/", api_project_typst_preview_restart),
+    re_path(r"^projects/(?P<project_id>\d+)/typst-preview/(?P<subpath>.*)$", api_project_typst_preview),
 ]

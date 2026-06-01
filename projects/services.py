@@ -1712,7 +1712,7 @@ def parse_compile_diagnostics(project: Project, log_text: str) -> list[dict[str,
             if lowered.startswith("warning:"):
                 pending_message = stripped.split(":", 1)[1].strip()
                 continue
-            arrow = re.search(r"-->\s+([A-Za-z0-9_./-]+\.typ):(\d+):(\d+)", line)
+            arrow = re.search(r"(?:-->|┌─)\s+([A-Za-z0-9_./-]+\.typ):(\d+):(\d+)", line)
             if arrow:
                 severity = "warning" if "warning" in pending_message.lower() else "error"
                 _push(

@@ -8,16 +8,18 @@ import * as versions from "./versions.js";
 import * as compile from "./compile.js";
 import * as longdoc from "./longdoc.js";
 import * as search from "./search.js";
+import * as tinymist from "./tinymist.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
 const {
   initCodeMirror, switchLanguage,
   focusEditor, jumpToLine, getSelectionSnapshot, setSelectionSnapshot, setEditorDiagnostics,
-  setLineWrapping, isLineWrappingEnabled,
-  saveTabState, hasTabState, activateTab, dropTabState,
+  setLineWrapping, isLineWrappingEnabled, replaceContentPreservingViewport,
+  saveTabState, hasTabState, activateTab, dropTabState, runUndo, runRedo,
 } = cm;
 const { loadPdfViewer, pdfEmpty } = pdfviewer;
+const { initPreviewPanel, getPreviewMode, refreshTypstPreview, revealPreviewSelection, setPreviewCodeNavigationCallback, syncPreviewMemoryFile } = pdfviewer;
 const {
   setSaveHint, setCompileState, updateEditorTab, openLog,
   switchBottomTab, initDialogs, initResizeHandles, updateLineCol, updateWrapToggle,
@@ -32,10 +34,30 @@ const {
 } = files;
 const { renderVersions, initVersionsPanel, closeDiffModal } = versions;
 const {
-  saveCurrentFile, compileProject, runCompile, updateCompileArtifacts,
+  saveCurrentFile, compileProject, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef, openCreateTemplateDialog,
 } = compile;
+
+// ── LSP cross-file navigation callback ───────────────────────────────────────
+
+async function lspNavigateTo(filename, lineNum, charNum) {
+  try {
+    const target = String(filename || "");
+    if (!target) return;
+    if (s.selectedFile?.name !== target) {
+      const fileObj = target === s.mainFileName
+        ? { name: s.mainFileName, type: "main", is_text: true }
+        : s.projectFiles.find(f => f.name === target);
+      if (!fileObj) return;
+      await selectFile(fileObj);
+      await new Promise(r => requestAnimationFrame(r));
+    }
+    jumpToLine(lineNum, charNum);
+  } catch (err) {
+    console.error("LSP navigation error:", err);
+  }
+}
 
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
@@ -114,6 +136,7 @@ function closeTab(name) {
     captureActiveScroll();
     captureActiveSelection();
   }
+  tinymist.didClose(name);
   s.openTabs.splice(idx, 1);
   dropTabState(name);
   _tabScrolls.delete(name);
@@ -273,6 +296,12 @@ const deleteProjBtn      = document.getElementById("delete-project-btn");
 const createTemplateBtnEl = document.getElementById("create-template-btn");
 const projectMenuBtn     = document.getElementById("project-menu-btn");
 const projectMenuEl      = document.getElementById("project-menu");
+const fileMenuBtn        = document.getElementById("file-menu-btn");
+const fileMenuEl         = document.getElementById("file-menu");
+const editMenuBtn        = document.getElementById("edit-menu-btn");
+const editMenuEl         = document.getElementById("edit-menu");
+const typstMenuBtn       = document.getElementById("typst-menu-btn");
+const typstMenuEl        = document.getElementById("typst-menu");
 const newFolderBtn     = document.getElementById("new-folder-btn");
 const newTextFileBtn   = document.getElementById("new-text-file-btn");
 const dropZone         = document.getElementById("drop-zone");
@@ -283,7 +312,21 @@ const commandPaletteInputEl = document.getElementById("command-palette-input");
 const commandPaletteListEl = document.getElementById("command-palette-list");
 const smallModelWarningEl = document.getElementById("small-model-warning");
 const smallModelWarningTextEl = document.getElementById("small-model-warning-text");
+const signatureHelpEl = document.getElementById("signature-help");
 const WRAP_PREF_KEY = "smarttex.editor.lineWrap";
+let _paletteMode = "commands";
+let _workspaceSymbolTimer = null;
+let _workspaceSymbolRequestId = 0;
+let _signatureHelpTimer = null;
+
+function getTokenAroundCursor() {
+  if (!cm.view) return "";
+  const pos = cm.view.state.selection.main.head;
+  const text = cm.view.state.doc.toString();
+  const left = text.slice(0, pos).match(/[A-Za-z_][A-Za-z0-9_-]*$/);
+  const right = text.slice(pos).match(/^[A-Za-z0-9_-]*/);
+  return `${left?.[0] || ""}${right?.[0] || ""}`.trim();
+}
 const MENU_ICONS = {
   newFile: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6z"/><path d="M9.5 2v4h4"/><path d="M8 8.5v3"/><path d="M6.5 10h3"/></svg>`,
   newFolder: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5a1 1 0 0 1 1-1h3.4l1.3 1.5h6.3a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/><path d="M7.5 7.5v3"/><path d="M6 9h3"/></svg>`,
@@ -340,24 +383,32 @@ function toggleLineWrap() {
   persistWrapPreference(next);
 }
 
+function closeTopMenus() {
+  fileMenuEl?.classList.remove("open");
+  editMenuEl?.classList.remove("open");
+  typstMenuEl?.classList.remove("open");
+  projectMenuEl?.classList.remove("open");
+}
+
+function toggleTopMenu(menuEl) {
+  if (!menuEl) return;
+  const willOpen = !menuEl.classList.contains("open");
+  closeTopMenus();
+  if (willOpen) menuEl.classList.add("open");
+}
+
 function syncTabContent(name, text, filename) {
   if (!cm.view || !name) return;
+  const targetFilename = filename || name;
   if (name === s.activeTabName) {
-    const current = cm.view.state.doc.toString();
-    if (current === text) return;
-    const prevSel = cm.view.state.selection;
-    activateTab(name, text, filename || name, true);
-    try {
-      const docLen = cm.view.state.doc.length;
-      const clampedRanges = prevSel.ranges.map(range => ({
-        anchor: Math.min(range.anchor, docLen),
-        head: Math.min(range.head, docLen),
-      }));
-      cm.view.dispatch({ selection: { ranges: clampedRanges, mainIndex: prevSel.mainIndex } });
-    } catch (_) {}
+    if (!hasTabState(name)) {
+      activateTab(name, text, targetFilename, true, false);
+      return;
+    }
+    replaceContentPreservingViewport(text, name);
     return;
   }
-  activateTab(name, text, filename || name, true, !!s.activeTabName);
+  activateTab(name, text, targetFilename, true, !!s.activeTabName);
 }
 
 function isMenuOpen(menuEl) {
@@ -591,9 +642,20 @@ function buildCommandPaletteItems() {
   const canRename = Boolean(selected?.name);
   const canDelete = Boolean(selected?.name && selected.name !== s.mainFileName);
   const canSetMain = Boolean(selected?.name && !selected.is_dir && selected.name !== s.mainFileName);
+  const isTypstProject = s.projectMeta?.markup_type === "typst";
+  const isTypstFile = isTypstProject && String(s.activeTabName || "").endsWith(".typ");
+  const lspReady = tinymist.getStatus() === "connected";
   return [
     { id: "compile", label: "Recompile project", hint: "Build", shortcut: "Mod+Enter", run: () => compileProject().catch(() => {}) },
     { id: "wrap", label: isLineWrappingEnabled() ? "Disable line wrap" : "Enable line wrap", hint: "Editor", shortcut: "Wrap", run: () => toggleLineWrap() },
+    ...(isTypstFile ? [
+      { id: "format-doc", label: "Format document", hint: "Typst", shortcut: "Mod+Alt+L", disabled: !lspReady, run: () => formatCurrentDocument().catch(() => {}) },
+      { id: "find-refs", label: "Find references", hint: "Typst", shortcut: "Mod+Click", disabled: !lspReady, run: () => findReferences().catch(() => {}) },
+      { id: "document-symbols", label: "Document symbols", hint: "Typst", shortcut: "Mod+Shift+O", disabled: !lspReady, run: () => openDocumentSymbolsPalette() },
+      { id: "workspace-symbols", label: "Workspace symbols", hint: "Typst", shortcut: "Mod+T", disabled: !lspReady, run: () => openWorkspaceSymbolsPalette() },
+      { id: "rename-symbol", label: "Rename symbol", hint: "Typst", shortcut: "F2", disabled: !lspReady, run: () => renameCurrentSymbol().catch(() => {}) },
+      { id: "restart-tinymist", label: "Restart Tinymist", hint: "Typst", run: () => tinymist.restart() },
+    ] : []),
     { id: "new-file", label: "New file", hint: "Files", shortcut: "N", run: () => handleCreateTextFile().catch(err => setSaveHint(`Помилка: ${err.message}`, "error")) },
     { id: "new-folder", label: "New folder", hint: "Files", shortcut: "Shift+N", run: () => handleCreateFolder().catch(err => setSaveHint(`Помилка: ${err.message}`, "error")) },
     { id: "rename-file", label: `Rename: ${selected?.name || "current item"}`, hint: "Files", shortcut: "F2", disabled: !canRename, run: () => handleRenameFile(selected).catch(err => setSaveHint(`Помилка: ${err.message}`, "error")) },
@@ -606,8 +668,11 @@ function buildCommandPaletteItems() {
 }
 
 function closeCommandPalette() {
+  _paletteMode = "commands";
+  clearTimeout(_workspaceSymbolTimer);
   commandPaletteOverlayEl?.classList.remove("open");
   if (commandPaletteInputEl) commandPaletteInputEl.value = "";
+  if (commandPaletteInputEl) commandPaletteInputEl.placeholder = "Введіть команду…";
   if (commandPaletteListEl) commandPaletteListEl.innerHTML = "";
 }
 
@@ -641,6 +706,122 @@ function renderCommandPalette(query = "") {
   commandPaletteListEl.querySelector(".cp-item:not(:disabled)")?.classList.add("active");
 }
 
+function renderPaletteItems(items = []) {
+  if (!commandPaletteListEl) return;
+  commandPaletteListEl.innerHTML = "";
+  items.forEach((item, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `cp-item${item.danger ? " danger" : ""}`;
+    btn.disabled = Boolean(item.disabled);
+    btn.dataset.index = String(idx);
+    btn.innerHTML = `
+      <span class="cp-main">
+        <span class="cp-label">${item.label}</span>
+        <span class="cp-hint">${item.hint || ""}</span>
+      </span>
+      <span class="cp-shortcut">${item.shortcut || ""}</span>
+    `;
+    btn.addEventListener("click", () => {
+      closeCommandPalette();
+      if (!item.disabled) item.run?.();
+    });
+    commandPaletteListEl.appendChild(btn);
+  });
+  commandPaletteListEl.querySelector(".cp-item:not(:disabled)")?.classList.add("active");
+}
+
+function openDocumentSymbolsPalette() {
+  _paletteMode = "document-symbols";
+  commandPaletteOverlayEl?.classList.add("open");
+  if (commandPaletteInputEl) {
+    commandPaletteInputEl.value = "";
+    commandPaletteInputEl.placeholder = "Символи поточного документа…";
+    commandPaletteInputEl.focus();
+  }
+  renderDocumentSymbolsPalette("");
+}
+
+function renderDocumentSymbolsPalette(query = "") {
+  const q = String(query || "").trim().toLowerCase();
+  const items = (s.lspOutlineItems || [])
+    .filter(item => !q || `${item.title} ${item.detail || ""}`.toLowerCase().includes(q))
+    .map(item => ({
+      label: item.title,
+      hint: item.detail || `Line ${item.start_line}`,
+      run: () => openOutlineLocation(item.file_name || s.activeTabName, item.start_line, 1),
+    }));
+  renderPaletteItems(items);
+}
+
+function openWorkspaceSymbolsPalette() {
+  _paletteMode = "workspace-symbols";
+  commandPaletteOverlayEl?.classList.add("open");
+  const initialQuery = getTokenAroundCursor();
+  if (commandPaletteInputEl) {
+    commandPaletteInputEl.value = initialQuery;
+    commandPaletteInputEl.placeholder = "Символи проєкту…";
+    commandPaletteInputEl.focus();
+  }
+  renderWorkspaceSymbolsPalette(initialQuery);
+}
+
+async function renderWorkspaceSymbolsPalette(query = "") {
+  const trimmedQuery = String(query || "").trim();
+  if (!trimmedQuery) {
+    renderPaletteItems([
+      {
+        label: "Введіть назву символу",
+        hint: "Tinymist шукає символи проєкту за запитом. Постав курсор на слово або почни друкувати.",
+        disabled: true,
+        shortcut: "",
+      },
+    ]);
+    return;
+  }
+  const requestId = ++_workspaceSymbolRequestId;
+  clearTimeout(_workspaceSymbolTimer);
+  _workspaceSymbolTimer = setTimeout(async () => {
+    try {
+      const result = await tinymist.requestWorkspaceSymbols(trimmedQuery);
+      if (requestId !== _workspaceSymbolRequestId || _paletteMode !== "workspace-symbols") return;
+      const root = (tinymist.getRootUri?.() || "");
+      const rootSlash = root.endsWith("/") ? root : root + "/";
+      const items = (Array.isArray(result) ? result : [])
+        .map(item => {
+          const loc = Array.isArray(item.locations) ? item.locations[0] : item.location;
+          const uri = String(loc?.uri || "");
+          const fileName = uri.startsWith(rootSlash) ? uri.slice(rootSlash.length) : uri;
+          const line = (loc?.range?.start?.line ?? 0) + 1;
+          return {
+            label: item.name || fileName,
+            hint: `${fileName}:${line}${item.containerName ? ` · ${item.containerName}` : ""}`,
+            run: () => lspNavigateTo(fileName, line, (loc?.range?.start?.character ?? 0) + 1),
+          };
+        })
+        .filter(item => item.label && item.hint);
+      renderPaletteItems(items.length ? items : [
+        {
+          label: `Нічого не знайдено для “${trimmedQuery}”`,
+          hint: "Спробуйте коротший або точніший запит.",
+          disabled: true,
+          shortcut: "",
+        },
+      ]);
+    } catch (_) {
+      if (requestId !== _workspaceSymbolRequestId || _paletteMode !== "workspace-symbols") return;
+      renderPaletteItems([
+        {
+          label: "Не вдалося завантажити символи проєкту",
+          hint: "Перезапустіть Tinymist або змініть запит.",
+          disabled: true,
+          shortcut: "",
+        },
+      ]);
+    }
+  }, 120);
+}
+
 function moveCommandPaletteSelection(delta) {
   if (!commandPaletteListEl) return;
   const enabled = [...commandPaletteListEl.querySelectorAll(".cp-item:not(:disabled)")];
@@ -660,7 +841,9 @@ function executeActivePaletteItem() {
 
 function openCommandPalette() {
   if (!commandPaletteOverlayEl || !commandPaletteInputEl) return;
+  _paletteMode = "commands";
   commandPaletteOverlayEl.classList.add("open");
+  commandPaletteInputEl.placeholder = "Введіть команду…";
   renderCommandPalette("");
   requestAnimationFrame(() => {
     commandPaletteInputEl.focus();
@@ -677,6 +860,7 @@ export async function loadProjectMeta() {
   const nextMain = String(s.projectMeta.main_file_name || s.projectMeta.file_name || "main.tex");
   s.mainFileName      = nextMain;
   s.supportsSynctex   = Boolean(s.projectMeta.supports_synctex);
+  initPreviewPanel();
   if (currentFileLbl) currentFileLbl.textContent = s.mainFileName;
   updateEditorTab(s.mainFileName);
   const selName = String(s.selectedFile?.name || "");
@@ -803,6 +987,9 @@ async function selectFile(file) {
       setSaveHint("", "");
       applyTabScroll(file.name);
       focusEditor();
+      tinymist.didOpen(file.name, cm.getContent());
+      tinymist.refreshActiveDocument(file.name);
+      updateSignatureHelp();
       return;
     }
     setSaveHint("Завантаження…", "saving");
@@ -815,6 +1002,9 @@ async function selectFile(file) {
       setSaveHint("Завантажено", "saved");
       applyTabScroll(file.name);
       focusEditor();
+      tinymist.didOpen(file.name, cm.getContent());
+      tinymist.refreshActiveDocument(file.name);
+      updateSignatureHelp();
     } catch (err) {
       if (s.activeTabName !== file.name) return;
       setSaveHint(`Помилка: ${err.message}`, "error");
@@ -834,6 +1024,9 @@ async function selectFile(file) {
       setSaveHint("", "");
       applyTabScroll(file.name);
       focusEditor();
+      tinymist.didOpen(file.name, cm.getContent());
+      tinymist.refreshActiveDocument(file.name);
+      updateSignatureHelp();
       return;
     }
 
@@ -855,6 +1048,9 @@ async function selectFile(file) {
       setSaveHint("Завантажено", "saved");
       applyTabScroll(file.name);
       focusEditor();
+      tinymist.didOpen(file.name, data.text_content || "");
+      tinymist.refreshActiveDocument(file.name);
+      updateSignatureHelp();
     } catch (err) {
       if (s.activeTabName !== file.name) return;
       setSaveHint(`Помилка: ${err.message}`, "error");
@@ -868,7 +1064,126 @@ async function selectFile(file) {
   }
 
   setEditorDiagnostics("", []);
+  tinymist.refreshActiveDocument("");
+  hideSignatureHelp();
   showAssetViewer(file);
+}
+
+// ── LSP actions ──────────────────────────────────────────────────────────────
+
+async function formatCurrentDocument() {
+  const filename = s.activeTabName || s.selectedFile?.name || "";
+  if (!filename) return;
+  const ok = await tinymist.formatDocument(filename).catch(() => false);
+  if (ok) setSaveHint("Відформатовано", "saved");
+}
+
+async function renameCurrentSymbol() {
+  const filename = s.activeTabName || s.selectedFile?.name || "";
+  if (!filename || !cm.view) return;
+  const { showRenameDialog } = await import("./ui.js");
+  const currentName = getTokenAroundCursor();
+  const newName = await showRenameDialog(currentName);
+  if (!newName) return;
+  if (newName === currentName) return;
+  const pos = cm.view.state.selection.main.head;
+  const doc = cm.view.state.doc;
+  const line = doc.lineAt(pos);
+  const ok = await tinymist.renameSymbol(filename, line.number, pos - line.from + 1, newName).catch(() => false);
+  if (ok) {
+    setSaveHint("Символ перейменовано", "saved");
+    if (filename === s.mainFileName) loadMainFile().catch(() => {});
+    else selectFile(s.selectedFile).catch(() => {});
+  } else {
+    setSaveHint("Tinymist не зміг перейменувати цей символ", "error");
+  }
+}
+
+function hideSignatureHelp() {
+  signatureHelpEl?.classList.remove("visible");
+  if (signatureHelpEl) signatureHelpEl.innerHTML = "";
+}
+
+async function updateSignatureHelp() {
+  clearTimeout(_signatureHelpTimer);
+  _signatureHelpTimer = setTimeout(async () => {
+    const filename = s.activeTabName || s.selectedFile?.name || "";
+    if (!filename || !cm.view || !String(filename).endsWith(".typ") || tinymist.getStatus() !== "connected") {
+      hideSignatureHelp();
+      return;
+    }
+    const pos = cm.view.state.selection.main.head;
+    const doc = cm.view.state.doc;
+    const line = doc.lineAt(pos);
+    try {
+      const result = await tinymist.requestSignatureHelp(filename, line.number, pos - line.from + 1);
+      const signatures = Array.isArray(result?.signatures) ? result.signatures : [];
+      const activeSignature = signatures[result?.activeSignature || 0];
+      if (!activeSignature?.label) {
+        hideSignatureHelp();
+        return;
+      }
+      const activeParam = Array.isArray(activeSignature.parameters)
+        ? activeSignature.parameters[result?.activeParameter || 0]
+        : null;
+      signatureHelpEl.innerHTML = `<code>${activeSignature.label}</code>${activeParam?.label ? `<span>· ${activeParam.label}</span>` : ""}`;
+      signatureHelpEl.classList.add("visible");
+    } catch (_) {
+      hideSignatureHelp();
+    }
+  }, 120);
+}
+
+async function findReferencesAt(filename, lineNum, charNum) {
+  const refsList = document.getElementById("refs-list");
+  if (refsList) refsList.innerHTML = "<div class='e-empty-card'>Пошук посилань…</div>";
+  switchBottomTab("refs");
+  try {
+    const result = await tinymist.requestReferences(filename, lineNum, charNum);
+    const locs = Array.isArray(result) ? result : (result ? [result] : []);
+    if (!refsList) return;
+    if (!locs.length) {
+      refsList.innerHTML = "<div class='e-empty-card'>Посилання не знайдено.</div>";
+      return;
+    }
+    const root = (tinymist.getRootUri?.() || "");
+    const rootSlash = root.endsWith("/") ? root : root + "/";
+    refsList.innerHTML = "";
+    locs.forEach(loc => {
+      const uri = String(loc.uri || "");
+      const fname = uri.startsWith(rootSlash) ? uri.slice(rootSlash.length) : uri;
+      const ln = (loc.range?.start?.line ?? 0) + 1;
+      const ch = (loc.range?.start?.character ?? 0) + 1;
+      const item = document.createElement("div");
+      item.className = "e-diag-item e-ref-item";
+      item.innerHTML = `<span class="e-diag-file">${fname}</span><span class="e-diag-loc">Ln ${ln}, Col ${ch}</span>`;
+      item.style.cursor = "pointer";
+      item.addEventListener("click", () => lspNavigateTo(fname, ln, ch));
+      refsList.appendChild(item);
+    });
+  } catch (e) {
+    if (refsList) refsList.innerHTML = `<div class='e-empty-card'>Помилка: ${e.message}</div>`;
+  }
+}
+
+async function findReferences() {
+  const filename = s.activeTabName || s.selectedFile?.name || "";
+  if (!filename || !cm.view) return;
+  const pos = cm.view.state.selection.main.head;
+  const doc = cm.view.state.doc;
+  const line = doc.lineAt(pos);
+  await findReferencesAt(filename, line.number, pos - line.from + 1);
+}
+
+async function openDocumentLink(fileName) {
+  const target = String(fileName || "");
+  if (!target) return;
+  const fileObj = target === s.mainFileName
+    ? { name: s.mainFileName, type: "main", is_text: true }
+    : s.projectFiles.find(f => f.name === target);
+  if (fileObj) {
+    await selectFile(fileObj);
+  }
 }
 
 // ── Outline navigation ────────────────────────────────────────────────────────
@@ -904,6 +1219,7 @@ function onEditorInput(action) {
   }
   // "change"
   if (!s.selectedFile.is_text || s.selectedFile.is_dir) return;
+  s.editGeneration += 1;
   s.hasUnsavedChanges = true;
   setSaveHint("Є незбережені зміни…", "saving");
   renderEditorTabs();
@@ -913,13 +1229,16 @@ function onEditorInput(action) {
 
   const savedName = s.selectedFile.name;
   const isTypstTextFile = s.projectMeta?.markup_type === "typst" && String(savedName).toLowerCase().endsWith(".typ");
+  if (isTypstTextFile) {
+    const content = cm.getContent();
+    tinymist.didChange(savedName, content);
+    syncPreviewMemoryFile(savedName, content);
+  }
   s.saveTimer = setTimeout(() => {
+    if (isTypstTextFile) s.pendingRealtimeCompile = true;
+    if (savedName === s.mainFileName) s.pendingSectionsRefresh = true;
     saveCurrentFile()
-      .then(() => {
-        if (isTypstTextFile) runCompile("realtime").catch(() => {});
-        if (savedName !== s.mainFileName) return;
-        loadSections().catch(() => {});
-      })
+      .then(() => {})
       .catch(() => {});
   }, isTypstTextFile ? 400 : 2500);
 }
@@ -947,6 +1266,42 @@ function isTextInputTarget(target) {
 function handleGlobalEditorShortcuts(event) {
   if (event.defaultPrevented || isTextInputTarget(event.target)) return;
   const isMod = event.metaKey || event.ctrlKey;
+
+  if (event.key === "F2") {
+    const isTypstFile = String(s.activeTabName || "").endsWith(".typ");
+    if (isTypstFile && tinymist.getStatus() === "connected") {
+      event.preventDefault();
+      renameCurrentSymbol().catch(() => {});
+      return;
+    }
+  }
+
+  if (isMod && event.altKey && (event.key === "l" || event.key === "L")) {
+    const isTypstFile = String(s.activeTabName || "").endsWith(".typ");
+    if (isTypstFile) {
+      event.preventDefault();
+      formatCurrentDocument().catch(() => {});
+      return;
+    }
+  }
+
+  if (isMod && event.shiftKey && (event.key === "O" || event.key === "o")) {
+    const isTypstFile = String(s.activeTabName || "").endsWith(".typ");
+    if (isTypstFile && tinymist.getStatus() === "connected") {
+      event.preventDefault();
+      openDocumentSymbolsPalette();
+      return;
+    }
+  }
+
+  if (isMod && !event.shiftKey && !event.altKey && (event.key === "t" || event.key === "T")) {
+    if (s.projectMeta?.markup_type === "typst" && tinymist.getStatus() === "connected") {
+      event.preventDefault();
+      openWorkspaceSymbolsPalette();
+      return;
+    }
+  }
+
   if (isMod && event.shiftKey && (event.key === "P" || event.key === "p")) {
     event.preventDefault();
     openCommandPalette();
@@ -975,9 +1330,7 @@ function handleGlobalEditorShortcuts(event) {
 
 // ── Project menu ──────────────────────────────────────────────────────────────
 
-function closeProjectMenu() {
-  projectMenuEl?.classList.remove("open");
-}
+function closeProjectMenu() { closeTopMenus(); }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -1005,6 +1358,8 @@ export function initEditorApp() {
       captureActiveSelection();
       schedulePersistTabs();
       if (cm.view) updateLineCol(cm.view);
+      updateSignatureHelp();
+      revealPreviewSelection(false);
     }
   );
   applyWrapPreference(readWrapPreference());
@@ -1040,12 +1395,28 @@ export function initEditorApp() {
   });
 
   // Project menu
-  projectMenuBtn?.addEventListener("click", () => projectMenuEl?.classList.toggle("open"));
+  fileMenuBtn?.addEventListener("click", () => toggleTopMenu(fileMenuEl));
+  editMenuBtn?.addEventListener("click", () => toggleTopMenu(editMenuEl));
+  typstMenuBtn?.addEventListener("click", () => toggleTopMenu(typstMenuEl));
+  projectMenuBtn?.addEventListener("click", () => toggleTopMenu(projectMenuEl));
   document.addEventListener("click", e => {
     if (!editorContextMenuEl?.contains(e.target)) closeEditorContextMenu();
-    if (!projectMenuBtn?.contains(e.target) && !projectMenuEl?.contains(e.target)) closeProjectMenu();
+    const insideTopMenu = [fileMenuBtn, fileMenuEl, editMenuBtn, editMenuEl, typstMenuBtn, typstMenuEl, projectMenuBtn, projectMenuEl]
+      .some(el => el?.contains?.(e.target));
+    if (!insideTopMenu) closeProjectMenu();
   });
-  commandPaletteInputEl?.addEventListener("input", e => renderCommandPalette(e.target.value));
+  commandPaletteInputEl?.addEventListener("input", e => {
+    const value = e.target.value;
+    if (_paletteMode === "document-symbols") {
+      renderDocumentSymbolsPalette(value);
+      return;
+    }
+    if (_paletteMode === "workspace-symbols") {
+      renderWorkspaceSymbolsPalette(value);
+      return;
+    }
+    renderCommandPalette(value);
+  });
   commandPaletteInputEl?.addEventListener("keydown", e => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -1077,9 +1448,28 @@ export function initEditorApp() {
   renameProjBtn?.addEventListener("click", () => { closeProjectMenu(); renameCurrentProject().catch(() => {}); });
   deleteProjBtn?.addEventListener("click", () => { closeProjectMenu(); deleteCurrentProject().catch(() => {}); });
   createTemplateBtnEl?.addEventListener("click", () => { closeProjectMenu(); openCreateTemplateDialog(); });
+  document.getElementById("menu-file-new-file")?.addEventListener("click", () => { closeTopMenus(); handleCreateTextFile().catch(err => setSaveHint(`Помилка: ${err.message}`, "error")); });
+  document.getElementById("menu-file-new-folder")?.addEventListener("click", () => { closeTopMenus(); handleCreateFolder().catch(err => setSaveHint(`Помилка: ${err.message}`, "error")); });
+  document.getElementById("menu-file-save")?.addEventListener("click", () => { closeTopMenus(); saveCurrentFile().catch(() => {}); });
+  document.getElementById("menu-file-close-tab")?.addEventListener("click", () => { closeTopMenus(); closeActiveTab(); });
+  document.getElementById("menu-edit-undo")?.addEventListener("click", () => { closeTopMenus(); runUndo(); });
+  document.getElementById("menu-edit-redo")?.addEventListener("click", () => { closeTopMenus(); runRedo(); });
+  document.getElementById("menu-edit-command-palette")?.addEventListener("click", () => { closeTopMenus(); openCommandPalette(); });
+  document.getElementById("menu-edit-wrap")?.addEventListener("click", () => { closeTopMenus(); toggleLineWrap(); });
+  document.getElementById("menu-typst-document-symbols")?.addEventListener("click", () => { closeTopMenus(); openDocumentSymbolsPalette(); });
+  document.getElementById("menu-typst-workspace-symbols")?.addEventListener("click", () => { closeTopMenus(); openWorkspaceSymbolsPalette(); });
+  document.getElementById("menu-typst-rename")?.addEventListener("click", () => { closeTopMenus(); renameCurrentSymbol().catch(() => {}); });
+  document.getElementById("menu-typst-format")?.addEventListener("click", () => { closeTopMenus(); formatCurrentDocument().catch(() => {}); });
+  document.getElementById("menu-typst-find-refs")?.addEventListener("click", () => { closeTopMenus(); findReferences().catch(() => {}); });
+  document.getElementById("menu-typst-compile")?.addEventListener("click", () => { closeTopMenus(); compileProject().catch(() => {}); });
+  document.getElementById("menu-typst-restart")?.addEventListener("click", () => { closeTopMenus(); tinymist.restart(); });
 
   // PDF actions
   refreshPdfBtn?.addEventListener("click", () => {
+    if (s.projectMeta?.markup_type === "typst" && getPreviewMode() === "web") {
+      refreshTypstPreview(true).catch(() => {});
+      return;
+    }
     if (s.pdfCurrentUrl) {
       const base = s.pdfCurrentUrl.split("?")[0];
       loadPdfViewer(`${base}?t=${Date.now()}`);
@@ -1192,12 +1582,28 @@ export function initEditorApp() {
     if (s.statusPollTimer)         clearInterval(s.statusPollTimer);
     if (s.typstCompileTimer)       clearTimeout(s.typstCompileTimer);
     if (s.projectSse) { try { s.projectSse.close(); } catch (_) {} s.projectSse = null; }
+    tinymist.disconnect();
   });
+
+  // ── Tinymist setup ──
+  tinymist.initStatusEl(document.getElementById("sb-tinymist"));
+  tinymist.setNavigationCallback(lspNavigateTo);
+  tinymist.setReferencesCallback(findReferencesAt);
+  setPreviewCodeNavigationCallback(lspNavigateTo);
+  tinymist.setDocumentSymbolsCallback(items => {
+    s.lspOutlineItems = Array.isArray(items) ? items : [];
+    renderOutline(openOutlineLocation);
+  });
+  tinymist.setDocumentLinksCallback(openDocumentLink);
+
+  // References tab button
+  document.getElementById("tab-refs-btn")?.addEventListener("click", () => switchBottomTab("refs"));
 
   // ── Load initial data ──
   await loadProjectMeta();
   await Promise.all([loadFiles(), loadSections(), loadVersions(true), longdoc.loadLongdocData?.()]);
   setCompileState("out_of_date");
+  if (s.projectMeta?.markup_type === "typst") tinymist.connect();
 
   const restored = await restoreTabsFromStorage();
   if (!restored) {

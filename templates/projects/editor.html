@@ -198,6 +198,13 @@
             gap: 8px;
         }
 
+        .e-menu-strip {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            margin-left: 8px;
+        }
+
         .e-menu-btn .caret {
             font-size: 10px;
             opacity: .85;
@@ -1851,6 +1858,44 @@
             overflow: hidden;
         }
 
+        .e-signature-help {
+            position: absolute;
+            top: 10px;
+            left: 12px;
+            right: 12px;
+            z-index: 12;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            min-height: 34px;
+            max-width: min(860px, calc(100% - 24px));
+            width: max-content;
+            font-size: 12px;
+            color: var(--e-text2);
+            background: rgba(24, 24, 28, .94);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 10px;
+            box-shadow: 0 12px 28px rgba(0,0,0,.28);
+            visibility: hidden;
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity .12s ease, transform .12s ease;
+        }
+
+        .e-signature-help.visible {
+            visibility: visible;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .e-signature-help code {
+            font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px;
+            color: var(--e-text);
+        }
+
         .e-file-label {
             font-size: 12px;
             color: var(--e-text2);
@@ -2307,11 +2352,125 @@
             padding: 0 4px;
         }
 
+        .e-preview-kindbar {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px 0;
+            background: var(--e-surface);
+            border-bottom: 1px solid rgba(255,255,255,.05);
+        }
+
+        .e-preview-kindbar.visible {
+            display: flex;
+        }
+
+        .e-preview-kindtab {
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.04);
+            color: var(--e-muted);
+            border-radius: 8px 8px 0 0;
+            padding: 7px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .e-preview-kindtab.active {
+            background: rgba(34, 197, 94, .08);
+            color: var(--e-text);
+            border-color: rgba(34, 197, 94, .24);
+        }
+
+        .e-preview-spacer {
+            flex: 1 1 auto;
+        }
+
+        .e-preview-theme {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding-bottom: 1px;
+        }
+
+        .e-preview-sync {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding-bottom: 1px;
+            margin-right: 8px;
+        }
+
+        .e-preview-theme-btn {
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.04);
+            color: var(--e-muted);
+            border-radius: 8px;
+            padding: 6px 9px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .e-preview-theme-btn.active {
+            color: var(--e-text);
+            background: rgba(59,130,246,.10);
+            border-color: rgba(59,130,246,.28);
+        }
+
+        .e-preview-sync-btn {
+            border: 1px solid rgba(255,255,255,.08);
+            background: rgba(255,255,255,.04);
+            color: var(--e-muted);
+            border-radius: 8px;
+            padding: 6px 9px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .e-preview-sync-btn.active {
+            color: var(--e-text);
+            background: rgba(34,197,94,.10);
+            border-color: rgba(34,197,94,.28);
+        }
+
+        .e-preview-sync-btn svg {
+            width: 12px;
+            height: 12px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
         .e-pdf-wrap {
             flex: 1;
             min-height: 0;
             overflow: hidden;
             position: relative;
+        }
+
+        .e-typst-preview-wrap {
+            position: absolute;
+            inset: 0;
+            display: none;
+            background: #232323;
+        }
+
+        .e-typst-preview-wrap.visible {
+            display: block;
+        }
+
+        .e-typst-preview-frame {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: #232323;
         }
 
         #pdf-canvas-container {
@@ -2525,6 +2684,126 @@
             font-size: 13px;
             color: var(--e-text);
             margin-bottom: 4px;
+        }
+
+        /* ── Semantic tokens ────────────────────────────────── */
+        .cm-st-keyword    { color: #569cd6; }
+        .cm-st-function   { color: #dcdcaa; }
+        .cm-st-method     { color: #dcdcaa; }
+        .cm-st-macro      { color: #dcdcaa; }
+        .cm-st-variable   { color: #9cdcfe; }
+        .cm-st-parameter  { color: #9cdcfe; }
+        .cm-st-property   { color: #9cdcfe; }
+        .cm-st-type       { color: #4ec9b0; }
+        .cm-st-class      { color: #4ec9b0; }
+        .cm-st-struct     { color: #4ec9b0; }
+        .cm-st-enum       { color: #4ec9b0; }
+        .cm-st-interface  { color: #4ec9b0; }
+        .cm-st-typeParameter { color: #4ec9b0; }
+        .cm-st-enumMember { color: #4fc1ff; }
+        .cm-st-constant   { color: #4fc1ff; }
+        .cm-st-string     { color: #ce9178; }
+        .cm-st-number     { color: #b5cea8; }
+        .cm-st-comment    { color: #6a9955; font-style: italic; }
+        .cm-st-namespace  { color: #c586c0; }
+        .cm-st-modifier   { color: #569cd6; }
+        .cm-st-operator   { color: #d4d4d4; }
+        .cm-st-decorator  { color: #dcdcaa; }
+        .cm-st-event      { color: #ff9900; }
+
+        /* ── LSP hover tooltip ──────────────────────────────── */
+        .cm-lsp-hover {
+            padding: 14px 16px;
+            max-width: min(760px, 80vw);
+            max-height: min(72vh, 760px);
+            overflow: auto;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--e-text);
+        }
+
+        .cm-lsp-hover p,
+        .cm-lsp-hover pre,
+        .cm-lsp-hover h1,
+        .cm-lsp-hover h2,
+        .cm-lsp-hover h3,
+        .cm-lsp-hover h4,
+        .cm-lsp-hover h5,
+        .cm-lsp-hover h6 {
+            margin: 0 0 12px;
+        }
+
+        .cm-lsp-hover p:last-child,
+        .cm-lsp-hover pre:last-child {
+            margin-bottom: 0;
+        }
+
+        .cm-lsp-hover h1,
+        .cm-lsp-hover h2,
+        .cm-lsp-hover h3,
+        .cm-lsp-hover h4,
+        .cm-lsp-hover h5,
+        .cm-lsp-hover h6 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #f3f4f6;
+        }
+
+        .cm-lsp-hover hr {
+            border: 0;
+            border-top: 1px solid rgba(255,255,255,.08);
+            margin: 12px 0;
+        }
+
+        .cm-lsp-hover code {
+            font-family: "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            background: rgba(255,255,255,.06);
+            border: 1px solid rgba(255,255,255,.08);
+        }
+
+        .cm-lsp-hover pre {
+            background: #1b1b1d;
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 8px;
+            padding: 12px 14px;
+            overflow: auto;
+        }
+
+        .cm-lsp-hover pre code {
+            display: block;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            white-space: pre-wrap;
+        }
+
+        .cm-lsp-hover a {
+            color: #7cc0ff;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        /* ── Tinymist status bar chip ───────────────────────── */
+        .e-sb-tinymist { opacity: .7; transition: opacity .15s; }
+        .e-sb-tinymist:hover { opacity: 1; }
+        .e-sb-tinymist[data-status="connected"]    { color: #4ec9b0; opacity: 1; }
+        .e-sb-tinymist[data-status="connecting"]   { color: #fbbf24; }
+        .e-sb-tinymist[data-status="error"]        { color: #f87171; }
+        .e-sb-tinymist[data-status="disconnected"] { color: var(--e-muted); }
+
+        /* ── References items ───────────────────────────────── */
+        .e-ref-item .e-diag-file {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: "JetBrains Mono", monospace;
+            font-size: 12px;
         }
 
         .e-modal-form {
@@ -4097,6 +4376,46 @@
                     <span id="writing-assistant-badge" class="e-wa-badge off">Асистент вимкнено</span>
                     <span class="status-chip {{ project.last_status }}" id="status">{{ project.last_status }}</span>
                 </div>
+                <div class="e-menu-strip">
+                    {% if not session_review %}
+                    <div class="e-menu-wrap">
+                        <button id="file-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-haspopup="true">Файл <span class="caret">▾</span></button>
+                        <div id="file-menu" class="e-menu" role="menu">
+                            <button id="menu-file-new-file" class="e-menu-item" type="button" role="menuitem">Новий файл</button>
+                            <button id="menu-file-new-folder" class="e-menu-item" type="button" role="menuitem">Нова папка</button>
+                            <div class="e-menu-separator"></div>
+                            <button id="menu-file-save" class="e-menu-item" type="button" role="menuitem">Зберегти</button>
+                            <button id="menu-file-close-tab" class="e-menu-item" type="button" role="menuitem">Закрити вкладку</button>
+                        </div>
+                    </div>
+                    <div class="e-menu-wrap">
+                        <button id="edit-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-haspopup="true">Редагувати <span class="caret">▾</span></button>
+                        <div id="edit-menu" class="e-menu" role="menu">
+                            <button id="menu-edit-undo" class="e-menu-item" type="button" role="menuitem">Скасувати дію</button>
+                            <button id="menu-edit-redo" class="e-menu-item" type="button" role="menuitem">Повторити</button>
+                            <div class="e-menu-separator"></div>
+                            <button id="menu-edit-wrap" class="e-menu-item" type="button" role="menuitem">Перемкнути перенос рядків</button>
+                            <button id="menu-edit-command-palette" class="e-menu-item" type="button" role="menuitem">Командна палітра</button>
+                        </div>
+                    </div>
+                    {% if project.markup_type == "typst" %}
+                    <div class="e-menu-wrap">
+                        <button id="typst-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-haspopup="true">Typst <span class="caret">▾</span></button>
+                        <div id="typst-menu" class="e-menu" role="menu">
+                            <button id="menu-typst-document-symbols" class="e-menu-item" type="button" role="menuitem">Символи документа</button>
+                            <button id="menu-typst-workspace-symbols" class="e-menu-item" type="button" role="menuitem">Символи проєкту</button>
+                            <button id="menu-typst-rename" class="e-menu-item" type="button" role="menuitem">Перейменувати символ</button>
+                            <div class="e-menu-separator"></div>
+                            <button id="menu-typst-format" class="e-menu-item" type="button" role="menuitem">Форматувати документ</button>
+                            <button id="menu-typst-find-refs" class="e-menu-item" type="button" role="menuitem">Знайти посилання</button>
+                            <div class="e-menu-separator"></div>
+                            <button id="menu-typst-compile" class="e-menu-item" type="button" role="menuitem">Перекомпілювати</button>
+                            <button id="menu-typst-restart" class="e-menu-item" type="button" role="menuitem">Перезапустити Tinymist</button>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                </div>
                 {% if not session_review %}
                     <div class="e-menu-wrap">
                         <button id="project-menu-btn" class="e-btn ghost e-menu-btn" type="button" aria-expanded="false"
@@ -4306,6 +4625,7 @@
                     <span id="save-hint" class="e-save-hint">Автозбереження</span>
                 </div>
                 <div class="e-editor-wrap" id="editor-wrap">
+                    <div class="e-signature-help" id="signature-help"></div>
                     <div id="cm-editor"></div>
                     <div class="e-drop-overlay">Перетягніть файли сюди</div>
                     <div class="e-readonly-overlay" id="readonly-overlay">
@@ -4343,6 +4663,16 @@
                             </svg>
                             ЛОГ
                         </button>
+                        {% if project.markup_type == "typst" %}
+                        <button class="e-bp-tab" id="tab-refs-btn" type="button">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                                 stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="6" cy="6" r="3.5"/>
+                                <line x1="8.5" y1="8.5" x2="13" y2="13"/>
+                            </svg>
+                            ПОСИЛАННЯ
+                        </button>
+                        {% endif %}
                         <div class="e-bp-spacer"></div>
                         <button class="e-bp-collapse" id="bottom-collapse-btn" type="button" title="Згорнути панель"
                                 aria-label="Згорнути панель">
@@ -4370,6 +4700,13 @@
                     <div id="log-panel-body" class="e-bp-body">
                         <pre id="log"></pre>
                     </div>
+                    {% if project.markup_type == "typst" %}
+                    <div id="refs-panel" class="e-bp-body">
+                        <div class="e-diag-list" id="refs-list">
+                            <div class="e-empty-card"><strong>Посилання</strong>Натисніть Ctrl/Cmd + клік на символі або виконайте «Find references» з меню чи командної панелі.</div>
+                        </div>
+                    </div>
+                    {% endif %}
                 </div>
                 <div class="e-bottom-opener" id="bottom-opener">
                     <button class="e-bottom-open-btn" type="button" data-open-bottom="problems" title="Відкрити проблеми">
@@ -4439,7 +4776,7 @@
                     </div>
                 {% endif %}
                 <div class="e-pdf-bar">
-                    <span class="e-pdf-label">Перегляд PDF</span>
+                    <span class="e-pdf-label">{% if project.markup_type == "typst" %}Web Preview{% else %}Перегляд PDF{% endif %}</span>
                     <div class="e-pdf-actions">
                         <span id="pdf-page-info" class="e-pdf-page-info"></span>
                         <button id="refresh-pdf" class="e-icon-btn" type="button" title="Оновити PDF">
@@ -4460,8 +4797,37 @@
                         </a>
                     </div>
                 </div>
+                <div class="e-preview-kindbar" id="preview-kindbar">
+                    <button class="e-preview-kindtab active" id="preview-kind-web" type="button">Web Preview</button>
+                    {% if project.markup_type != "typst" %}
+                    <button class="e-preview-kindtab" id="preview-kind-pdf" type="button">PDF</button>
+                    {% endif %}
+                    <span class="e-preview-spacer"></span>
+                    <div class="e-preview-sync" aria-label="Синхронізація прев'ю">
+                        <button class="e-preview-sync-btn" id="preview-sync-follow" type="button" title="Автоматично вести превʼю за курсором у редакторі">
+                            <svg viewBox="0 0 16 16"><path d="M3 8h10"/><path d="M9.5 4.5 13 8l-3.5 3.5"/></svg>
+                            <span>Follow</span>
+                        </button>
+                        <button class="e-preview-sync-btn" id="preview-sync-click" type="button" title="Клік у превʼю переносить курсор у код">
+                            <svg viewBox="0 0 16 16"><path d="m4 3 6 5-3 1 1 4-2 .5-1-4-2 2z"/></svg>
+                            <span>Click→Code</span>
+                        </button>
+                        <button class="e-preview-sync-btn" id="preview-sync-reveal" type="button" title="Показати поточну позицію з коду в превʼю">
+                            <svg viewBox="0 0 16 16"><path d="M2 8s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4Z"/><circle cx="8" cy="8" r="1.8"/></svg>
+                            <span>Reveal</span>
+                        </button>
+                    </div>
+                    <div class="e-preview-theme" aria-label="Тема прев'ю">
+                        <button class="e-preview-theme-btn" id="preview-theme-auto" type="button">Auto</button>
+                        <button class="e-preview-theme-btn" id="preview-theme-light" type="button">Light</button>
+                        <button class="e-preview-theme-btn" id="preview-theme-dark" type="button">Dark</button>
+                    </div>
+                </div>
                 <div class="e-pdf-wrap">
                     <div id="pdf-canvas-container"></div>
+                    <div id="typst-preview-wrap" class="e-typst-preview-wrap">
+                        <iframe id="typst-preview-frame" class="e-typst-preview-frame" title="Typst web preview"></iframe>
+                    </div>
                     <div id="pdf-empty" class="e-pdf-empty">
                         <svg viewBox="0 0 24 24">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -4584,6 +4950,10 @@
       </span>
             </div>
             <div class="e-sb-right">
+                {% if project.markup_type == "typst" %}
+                <span class="e-sb-item e-sb-tinymist" id="sb-tinymist" data-status="disconnected" title="Tinymist LSP — натисніть для перезапуску" style="cursor:pointer">Tinymist</span>
+                <span class="e-sb-sep">│</span>
+                {% endif %}
                 <button class="e-sb-item toggle-btn active" id="sb-wrap-toggle" type="button" title="Вимкнути перенос рядків" aria-pressed="true">
                     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M2 4.5h8.5a2.5 2.5 0 1 1 0 5H8"/>

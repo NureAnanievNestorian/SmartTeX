@@ -120,17 +120,22 @@ export function switchBottomTab(tab) {
   if (!bottomPanel) return;
   bottomPanel.classList.add("open");
   bottomPanel.classList.remove("collapsed");
-  const diagPanel = document.getElementById("diag-panel");
+  const diagPanel    = document.getElementById("diag-panel");
+  const refsPanel    = document.getElementById("refs-panel");
+  const refsTabBtn   = document.getElementById("tab-refs-btn");
+  const allBodies    = [logPanelBody, diagPanel, refsPanel];
+  const allTabs      = [logToggleBtn, tabProblemsBtn, refsTabBtn];
+  allBodies.forEach(el => el?.classList.remove("active"));
+  allTabs.forEach(el => el?.classList.remove("active"));
   if (tab === "log") {
     logToggleBtn?.classList.add("active");
-    tabProblemsBtn?.classList.remove("active");
     logPanelBody?.classList.add("active");
-    diagPanel?.classList.remove("active");
+  } else if (tab === "refs") {
+    refsTabBtn?.classList.add("active");
+    refsPanel?.classList.add("active");
   } else {
     tabProblemsBtn?.classList.add("active");
-    logToggleBtn?.classList.remove("active");
     diagPanel?.classList.add("active");
-    logPanelBody?.classList.remove("active");
   }
 }
 
@@ -144,14 +149,16 @@ export function parseDiagnostics(logText) {
   const items = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const pathMatch  = line.match(/([A-Za-z0-9_./-]+\.(?:typ|tex|bib|sty|cls)):(\d+)(?::(\d+))?/);
-    const arrowMatch = line.match(/-->\s+([A-Za-z0-9_./-]+\.(?:typ|tex|bib|sty|cls)):(\d+):(\d+)/);
-    const msgMatch   = line.match(/(?:error|warning)[^:]*:\s*(.+)/i);
-    if (pathMatch) {
-      items.push({ file: pathMatch[1], line: Number(pathMatch[2]), column: Number(pathMatch[3] || 1), message: (msgMatch && msgMatch[1]) || line.trim() });
-    } else if (arrowMatch) {
+    const arrowMatch = line.match(/(?:-->|┌─)\s+([A-Za-z0-9_./-]+\.(?:typ|tex|bib|sty|cls)):(\d+):(\d+)/);
+    if (arrowMatch) {
       const prev = lines[Math.max(0, i - 1)].trim();
       items.push({ file: arrowMatch[1], line: Number(arrowMatch[2]), column: Number(arrowMatch[3]), message: prev || line.trim() });
+      continue;
+    }
+    const pathMatch = line.match(/([A-Za-z0-9_./-]+\.(?:typ|tex|bib|sty|cls)):(\d+)(?::(\d+))?/);
+    const msgMatch  = line.match(/(?:error|warning)[^:]*:\s*(.+)/i);
+    if (pathMatch) {
+      items.push({ file: pathMatch[1], line: Number(pathMatch[2]), column: Number(pathMatch[3] || 1), message: (msgMatch && msgMatch[1]) || line.trim() });
     }
   }
   return items;
