@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import socket
 import time
 from collections import deque
@@ -20,9 +19,6 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 SESSION_IDLE_TIMEOUT: int = 600  # seconds
-DEFAULT_PREVIEW_DATA_PLANE_PORT: int = 23625
-DEFAULT_PREVIEW_CONTROL_PLANE_PORT: int = 23626
-_CONTROL_HOST_RE = re.compile(r"Control panel server listening on:\s+[^:]+:(?P<port>\d+)")
 
 
 def _tinymist_bin() -> str:
@@ -62,13 +58,16 @@ class TinymistPreviewSession:
         self.project_root = project_root
         self.main_file = main_file
         self.invert_colors = _normalize_invert_colors(invert_colors)
-        self.port = _reserve_local_port()
-        self.data_plane_port = DEFAULT_PREVIEW_DATA_PLANE_PORT
-        self.control_plane_port = DEFAULT_PREVIEW_CONTROL_PLANE_PORT
+        self.port = _reserve_local_port()          # data plane: HTTP static files + WS data
+        self.control_plane_port = _reserve_local_port()  # WS control/sync
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task | None = None
         self._last_activity = time.monotonic()
         self._stderr_lines: deque[str] = deque(maxlen=40)
+
+    @property
+    def data_plane_port(self) -> int:
+        return self.port
 
     async def start(self) -> None:
         if self._proc and self._proc.returncode is None:
@@ -79,7 +78,8 @@ class TinymistPreviewSession:
             str(self.main_file),
             f"--root={self.project_root}",
             "--partial-rendering=true",
-            f"--host=127.0.0.1:{self.port}",
+            f"--data-plane-host=127.0.0.1:{self.port}",
+            f"--control-plane-host=127.0.0.1:{self.control_plane_port}",
             f"--invert-colors={self.invert_colors}",
             "--no-open",
         ]
@@ -135,6 +135,7 @@ class TinymistPreviewSession:
     async def restart(self) -> None:
         await self.stop()
         self.port = _reserve_local_port()
+        self.control_plane_port = _reserve_local_port()
         await self.start()
 
     async def _stderr_reader(self) -> None:
@@ -147,12 +148,6 @@ class TinymistPreviewSession:
                     return
                 text = line.decode(errors="replace").rstrip()
                 self._stderr_lines.append(text)
-                match = _CONTROL_HOST_RE.search(text)
-                if match:
-                    try:
-                        self.control_plane_port = int(match.group("port"))
-                    except (TypeError, ValueError):
-                        pass
                 logger.info("tinymist preview stderr: %s", text)
             except asyncio.CancelledError:
                 raise
