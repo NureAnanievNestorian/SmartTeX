@@ -63,6 +63,13 @@ class TinymistSession:
         self._last_activity = time.monotonic()
         self.semantic_tokens_legend: dict = {"tokenTypes": [], "tokenModifiers": []}
 
+        # API (MCP) request support — separate ID space to avoid conflicts with browser requests
+        self._api_next_id = 10_000_000
+        self._api_pending: dict[int, asyncio.Future] = {}
+        self._diag_queues: dict[str, list[asyncio.Queue]] = {}
+        self._open_files: set[str] = set()  # URIs opened via api_open_file
+        self._open_file_versions: dict[str, int] = {}
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
@@ -198,7 +205,9 @@ class TinymistSession:
                 "error" in msg,
             )
         msg_id = msg.get("id")
-        # During handshake only: route responses to _pending futures
+        method = msg.get("method")
+
+        # During handshake: route responses to _pending futures
         if not self.initialized and msg_id is not None and msg_id in self._pending:
             fut = self._pending.pop(msg_id)
             if not fut.done():
@@ -206,8 +215,26 @@ class TinymistSession:
                     fut.set_exception(RuntimeError(str(msg["error"])))
                 else:
                     fut.set_result(msg.get("result"))
-        else:
-            self.outbox.put_nowait(msg)
+            return
+
+        # API requests: route to api_pending (never go to outbox)
+        if msg_id is not None and msg_id in self._api_pending:
+            fut = self._api_pending.pop(msg_id)
+            if not fut.done():
+                if "error" in msg:
+                    fut.set_exception(RuntimeError(str(msg["error"])))
+                else:
+                    fut.set_result(msg.get("result"))
+            return
+
+        # Diagnostic notifications: push to waiting queues
+        if method == "textDocument/publishDiagnostics":
+            params = msg.get("params", {})
+            uri = params.get("uri", "")
+            for q in list(self._diag_queues.get(uri, [])):
+                q.put_nowait(params)
+
+        self.outbox.put_nowait(msg)
 
     # ── LSP initialize handshake ─────────────────────────────────────────────
 
@@ -305,10 +332,63 @@ class TinymistSession:
         self.touch()
         await self._write_msg(message)
 
+    async def api_request(self, method: str, params: Any, timeout: float = 10.0) -> Any:
+        """Send an LSP request and wait for the response (used by API/MCP endpoints)."""
+        req_id = self._api_next_id
+        self._api_next_id += 1
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._api_pending[req_id] = fut
+        await self._write_msg({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
+        self.touch()
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            self._api_pending.pop(req_id, None)
+            raise
+
+    async def api_notify(self, method: str, params: Any) -> None:
+        """Send an LSP notification (no response expected)."""
+        await self._write_msg({"jsonrpc": "2.0", "method": method, "params": params})
+        self.touch()
+
+    async def api_open_file(self, uri: str, text: str, language_id: str = "typst") -> None:
+        """Open or update a file in the LSP session for API use."""
+        if uri in self._open_files:
+            version = self._open_file_versions[uri] + 1
+            self._open_file_versions[uri] = version
+            await self.api_notify("textDocument/didChange", {
+                "textDocument": {"uri": uri, "version": version},
+                "contentChanges": [{"text": text}],
+            })
+        else:
+            self._open_files.add(uri)
+            self._open_file_versions[uri] = 1
+            await self.api_notify("textDocument/didOpen", {
+                "textDocument": {"uri": uri, "languageId": language_id, "version": 1, "text": text},
+            })
+
+    async def collect_diagnostics(self, uri: str, timeout: float = 3.0) -> list:
+        """Wait for publishDiagnostics notification for a URI and return the diagnostics list."""
+        q: asyncio.Queue = asyncio.Queue()
+        self._diag_queues.setdefault(uri, []).append(q)
+        try:
+            params = await asyncio.wait_for(q.get(), timeout=timeout)
+            return params.get("diagnostics", [])
+        except asyncio.TimeoutError:
+            return []
+        finally:
+            queues = self._diag_queues.get(uri, [])
+            try:
+                queues.remove(q)
+            except ValueError:
+                pass
+
 
 # ── Session registry ─────────────────────────────────────────────────────────
 
 _sessions: dict[tuple[int, int], TinymistSession] = {}
+_api_sessions: dict[tuple[int, int], TinymistSession] = {}
 _registry_lock: asyncio.Lock | None = None
 
 
@@ -346,6 +426,34 @@ async def get_or_create_session(project_id: int, user_id: int) -> TinymistSessio
         return session
 
 
+async def get_or_create_api_session(project_id: int, user_id: int) -> TinymistSession:
+    """Return a persistent tinymist session for API/MCP use, isolated from browser sessions."""
+    key = (project_id, user_id)
+    async with _lock():
+        session = _api_sessions.get(key)
+        if session and session.is_alive():
+            session.touch()
+            return session
+
+        from asgiref.sync import sync_to_async
+
+        from projects.models import Project
+        from projects.services import main_source_filename, project_dir
+
+        project = await sync_to_async(
+            lambda: Project.objects.filter(id=project_id, owner_id=user_id).first()
+        )()
+        if project is None:
+            raise PermissionError(f"project {project_id} not accessible for user {user_id}")
+
+        root = project_dir(project)
+        main = root / main_source_filename(project)
+        session = TinymistSession(project_id, user_id, root, main)
+        await session.start()
+        _api_sessions[key] = session
+        return session
+
+
 async def close_session(project_id: int, user_id: int) -> None:
     key = (project_id, user_id)
     async with _lock():
@@ -358,6 +466,8 @@ async def close_project_sessions(project_id: int) -> None:
     async with _lock():
         keys = [k for k in list(_sessions) if k[0] == project_id]
         sessions = [_sessions.pop(k) for k in keys]
+        api_keys = [k for k in list(_api_sessions) if k[0] == project_id]
+        sessions += [_api_sessions.pop(k) for k in api_keys]
     for session in sessions:
         await session.stop()
 
@@ -367,6 +477,8 @@ async def reap_idle_sessions() -> None:
     async with _lock():
         expired = [k for k, s in list(_sessions.items()) if s.idle_seconds() > SESSION_IDLE_TIMEOUT]
         sessions = [_sessions.pop(k) for k in expired]
+        api_expired = [k for k, s in list(_api_sessions.items()) if s.idle_seconds() > SESSION_IDLE_TIMEOUT]
+        sessions += [_api_sessions.pop(k) for k in api_expired]
     for session in sessions:
         logger.info(
             "tinymist: reaping idle session project=%s user=%s",

@@ -1978,6 +1978,292 @@ def api_project_typst_preview_restart(request: HttpRequest, project_id: int) -> 
     return JsonResponse({"ok": True, "port": session.port})
 
 
+def _typst_only(project: Project) -> JsonResponse | None:
+    if project.markup_type != MarkupType.TYPST:
+        return JsonResponse({"detail": "This endpoint is only available for Typst projects"}, status=400)
+    return None
+
+
+def _lsp_position(line: int, character: int) -> dict:
+    return {"line": line, "character": character}
+
+
+def _lsp_text_document(uri: str) -> dict:
+    return {"uri": uri}
+
+
+def _severity_label(n: int) -> str:
+    return {1: "error", 2: "warning", 3: "information", 4: "hint"}.get(n, "unknown")
+
+
+def _normalize_lsp_location(loc: dict, project_root: str) -> dict:
+    uri = loc.get("uri", "")
+    if uri.startswith(project_root):
+        uri = uri[len(project_root):].lstrip("/")
+    r = loc.get("range", {})
+    start = r.get("start", {})
+    return {"file": uri, "line": start.get("line", 0) + 1, "column": start.get("character", 0) + 1}
+
+
+def _apply_text_edits(content: str, edits: list[dict]) -> str:
+    """Apply LSP TextEdit list to content (edits must be in reverse order by range start)."""
+    lines = content.split("\n")
+    for edit in sorted(edits, key=lambda e: (e["range"]["start"]["line"], e["range"]["start"]["character"]), reverse=True):
+        r = edit["range"]
+        new_text = edit["newText"]
+        sl, sc = r["start"]["line"], r["start"]["character"]
+        el, ec = r["end"]["line"], r["end"]["character"]
+        start_line = lines[sl] if sl < len(lines) else ""
+        end_line = lines[el] if el < len(lines) else ""
+        prefix = start_line[:sc]
+        suffix = end_line[ec:]
+        replacement = (prefix + new_text + suffix).split("\n")
+        lines[sl:el + 1] = replacement
+    return "\n".join(lines)
+
+
+@csrf_exempt
+@require_GET
+def api_project_tinymist_diagnostics(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Return LSP diagnostics for a Typst file via tinymist (no compilation needed)."""
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if err := _typst_only(project):
+        return err
+
+    file_name = request.GET.get("file_name") or main_source_filename(project)
+    from .tinymist_service import get_or_create_api_session
+    from .services import project_dir
+
+    root = project_dir(project)
+    file_path = root / file_name
+    if not file_path.exists():
+        return JsonResponse({"detail": f"File not found: {file_name}"}, status=404)
+
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    uri = file_path.as_uri()
+
+    async def _get_diags():
+        session = await get_or_create_api_session(project.id, user.id)
+        await session.api_open_file(uri, text)
+        return await session.collect_diagnostics(uri, timeout=4.0)
+
+    try:
+        raw = async_to_sync(_get_diags)()
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist LSP error: {exc}"}, status=502)
+
+    project_root_uri = root.as_uri() + "/"
+    diagnostics = [
+        {
+            "file": file_name,
+            "line": d["range"]["start"]["line"] + 1,
+            "column": d["range"]["start"]["character"] + 1,
+            "end_line": d["range"]["end"]["line"] + 1,
+            "end_column": d["range"]["end"]["character"] + 1,
+            "severity": _severity_label(d.get("severity", 1)),
+            "message": d.get("message", ""),
+            "source": d.get("source", "tinymist"),
+        }
+        for d in raw
+    ]
+    return JsonResponse({"file": file_name, "diagnostics": diagnostics})
+
+
+@csrf_exempt
+@require_GET
+def api_project_tinymist_symbols(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Return document symbol outline for a Typst file via tinymist LSP."""
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if err := _typst_only(project):
+        return err
+
+    file_name = request.GET.get("file_name") or main_source_filename(project)
+    from .tinymist_service import get_or_create_api_session
+    from .services import project_dir
+
+    root = project_dir(project)
+    file_path = root / file_name
+    if not file_path.exists():
+        return JsonResponse({"detail": f"File not found: {file_name}"}, status=404)
+
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    uri = file_path.as_uri()
+
+    async def _get_symbols():
+        session = await get_or_create_api_session(project.id, user.id)
+        await session.api_open_file(uri, text)
+        return await session.api_request("textDocument/documentSymbol", {
+            "textDocument": _lsp_text_document(uri),
+        })
+
+    try:
+        result = async_to_sync(_get_symbols)()
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist LSP error: {exc}"}, status=502)
+
+    def _flatten(syms: list, depth: int = 0) -> list:
+        out = []
+        for s in (syms or []):
+            out.append({
+                "name": s.get("name", ""),
+                "kind": s.get("kind"),
+                "line": s.get("range", {}).get("start", {}).get("line", 0) + 1,
+                "depth": depth,
+            })
+            out.extend(_flatten(s.get("children", []), depth + 1))
+        return out
+
+    return JsonResponse({"file": file_name, "symbols": _flatten(result or [])})
+
+
+@csrf_exempt
+@require_GET
+def api_project_tinymist_format(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Return formatted content for a Typst file via tinymist LSP."""
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if err := _typst_only(project):
+        return err
+
+    file_name = request.GET.get("file_name") or main_source_filename(project)
+    from .tinymist_service import get_or_create_api_session
+    from .services import project_dir
+
+    root = project_dir(project)
+    file_path = root / file_name
+    if not file_path.exists():
+        return JsonResponse({"detail": f"File not found: {file_name}"}, status=404)
+
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    uri = file_path.as_uri()
+
+    async def _format():
+        session = await get_or_create_api_session(project.id, user.id)
+        await session.api_open_file(uri, text)
+        return await session.api_request("textDocument/formatting", {
+            "textDocument": _lsp_text_document(uri),
+            "options": {"tabSize": 2, "insertSpaces": True},
+        })
+
+    try:
+        edits = async_to_sync(_format)()
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist LSP error: {exc}"}, status=502)
+
+    if not edits:
+        return JsonResponse({"file": file_name, "formatted": text, "changed": False})
+
+    formatted = _apply_text_edits(text, edits)
+    return JsonResponse({"file": file_name, "formatted": formatted, "changed": formatted != text})
+
+
+@csrf_exempt
+@require_GET
+def api_project_tinymist_definition(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Return the definition location for a symbol at a given position via tinymist LSP."""
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if err := _typst_only(project):
+        return err
+
+    file_name = request.GET.get("file_name") or main_source_filename(project)
+    try:
+        line = int(request.GET.get("line", "1")) - 1
+        column = int(request.GET.get("column", "1")) - 1
+    except (TypeError, ValueError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    from .tinymist_service import get_or_create_api_session
+    from .services import project_dir
+
+    root = project_dir(project)
+    file_path = root / file_name
+    if not file_path.exists():
+        return JsonResponse({"detail": f"File not found: {file_name}"}, status=404)
+
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    uri = file_path.as_uri()
+
+    async def _definition():
+        session = await get_or_create_api_session(project.id, user.id)
+        await session.api_open_file(uri, text)
+        return await session.api_request("textDocument/definition", {
+            "textDocument": _lsp_text_document(uri),
+            "position": _lsp_position(line, column),
+        })
+
+    try:
+        result = async_to_sync(_definition)()
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist LSP error: {exc}"}, status=502)
+
+    if not result:
+        return JsonResponse({"file": file_name, "line": line + 1, "column": column + 1, "definition": None})
+
+    locations = result if isinstance(result, list) else [result]
+    project_root_uri = root.as_uri() + "/"
+    normalized = [_normalize_lsp_location(loc, project_root_uri) for loc in locations]
+    return JsonResponse({"definition": normalized[0] if len(normalized) == 1 else normalized})
+
+
+@csrf_exempt
+@require_GET
+def api_project_tinymist_references(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Return all references to a symbol at a given position via tinymist LSP."""
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if err := _typst_only(project):
+        return err
+
+    file_name = request.GET.get("file_name") or main_source_filename(project)
+    try:
+        line = int(request.GET.get("line", "1")) - 1
+        column = int(request.GET.get("column", "1")) - 1
+    except (TypeError, ValueError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    from .tinymist_service import get_or_create_api_session
+    from .services import project_dir
+
+    root = project_dir(project)
+    file_path = root / file_name
+    if not file_path.exists():
+        return JsonResponse({"detail": f"File not found: {file_name}"}, status=404)
+
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    uri = file_path.as_uri()
+
+    async def _references():
+        session = await get_or_create_api_session(project.id, user.id)
+        await session.api_open_file(uri, text)
+        return await session.api_request("textDocument/references", {
+            "textDocument": _lsp_text_document(uri),
+            "position": _lsp_position(line, column),
+            "context": {"includeDeclaration": True},
+        })
+
+    try:
+        result = async_to_sync(_references)()
+    except Exception as exc:
+        return JsonResponse({"detail": f"Tinymist LSP error: {exc}"}, status=502)
+
+    project_root_uri = root.as_uri() + "/"
+    references = [_normalize_lsp_location(loc, project_root_uri) for loc in (result or [])]
+    return JsonResponse({"references": references, "count": len(references)})
+
+
 @login_required
 @require_http_methods(["POST"])
 def create_project_from_dashboard(request: HttpRequest):

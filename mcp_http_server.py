@@ -2605,6 +2605,84 @@ def synctex_page_to_line(project_id: int, page: int, x: float, y: float) -> dict
 
 
 @mcp.tool
+def get_typst_diagnostics(project_id: int, file_name: str | None = None) -> dict[str, Any]:
+    """Return LSP diagnostics (errors, warnings) for a Typst file without compiling.
+
+    Uses a live tinymist LSP session — much faster than compile_project for checking
+    syntax errors. Returns a list of {file, line, column, severity, message} entries.
+    Only works for Typst projects.
+    """
+    params: dict[str, Any] = {}
+    if file_name:
+        params["file_name"] = file_name
+    return _call("GET", f"/api/projects/{project_id}/tinymist/diagnostics/?{urlencode(params)}")
+
+
+@mcp.tool
+def get_typst_document_symbols(project_id: int, file_name: str | None = None) -> dict[str, Any]:
+    """Return the symbol outline (headings, functions, variables) for a Typst file.
+
+    Uses tinymist LSP to extract the live document structure — more accurate than
+    parsing the source manually. Returns a flat list of {name, kind, line, depth}
+    entries that represent the document hierarchy. Only works for Typst projects.
+    """
+    params: dict[str, Any] = {}
+    if file_name:
+        params["file_name"] = file_name
+    return _call("GET", f"/api/projects/{project_id}/tinymist/symbols/?{urlencode(params)}")
+
+
+@mcp.tool
+def format_typst_file(project_id: int, file_name: str | None = None) -> dict[str, Any]:
+    """Return the tinymist-formatted content for a Typst file.
+
+    Uses tinymist LSP formatting. Returns {file, formatted, changed} — does NOT
+    automatically save. To apply: pass the returned `formatted` to update_project_file.
+    Only works for Typst projects.
+    """
+    params: dict[str, Any] = {}
+    if file_name:
+        params["file_name"] = file_name
+    return _call("GET", f"/api/projects/{project_id}/tinymist/format/?{urlencode(params)}")
+
+
+@mcp.tool
+def typst_go_to_definition(
+        project_id: int,
+        line: int,
+        column: int = 1,
+        file_name: str | None = None,
+) -> dict[str, Any]:
+    """Find the definition of the symbol at the given source position via tinymist LSP.
+
+    `line` and `column` are 1-based. Returns {definition: {file, line, column}} or
+    {definition: null} if nothing was found. Only works for Typst projects.
+    """
+    params: dict[str, Any] = {"line": int(line), "column": int(column)}
+    if file_name:
+        params["file_name"] = file_name
+    return _call("GET", f"/api/projects/{project_id}/tinymist/definition/?{urlencode(params)}")
+
+
+@mcp.tool
+def typst_find_references(
+        project_id: int,
+        line: int,
+        column: int = 1,
+        file_name: str | None = None,
+) -> dict[str, Any]:
+    """Find all references to the symbol at the given source position via tinymist LSP.
+
+    `line` and `column` are 1-based. Returns {references: [{file, line, column}], count}.
+    Includes cross-file references. Only works for Typst projects.
+    """
+    params: dict[str, Any] = {"line": int(line), "column": int(column)}
+    if file_name:
+        params["file_name"] = file_name
+    return _call("GET", f"/api/projects/{project_id}/tinymist/references/?{urlencode(params)}")
+
+
+@mcp.tool
 def list_project_versions(
         project_id: int,
         compact: bool = True,
