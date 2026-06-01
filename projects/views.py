@@ -29,6 +29,7 @@ from .models import GitHubInstallation, Project, ProjectVersion
 from .services import (
     ALLOWED_UPLOAD_EXTENSIONS,
     build_project_zip,
+    build_typst_citation_index,
     build_version_diff,
     cancel_github_sync,
     schedule_github_sync,
@@ -2262,6 +2263,29 @@ def api_project_tinymist_references(request: HttpRequest, project_id: int) -> Js
     project_root_uri = root.as_uri() + "/"
     references = [_normalize_lsp_location(loc, project_root_uri) for loc in (result or [])]
     return JsonResponse({"references": references, "count": len(references)})
+
+
+@csrf_exempt
+@require_GET
+def api_project_typst_citations(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    if err := _typst_only(project):
+        return err
+
+    citation_index = build_typst_citation_index(project)
+    prefix = str(request.GET.get("prefix") or "").strip().lower()
+    entries = citation_index.get("entries") or []
+    if prefix:
+        entries = [item for item in entries if str(item.get("key") or "").lower().startswith(prefix)]
+    return JsonResponse({
+        "entries": entries,
+        "count": len(entries),
+        "source_files": citation_index.get("source_files") or [],
+        "reachable_files": citation_index.get("reachable_files") or [],
+    })
 
 
 @login_required

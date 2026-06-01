@@ -31,6 +31,8 @@ const _semanticTokensByFile = new Map();
 const _documentSymbolsByFile = new Map();
 const _documentLinksByFile = new Map();
 const _foldRangesByFile = new Map();
+let _citationIndexCache = null;
+let _citationIndexPromise = null;
 
 export function setNavigationCallback(fn) { _navCallback = fn; }
 export function setReferencesCallback(fn) { _referencesCallback = fn; }
@@ -97,6 +99,8 @@ function _resetSessionState() {
   _documentSymbolsByFile.clear();
   _documentLinksByFile.clear();
   _foldRangesByFile.clear();
+  _citationIndexCache = null;
+  _citationIndexPromise = null;
   cm.clearSemanticTokens();
 }
 
@@ -198,6 +202,7 @@ function _handleMessage(msg) {
     _registerLspProviders();
     // Re-open the currently active file
     const name = s.activeTabName || s.selectedFile?.name || "";
+    _openMainDocumentContext(name);
     if (name && cm.view) {
       const content = cm.getContent();
       _sendDidOpen(name, content);
@@ -261,6 +266,49 @@ function _fileNameFromUri(uri) {
   const root = _rootUri.endsWith("/") ? _rootUri : _rootUri + "/";
   const value = String(uri || "");
   return value.startsWith(root) ? value.slice(root.length) : value;
+}
+
+function _citationKeyAt(docText, pos) {
+  const before = String(docText || "").slice(0, pos);
+  const match = before.match(/@([A-Za-z0-9:_-]+)$/);
+  return match ? match[1] : "";
+}
+
+function _invalidateCitationIndex(filename = "") {
+  const ext = String(filename || "").split(".").pop().toLowerCase();
+  if (["typ", "bib", "yaml", "yml"].includes(ext)) {
+    _citationIndexCache = null;
+    _citationIndexPromise = null;
+  }
+}
+
+export function invalidateCitationIndex(filename = "") {
+  _invalidateCitationIndex(filename);
+}
+
+async function _loadCitationIndex() {
+  if (_citationIndexCache) return _citationIndexCache;
+  if (_citationIndexPromise) return _citationIndexPromise;
+  _citationIndexPromise = api(`/api/projects/${cfg.projectId}/typst/citations/`, { method: "GET" })
+    .then(payload => {
+      _citationIndexCache = {
+        entries: Array.isArray(payload?.entries) ? payload.entries : [],
+        sourceFiles: Array.isArray(payload?.source_files) ? payload.source_files : [],
+      };
+      return _citationIndexCache;
+    })
+    .catch(() => ({ entries: [], sourceFiles: [] }))
+    .finally(() => {
+      _citationIndexPromise = null;
+    });
+  return _citationIndexPromise;
+}
+
+async function _findCitationEntry(key) {
+  const needle = String(key || "").trim().toLowerCase();
+  if (!needle) return null;
+  const index = await _loadCitationIndex();
+  return (index.entries || []).find(item => String(item?.key || "").toLowerCase() === needle) || null;
 }
 
 function _decodeTinymistCommandTarget(target) {
@@ -393,6 +441,15 @@ function _isTyp(name) {
   return String(name || "").toLowerCase().endsWith(".typ");
 }
 
+function _openMainDocumentContext(activeFilename = "") {
+  const mainFilename = String(s.mainFileName || "");
+  if (!mainFilename || !_isTyp(mainFilename) || _status !== "connected") return;
+  if (mainFilename === activeFilename && cm.view && _activeFilename() === mainFilename) return;
+  const content = String(s.mainFileContent || "");
+  if (!content) return;
+  didOpen(mainFilename, content);
+}
+
 // ── Document synchronisation ──────────────────────────────────────────────────
 
 function _sendDidOpen(filename, content) {
@@ -408,6 +465,7 @@ function _sendDidOpen(filename, content) {
 
 export function didOpen(filename, content) {
   if (!_isTyp(filename) || _status !== "connected") return;
+  _invalidateCitationIndex(filename);
   const uri = _fileUri(filename);
   if (_openDocs.has(uri)) {
     // Already open: update content
@@ -419,6 +477,7 @@ export function didOpen(filename, content) {
 
 export function didChange(filename, content) {
   if (!_isTyp(filename) || _status !== "connected") return;
+  _invalidateCitationIndex(filename);
   const uri = _fileUri(filename);
   const version = (_openDocs.get(uri) ?? 0) + 1;
   _openDocs.set(uri, version);
@@ -438,6 +497,7 @@ export function didSave(filename) {
 
 export function didClose(filename) {
   if (!_isTyp(filename) || _status !== "connected") return;
+  _invalidateCitationIndex(filename);
   const uri = _fileUri(filename);
   if (!_openDocs.has(uri)) return;
   _openDocs.delete(uri);
@@ -763,33 +823,42 @@ function _registerLspProviders() {
     if (!_isTyp(filename) || _status !== "connected") return false;
     const doc = view.state.doc;
     const line = doc.lineAt(pos);
+    const citationKey = _citationKeyAt(doc.toString(), pos);
     try {
       const result = await requestDefinition(filename, line.number, pos - line.from + 1);
-      if (!result) return false;
-      const locs = Array.isArray(result) ? result : [result];
-      if (!locs.length) return false;
-      const loc = locs[0];
-      const locUri = String(loc.uri || "");
-      const locLine = (loc.range?.start?.line ?? 0) + 1;
-      const locChar = (loc.range?.start?.character ?? 0) + 1;
-      const currentUri = _fileUri(filename);
-      if (locUri === currentUri) {
-        cm.jumpToLine(locLine, locChar);
-        return true;
-      }
-      // Cross-file navigation
-      if (_navCallback) {
-        const root = _rootUri.endsWith("/") ? _rootUri : _rootUri + "/";
-        const targetFilename = locUri.startsWith(root) ? locUri.slice(root.length) : null;
-        if (targetFilename) {
-          await _navCallback(targetFilename, locLine, locChar);
-          return true;
+      if (result) {
+        const locs = Array.isArray(result) ? result : [result];
+        if (locs.length) {
+          const loc = locs[0];
+          const locUri = String(loc.uri || "");
+          const locLine = (loc.range?.start?.line ?? 0) + 1;
+          const locChar = (loc.range?.start?.character ?? 0) + 1;
+          const currentUri = _fileUri(filename);
+          if (locUri === currentUri) {
+            cm.jumpToLine(locLine, locChar);
+            return true;
+          }
+          if (_navCallback) {
+            const root = _rootUri.endsWith("/") ? _rootUri : _rootUri + "/";
+            const targetFilename = locUri.startsWith(root) ? locUri.slice(root.length) : null;
+            if (targetFilename) {
+              await _navCallback(targetFilename, locLine, locChar);
+              return true;
+            }
+          }
         }
       }
-      return false;
     } catch (_) {
-      return false;
+      // fall back to SmartTeX citation index below
     }
+    if (citationKey && _navCallback) {
+      const entry = await _findCitationEntry(citationKey);
+      if (entry?.file) {
+        await _navCallback(entry.file, Number(entry.line || 1), Number(entry.column || 1));
+        return true;
+      }
+    }
+    return false;
   });
 
   cm.setLspCompletionProvider(async (context, query) => {
@@ -855,8 +924,33 @@ function _registerLspProviders() {
       };
     } catch (e) {
       _debug("completion error", e);
-      return null;
     }
+    if (query?.trigger === "@") {
+      try {
+        const index = await _loadCitationIndex();
+        const needle = _normalizeCompletionNeedle(query?.typed, query?.trigger);
+        const options = (index.entries || [])
+          .filter(item => {
+            const key = String(item?.key || "");
+            return !needle || key.toLowerCase().includes(needle);
+          })
+          .map(item => ({
+            label: `@${item.key}`,
+            type: "variable",
+            detail: item.file || "citation",
+            info: item.file ? `${item.file}:${item.line || 1}` : "citation",
+            boost: 92,
+          }));
+        if (options.length) {
+          return {
+            from: replaceFrom,
+            options,
+            validFor: /^[A-Za-z0-9:_./-]*$/,
+          };
+        }
+      } catch (_) {}
+    }
+    return null;
   });
 
   cm.setLspMetaClickProvider(async (view, pos) => {
@@ -882,6 +976,29 @@ function _registerLspProviders() {
     if (link?.target && await _openTargetLink(link.target)) {
       return true;
     }
+    try {
+      const result = await requestDefinition(filename, line.number, pos - line.from + 1);
+      const locs = Array.isArray(result) ? result : (result ? [result] : []);
+      const loc = locs[0];
+      if (loc) {
+        const locUri = String(loc.uri || "");
+        const locLine = (loc.range?.start?.line ?? 0) + 1;
+        const locChar = (loc.range?.start?.character ?? 0) + 1;
+        const currentUri = _fileUri(filename);
+        if (locUri === currentUri) {
+          cm.jumpToLine(locLine, locChar);
+          return true;
+        }
+        if (_navCallback) {
+          const root = _rootUri.endsWith("/") ? _rootUri : _rootUri + "/";
+          const targetFilename = locUri.startsWith(root) ? locUri.slice(root.length) : null;
+          if (targetFilename) {
+            await _navCallback(targetFilename, locLine, locChar);
+            return true;
+          }
+        }
+      }
+    } catch (_) {}
     if (!_referencesCallback) return false;
     await _referencesCallback(filename, line.number, pos - line.from + 1);
     return true;

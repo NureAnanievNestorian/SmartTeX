@@ -28,6 +28,7 @@ from .views import (
     api_project_tinymist_format,
     api_project_tinymist_references,
     api_project_tinymist_symbols,
+    api_project_typst_citations,
     api_project_typst_preview,
     api_project_typst_preview_restart,
     api_project_section,
@@ -75,6 +76,7 @@ urlpatterns = [
     path("projects/<int:project_id>/tinymist/format/", api_project_tinymist_format),
     path("projects/<int:project_id>/tinymist/definition/", api_project_tinymist_definition),
     path("projects/<int:project_id>/tinymist/references/", api_project_tinymist_references),
+    path("projects/<int:project_id>/typst/citations/", api_project_typst_citations),
     path("projects/<int:project_id>/typst-preview/restart/", api_project_typst_preview_restart),
     re_path(r"^projects/(?P<project_id>\d+)/typst-preview/(?P<subpath>.*)$", api_project_typst_preview),
 ]

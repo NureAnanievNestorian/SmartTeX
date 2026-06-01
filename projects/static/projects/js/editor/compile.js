@@ -120,6 +120,7 @@ export async function saveCurrentFile() {
         item.name === targetName ? { ...item, size: savedSize } : item
       );
     }
+    tinymist.invalidateCitationIndex(targetName);
     saveTabState(targetName);
     const settled = s.editGeneration === saveGeneration;
     s.hasUnsavedChanges = !settled;

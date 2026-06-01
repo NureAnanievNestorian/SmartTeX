@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import socket
 import time
 from collections import deque
@@ -19,6 +20,7 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 SESSION_IDLE_TIMEOUT: int = 600  # seconds
+_TINYMIST_STDERR_LEVEL_RE = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|ERROR)\b")
 
 
 def _tinymist_bin() -> str:
@@ -49,6 +51,19 @@ def _normalize_invert_colors(value: str | None) -> str:
     if normalized in {"auto", "always", "never"}:
         return normalized
     return "auto"
+
+
+def _tinymist_stderr_level(text: str) -> int:
+    match = _TINYMIST_STDERR_LEVEL_RE.search(text)
+    if not match:
+        return logging.WARNING
+    return {
+        "TRACE": logging.DEBUG,
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.DEBUG,
+        "WARN": logging.WARNING,
+        "ERROR": logging.ERROR,
+    }.get(match.group(1), logging.WARNING)
 
 
 class TinymistPreviewSession:
@@ -148,7 +163,7 @@ class TinymistPreviewSession:
                     return
                 text = line.decode(errors="replace").rstrip()
                 self._stderr_lines.append(text)
-                logger.info("tinymist preview stderr: %s", text)
+                logger.log(_tinymist_stderr_level(text), "tinymist preview stderr: %s", text)
             except asyncio.CancelledError:
                 raise
             except Exception:

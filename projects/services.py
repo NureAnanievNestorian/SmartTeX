@@ -66,6 +66,11 @@ SECTION_LEVELS = {
     "subparagraph": 6,
 }
 TYPST_HEADING_RE = re.compile(r"^(?P<marks>={1,6})\s+(?P<title>.+?)\s*$", flags=re.MULTILINE)
+_TYPST_INCLUDE_RE = re.compile(r"#(?:import|include)\s+([^:\n]+)")
+_TYPST_READ_RE = re.compile(r'\bread\(\s*"([^"]+)"\s*\)')
+_TYPST_BIBLIOGRAPHY_PATH_RE = re.compile(r'\bbibliography\(\s*"([^"]+)"')
+_BIB_ENTRY_RE = re.compile(r"@[\w-]+\s*\{\s*([^,\s]+)")
+_YAML_TOP_LEVEL_KEY_RE = re.compile(r"^(?P<key>[A-Za-z0-9:_./-]+):(?:\s|$)")
 
 
 @dataclass
@@ -669,6 +674,124 @@ def analyze_typst_project_import(project: Project, use_existing_files: bool = Fa
                 "path": bibliography_path,
             }
         },
+    }
+
+
+def _safe_project_rel(path: str) -> str:
+    return str(Path(str(path or "").replace("\\", "/")).as_posix()).lstrip("/")
+
+
+def _resolve_project_ref(current_file: str, ref: str) -> str:
+    base = Path(current_file).parent
+    rel = (base / ref).as_posix() if str(base) != "." else ref
+    return _safe_project_rel(rel)
+
+
+def _collect_reachable_typst_files(root: Path, main_file: str) -> set[str]:
+    reachable: set[str] = set()
+    stack = [_safe_project_rel(main_file)]
+    visited: set[str] = set()
+    while stack:
+        rel = _safe_project_rel(stack.pop())
+        if not rel or rel in visited:
+            continue
+        visited.add(rel)
+        path = root / rel
+        if not path.exists() or path.suffix.lower() != ".typ":
+            continue
+        reachable.add(rel)
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        for match in _TYPST_INCLUDE_RE.finditer(content):
+            expr = match.group(1).strip()
+            str_match = re.match(r'"([^"]+)"', expr)
+            if not str_match:
+                continue
+            resolved = _resolve_project_ref(rel, str_match.group(1))
+            if resolved.endswith(".typ"):
+                stack.append(resolved)
+    return reachable
+
+
+def _citation_entries_from_bib(content: str, file_name: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for line_no, raw_line in enumerate(content.splitlines(), start=1):
+        for match in _BIB_ENTRY_RE.finditer(raw_line):
+            key = str(match.group(1) or "").strip()
+            if not key:
+                continue
+            entries.append({
+                "key": key,
+                "file": file_name,
+                "line": line_no,
+                "column": match.start(1) + 1,
+                "source_type": "bib",
+            })
+    return entries
+
+
+def _citation_entries_from_yaml(content: str, file_name: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for line_no, raw_line in enumerate(content.splitlines(), start=1):
+        if raw_line.startswith((" ", "\t", "-", "#")):
+            continue
+        match = _YAML_TOP_LEVEL_KEY_RE.match(raw_line)
+        if not match:
+            continue
+        key = str(match.group("key") or "").strip()
+        if not key:
+            continue
+        entries.append({
+            "key": key,
+            "file": file_name,
+            "line": line_no,
+            "column": match.start("key") + 1,
+            "source_type": "yaml",
+        })
+    return entries
+
+
+def build_typst_citation_index(project: Project) -> dict[str, Any]:
+    if project.markup_type != MarkupType.TYPST:
+        return {"entries": [], "source_files": [], "reachable_files": []}
+
+    root = ensure_project_dir(project)
+    main_file = main_source_filename(project)
+    reachable_files = sorted(_collect_reachable_typst_files(root, main_file))
+    candidate_files: set[str] = set()
+
+    for rel in reachable_files:
+        path = root / rel
+        if not path.exists():
+            continue
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        for pattern in (_TYPST_BIBLIOGRAPHY_PATH_RE, _TYPST_READ_RE):
+            for match in pattern.finditer(content):
+                resolved = _resolve_project_ref(rel, match.group(1))
+                suffix = Path(resolved).suffix.lower()
+                if suffix in {".bib", ".yaml", ".yml"} and (root / resolved).exists():
+                    candidate_files.add(resolved)
+
+    entries_by_key: dict[str, dict[str, Any]] = {}
+    for rel in sorted(candidate_files):
+        path = root / rel
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        suffix = path.suffix.lower()
+        if suffix == ".bib":
+            parsed = _citation_entries_from_bib(content, rel)
+        elif suffix in {".yaml", ".yml"}:
+            parsed = _citation_entries_from_yaml(content, rel)
+        else:
+            parsed = []
+        for item in parsed:
+            entries_by_key.setdefault(item["key"], item)
+
+    return {
+        "entries": sorted(entries_by_key.values(), key=lambda item: item["key"].lower()),
+        "source_files": sorted(candidate_files),
+        "reachable_files": reachable_files,
     }
 
 

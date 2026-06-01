@@ -13,6 +13,7 @@ from projects.models import Project, ProjectVersion
 from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from projects.services import (
     analyze_typst_project_import,
+    build_typst_citation_index,
     create_project_text_file,
     list_project_assets,
     main_source_filename,
@@ -259,6 +260,66 @@ class ProjectTypstSupportTests(TestCase):
 
         self.assertGreaterEqual(payload["detected_counts"]["chapters"], 1)
         self.assertEqual(payload["metadata"]["bibliography"]["path"], "bibliography/references.bib")
+
+    def test_build_typst_citation_index_finds_yaml_keys_from_reachable_graph(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Citation Graph", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "chapters").mkdir(parents=True, exist_ok=True)
+        (root / "main.typ").write_text(
+            '#import "template.typ": coursework-v2\n'
+            '#show: coursework-v2.with(bib-path: bytes(read("sources.yml")))\n'
+            '#include "chapters/01-introduction.typ"\n',
+            encoding="utf-8",
+        )
+        (root / "template.typ").write_text(
+            '#let coursework-v2(doc, bib-path: none) = {\n'
+            '  doc\n'
+            '  bibliography(bib-path, style: "csl/dstu-8302-2015.csl")\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        (root / "sources.yml").write_text(
+            'spotify-web-api:\n'
+            '  type: web\n'
+            'another-source:\n'
+            '  type: article\n',
+            encoding="utf-8",
+        )
+
+        payload = build_typst_citation_index(project)
+
+        self.assertEqual(payload["source_files"], ["sources.yml"])
+        self.assertIn("main.typ", payload["reachable_files"])
+        self.assertIn("template.typ", payload["reachable_files"])
+        self.assertEqual(
+            [item["key"] for item in payload["entries"]],
+            ["another-source", "spotify-web-api"],
+        )
+
+    def test_typst_citations_endpoint_returns_reachable_yaml_entries(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Citation Endpoint", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "chapters").mkdir(parents=True, exist_ok=True)
+        (root / "main.typ").write_text(
+            '#show: doc.with(data: bytes(read("sources.yml")))\n'
+            '#include "chapters/01-introduction.typ"\n',
+            encoding="utf-8",
+        )
+        (root / "sources.yml").write_text(
+            'spotify-web-api:\n'
+            '  type: web\n',
+            encoding="utf-8",
+        )
+
+        response = self.client.get(f"/api/projects/{project.id}/typst/citations/?prefix=spotify")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["entries"][0]["key"], "spotify-web-api")
+        self.assertEqual(payload["entries"][0]["file"], "sources.yml")
 
     def test_hidden_git_repo_is_not_exposed_as_asset(self) -> None:
         create_response = self.client.post(

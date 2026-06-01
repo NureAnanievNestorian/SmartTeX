@@ -59,6 +59,14 @@ async function lspNavigateTo(filename, lineNum, charNum) {
   }
 }
 
+function primeTinymistMainContext(activeFileName = "") {
+  if (s.projectMeta?.markup_type !== "typst") return;
+  const mainFileName = String(s.mainFileName || "");
+  if (!mainFileName || mainFileName === activeFileName) return;
+  if (!String(s.mainFileContent || "")) return;
+  tinymist.didOpen(mainFileName, s.mainFileContent);
+}
+
 // ── Bootstrap config (set by inline script in template) ──────────────────────
 
 const editorConfig = window.EDITOR_CONFIG || {};
@@ -987,6 +995,7 @@ async function selectFile(file) {
       setSaveHint("", "");
       applyTabScroll(file.name);
       focusEditor();
+      primeTinymistMainContext(file.name);
       tinymist.didOpen(file.name, cm.getContent());
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
@@ -1002,6 +1011,7 @@ async function selectFile(file) {
       setSaveHint("Завантажено", "saved");
       applyTabScroll(file.name);
       focusEditor();
+      primeTinymistMainContext(file.name);
       tinymist.didOpen(file.name, cm.getContent());
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
@@ -1024,6 +1034,7 @@ async function selectFile(file) {
       setSaveHint("", "");
       applyTabScroll(file.name);
       focusEditor();
+      primeTinymistMainContext(file.name);
       tinymist.didOpen(file.name, cm.getContent());
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
@@ -1048,6 +1059,7 @@ async function selectFile(file) {
       setSaveHint("Завантажено", "saved");
       applyTabScroll(file.name);
       focusEditor();
+      primeTinymistMainContext(file.name);
       tinymist.didOpen(file.name, data.text_content || "");
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
@@ -1609,6 +1621,9 @@ export function initEditorApp() {
 
   // ── Load initial data ──
   await loadProjectMeta();
+  if (s.projectMeta?.markup_type === "typst") {
+    await loadMainFile();
+  }
   await Promise.all([loadFiles(), loadSections(), loadVersions(true), longdoc.loadLongdocData?.()]);
   setCompileState("out_of_date");
   if (s.projectMeta?.markup_type === "typst") tinymist.connect();
