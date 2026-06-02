@@ -168,12 +168,15 @@ X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 MAX_TEX_FILE_SIZE = 1 * 1024 * 1024
 MAX_PROJECT_TOTAL_SIZE = int(os.getenv('MAX_PROJECT_TOTAL_SIZE', str(64 * 1024 * 1024)))
+COMPILE_CONCURRENCY = max(1, int(os.getenv('COMPILE_CONCURRENCY', '3' if DEBUG else '1')))
 LATEX_DOCKER_IMAGE = 'latex-ua:latest'
 LATEX_TIMEOUT_SECONDS = 60
 LATEX_STRICT_ERRORS = os.getenv('LATEX_STRICT_ERRORS', 'False').lower() in {'1', 'true', 'yes'}
 TYPST_DOCKER_IMAGE = os.getenv('TYPST_DOCKER_IMAGE', 'ghcr.io/typst/typst:latest')
 TYPST_TIMEOUT_SECONDS = int(os.getenv('TYPST_TIMEOUT_SECONDS', '60'))
 TYPST_DOCKER_NETWORK = os.getenv('TYPST_DOCKER_NETWORK', 'bridge').strip() or 'bridge'
+TYPST_DOCKER_MEMORY = os.getenv('TYPST_DOCKER_MEMORY', '600m').strip() or '600m'
+TYPST_DOCKER_CPUS = os.getenv('TYPST_DOCKER_CPUS', '1.0').strip() or '1.0'
 # Run Typst as a native subprocess instead of via Docker.
 # Safe: Typst has no shell-execution primitives unlike LaTeX.
 # Requires the `typst` binary in PATH (or set TYPST_BINARY to an absolute path).
@@ -187,6 +190,16 @@ TYPST_BINARY = os.getenv('TYPST_BINARY', 'typst').strip() or 'typst'
 # e.g. TINYMIST_BIN=/usr/local/bin/tinymist
 TINYMIST_BIN = os.getenv('TINYMIST_BIN', 'tinymist').strip() or 'tinymist'
 TINYMIST_DEBUG = _env_bool('TINYMIST_DEBUG', DEBUG)
+# Tinymist is an interactive IDE sidecar, not required for production PDF builds.
+# Keep the functionality available by default, but avoid automatic sidecar startup
+# in production unless explicitly enabled.
+TINYMIST_LSP_ENABLED = _env_bool('TINYMIST_LSP_ENABLED', True)
+TINYMIST_PREVIEW_ENABLED = _env_bool('TINYMIST_PREVIEW_ENABLED', True)
+TINYMIST_LSP_AUTOSTART = _env_bool('TINYMIST_LSP_AUTOSTART', DEBUG)
+TINYMIST_PREVIEW_AUTOSTART = _env_bool('TINYMIST_PREVIEW_AUTOSTART', DEBUG)
+TINYMIST_API_SESSION_PERSIST = _env_bool('TINYMIST_API_SESSION_PERSIST', DEBUG)
+TINYMIST_SESSION_IDLE_TIMEOUT = max(10, int(os.getenv('TINYMIST_SESSION_IDLE_TIMEOUT', '600' if DEBUG else '60')))
+TINYMIST_CLOSE_ON_WS_DISCONNECT = _env_bool('TINYMIST_CLOSE_ON_WS_DISCONNECT', not DEBUG)
 # Optional directory of extra fonts (.ttf/.otf) to make available during Typst compilation.
 # For Docker: mounted at /fonts read-only; for native: passed via --font-path.
 # Example: TYPST_FONTS_DIR=/srv/fonts

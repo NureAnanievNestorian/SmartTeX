@@ -795,11 +795,12 @@ function buildCommandPaletteItems() {
   const canSetMain = Boolean(selected?.name && !selected.is_dir && selected.name !== s.mainFileName);
   const isTypstProject = s.projectMeta?.markup_type === "typst";
   const isTypstFile = isTypstProject && String(s.activeTabName || "").endsWith(".typ");
-  const lspReady = tinymist.getStatus() === "connected";
+  const lspEnabled = tinymist.isEnabled();
+  const lspReady = lspEnabled && tinymist.getStatus() === "connected";
   return [
     { id: "compile", label: "Recompile project", hint: "Build", shortcut: "Mod+Enter", run: () => compileProject().catch(() => {}) },
     { id: "wrap", label: isLineWrappingEnabled() ? "Disable line wrap" : "Enable line wrap", hint: "Editor", shortcut: "Wrap", run: () => toggleLineWrap() },
-    ...(isTypstFile ? [
+    ...(isTypstFile && lspEnabled ? [
       { id: "format-doc", label: "Format document", hint: "Typst", shortcut: "Mod+Alt+L", disabled: !lspReady, run: () => formatCurrentDocument().catch(() => {}) },
       { id: "find-refs", label: "Find references", hint: "Typst", shortcut: "Mod+Click", disabled: !lspReady, run: () => findReferences().catch(() => {}) },
       { id: "document-symbols", label: "Document symbols", hint: "Typst", shortcut: "Mod+Shift+O", disabled: !lspReady, run: () => openDocumentSymbolsPalette() },
@@ -1657,7 +1658,10 @@ export function initEditorApp() {
   document.getElementById("menu-typst-format")?.addEventListener("click", () => { closeTopMenus(); formatCurrentDocument().catch(() => {}); });
   document.getElementById("menu-typst-find-refs")?.addEventListener("click", () => { closeTopMenus(); findReferences().catch(() => {}); });
   document.getElementById("menu-typst-compile")?.addEventListener("click", () => { closeTopMenus(); compileProject().catch(() => {}); });
-  document.getElementById("menu-typst-restart")?.addEventListener("click", () => { closeTopMenus(); tinymist.restart(); });
+  document.getElementById("menu-typst-restart")?.addEventListener("click", () => {
+    closeTopMenus();
+    if (tinymist.isEnabled()) tinymist.restart();
+  });
 
   // PDF actions
   refreshPdfBtn?.addEventListener("click", () => {
@@ -1809,7 +1813,7 @@ export function initEditorApp() {
   }
   await Promise.all([loadFiles(), loadSections(), loadVersions(true), loadPdfEmbeds(), longdoc.loadLongdocData?.()]);
   setCompileState("out_of_date");
-  if (s.projectMeta?.markup_type === "typst") tinymist.connect();
+  if (tinymist.shouldAutostart()) tinymist.connect();
 
   const restored = await restoreTabsFromStorage();
   if (!restored) {

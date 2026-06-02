@@ -34,7 +34,7 @@ def _tinymist_lsp_settings() -> dict:
     }
 
 _HEADER_RE = re.compile(rb"Content-Length:\s*(\d+)", re.IGNORECASE)
-SESSION_IDLE_TIMEOUT: int = 600  # seconds
+SESSION_IDLE_TIMEOUT: int = int(getattr(settings, "TINYMIST_SESSION_IDLE_TIMEOUT", 600))
 
 
 def _debug_enabled() -> bool:
@@ -400,6 +400,8 @@ def _lock() -> asyncio.Lock:
 
 
 async def get_or_create_session(project_id: int, user_id: int) -> TinymistSession:
+    if not bool(getattr(settings, "TINYMIST_LSP_ENABLED", True)):
+        raise RuntimeError("Tinymist LSP is disabled")
     key = (project_id, user_id)
     async with _lock():
         session = _sessions.get(key)
@@ -428,6 +430,8 @@ async def get_or_create_session(project_id: int, user_id: int) -> TinymistSessio
 
 async def get_or_create_api_session(project_id: int, user_id: int) -> TinymistSession:
     """Return a persistent tinymist session for API/MCP use, isolated from browser sessions."""
+    if not bool(getattr(settings, "TINYMIST_LSP_ENABLED", True)):
+        raise RuntimeError("Tinymist LSP is disabled")
     key = (project_id, user_id)
     async with _lock():
         session = _api_sessions.get(key)
@@ -458,6 +462,14 @@ async def close_session(project_id: int, user_id: int) -> None:
     key = (project_id, user_id)
     async with _lock():
         session = _sessions.pop(key, None)
+    if session:
+        await session.stop()
+
+
+async def close_api_session(project_id: int, user_id: int) -> None:
+    key = (project_id, user_id)
+    async with _lock():
+        session = _api_sessions.pop(key, None)
     if session:
         await session.stop()
 

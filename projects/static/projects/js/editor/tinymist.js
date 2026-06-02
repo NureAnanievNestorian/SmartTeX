@@ -125,12 +125,18 @@ function _setStatus(status, label) {
 
 export function getStatus()  { return _status; }
 export function getRootUri() { return _rootUri; }
+export function isEnabled() {
+  return s.projectMeta?.markup_type === "typst" && s.projectMeta?.tinymist?.lsp_enabled !== false;
+}
+export function shouldAutostart() {
+  return isEnabled() && s.projectMeta?.tinymist?.lsp_autostart !== false;
+}
 
 export function initStatusEl(el) {
   _statusEl = el;
   if (el) {
     el.addEventListener("click", () => {
-      if (s.projectMeta?.markup_type === "typst") restart();
+      if (isEnabled()) restart();
     });
   }
 }
@@ -138,6 +144,10 @@ export function initStatusEl(el) {
 // ── Connection ────────────────────────────────────────────────────────────────
 
 export function connect() {
+  if (!isEnabled()) {
+    _setStatus("disconnected", "disabled");
+    return;
+  }
   if (!cfg.projectId) return;
   if (_ws && (_ws.readyState === WebSocket.CONNECTING || _ws.readyState === WebSocket.OPEN)) return;
   _setStatus("connecting", "підключення…");
@@ -169,7 +179,7 @@ export function connect() {
     cm.clearLspProviders();
     clearTimeout(_reconnectTimer);
     _reconnectTimer = setTimeout(() => {
-      if (s.projectMeta?.markup_type === "typst") connect();
+      if (isEnabled()) connect();
     }, 5000);
   };
 }
@@ -709,10 +719,15 @@ function _openAllProjectFiles(skipFilename) {
 }
 
 export function restart() {
+  if (!isEnabled()) {
+    disconnect();
+    _setStatus("disconnected", "disabled");
+    return;
+  }
   disconnect();
   clearTimeout(_reconnectTimer);
   setTimeout(() => {
-    if (s.projectMeta?.markup_type === "typst") connect();
+    if (isEnabled()) connect();
   }, 300);
 }
 

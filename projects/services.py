@@ -25,7 +25,7 @@ from .models import Project, ProjectVersion
 
 logger = logging.getLogger(__name__)
 
-COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=3)
+COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=max(1, int(getattr(settings, "COMPILE_CONCURRENCY", 1))))
 TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl", ".puml"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
 ALLOWED_UPLOAD_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
@@ -1953,7 +1953,8 @@ def build_compiler_cmd(
         cmd = [
             "docker", "run", "--rm",
             *_compiler_network_args(markup_type),
-            "--memory=600m", "--cpus=1.0",
+            "--memory", str(getattr(settings, "TYPST_DOCKER_MEMORY", "600m")),
+            "--cpus", str(getattr(settings, "TYPST_DOCKER_CPUS", "1.0")),
             "-v", f"{docker_mount_source}:/workspace:rw",
             "-w", "/workspace",
             *docker_font_args,

@@ -31,8 +31,18 @@ services:
       - .env
     environment:
       PLANTUML_URL: http://plantuml:8080
+      COMPILE_CONCURRENCY: ${COMPILE_CONCURRENCY:-1}
+      TINYMIST_LSP_ENABLED: ${TINYMIST_LSP_ENABLED:-true}
+      TINYMIST_PREVIEW_ENABLED: ${TINYMIST_PREVIEW_ENABLED:-true}
+      TINYMIST_LSP_AUTOSTART: ${TINYMIST_LSP_AUTOSTART:-false}
+      TINYMIST_PREVIEW_AUTOSTART: ${TINYMIST_PREVIEW_AUTOSTART:-false}
+      TINYMIST_API_SESSION_PERSIST: ${TINYMIST_API_SESSION_PERSIST:-false}
+      TINYMIST_SESSION_IDLE_TIMEOUT: ${TINYMIST_SESSION_IDLE_TIMEOUT:-60}
+      TINYMIST_CLOSE_ON_WS_DISCONNECT: ${TINYMIST_CLOSE_ON_WS_DISCONNECT:-true}
     ports:
       - "${WEB_PORT:-8000}:8000"
+    mem_limit: ${WEB_MEMORY_LIMIT:-1400m}
+    cpus: ${WEB_CPUS:-1.0}
     command: sh -c "python manage.py migrate && python manage.py collectstatic --noinput && python manage.py install_typst_packages && uvicorn SmartTeX.asgi:application --host 0.0.0.0 --port 8000"
     volumes:
       - /opt/smarttex/static:/app/staticfiles
@@ -48,7 +58,16 @@ services:
       - web
     env_file:
       - .env
+    environment:
+      COMPILE_CONCURRENCY: ${COMPILE_CONCURRENCY:-1}
+      TINYMIST_LSP_ENABLED: ${TINYMIST_LSP_ENABLED:-true}
+      TINYMIST_PREVIEW_ENABLED: ${TINYMIST_PREVIEW_ENABLED:-true}
+      TINYMIST_LSP_AUTOSTART: ${TINYMIST_LSP_AUTOSTART:-false}
+      TINYMIST_PREVIEW_AUTOSTART: ${TINYMIST_PREVIEW_AUTOSTART:-false}
+      TINYMIST_API_SESSION_PERSIST: ${TINYMIST_API_SESSION_PERSIST:-false}
     command: python mcp_http_server.py
+    mem_limit: ${MCP_MEMORY_LIMIT:-384m}
+    cpus: ${MCP_CPUS:-0.5}
     ports:
       - "${MCP_PORT:-9000}:${MCP_PORT:-9000}"
 

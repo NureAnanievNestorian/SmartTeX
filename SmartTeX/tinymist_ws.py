@@ -116,6 +116,13 @@ async def tinymist_websocket(scope: dict[str, Any], receive, send) -> None:
         await send({"type": "websocket.close", "code": 1000})
     except Exception:
         pass
+    if bool(getattr(settings, "TINYMIST_CLOSE_ON_WS_DISCONNECT", False)):
+        try:
+            from projects.tinymist_service import close_session
+
+            await close_session(project_id, user_id)
+        except Exception:
+            logger.exception("tinymist ws: failed to close session project=%s user=%s", project_id, user_id)
 
 
 async def _ws_json(send, data: dict) -> None:

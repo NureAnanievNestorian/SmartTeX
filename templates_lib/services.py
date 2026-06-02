@@ -17,7 +17,7 @@ from .models import Template, TemplateContextFile, TemplateNoteSection, Template
 
 logger = logging.getLogger(__name__)
 
-COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=2)
+COMPILE_SEMAPHORE = threading.BoundedSemaphore(value=max(1, int(getattr(settings, "COMPILE_CONCURRENCY", 1))))
 TEMPLATE_TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl"}
 TEMPLATE_ASSET_EXTENSIONS = TEMPLATE_TEXT_EXTENSIONS | {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".pdf"}
 MAX_TEMPLATE_ZIP_PREVIEW_BYTES = int(getattr(settings, "MAX_TEMPLATE_ZIP_PREVIEW_BYTES", 64 * 1024 * 1024))
@@ -377,10 +377,21 @@ def compile_template_preview(template: Template) -> TemplateCompileResult:
             source_name,
         ]
 
+    docker_memory = (
+        str(getattr(settings, "TYPST_DOCKER_MEMORY", "600m"))
+        if template.markup_type == MarkupType.TYPST
+        else "600m"
+    )
+    docker_cpus = (
+        str(getattr(settings, "TYPST_DOCKER_CPUS", "1.0"))
+        if template.markup_type == MarkupType.TYPST
+        else "1.0"
+    )
     cmd = [
         "docker", "run", "--rm",
         *_compiler_network_args(template.markup_type),
-        "--memory=600m", "--cpus=1.0",
+        "--memory", docker_memory,
+        "--cpus", docker_cpus,
         "-v", f"{docker_mount_source}:/workspace:rw",
         "-w", "/workspace",
         image,

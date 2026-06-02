@@ -19,7 +19,7 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-SESSION_IDLE_TIMEOUT: int = 600  # seconds
+SESSION_IDLE_TIMEOUT: int = int(getattr(settings, "TINYMIST_SESSION_IDLE_TIMEOUT", 600))
 _TINYMIST_STDERR_LEVEL_RE = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|ERROR)\b")
 
 
@@ -196,6 +196,8 @@ def _lock() -> asyncio.Lock:
 
 
 async def get_or_create_preview_session(project_id: int, user_id: int, invert_colors: str | None = None) -> TinymistPreviewSession:
+    if not bool(getattr(settings, "TINYMIST_PREVIEW_ENABLED", True)):
+        raise RuntimeError("Tinymist preview is disabled")
     key = (project_id, user_id)
     async with _lock():
         session = _sessions.get(key)

@@ -95,7 +95,7 @@ function blockingDiagnostics() {
 }
 
 export function refreshTypstPreviewStatus() {
-  if (!isTypstProject() || s.previewMode !== "web") {
+  if (!typstPreviewEnabled() || s.previewMode !== "web") {
     setPreviewStatus("");
     return;
   }
@@ -111,7 +111,7 @@ export function refreshTypstPreviewStatus() {
 }
 
 export function markTypstPreviewEditing() {
-  if (!isTypstProject() || s.previewMode !== "web") return;
+  if (!typstPreviewEnabled() || s.previewMode !== "web") return;
   setPreviewStatus("");
 }
 
@@ -133,6 +133,14 @@ function previewDebug(...args) {
 
 function isTypstProject() {
   return s.projectMeta?.markup_type === "typst";
+}
+
+function typstPreviewEnabled() {
+  return isTypstProject() && s.projectMeta?.tinymist?.preview_enabled !== false;
+}
+
+function typstPreviewAutostart() {
+  return typstPreviewEnabled() && s.projectMeta?.tinymist?.preview_autostart !== false;
 }
 
 function previewBaseUrl() {
@@ -218,23 +226,25 @@ function applyPreviewSyncUi() {
 function applyPreviewModeUi() {
   const mode = s.previewMode || "pdf";
   const isTypst = isTypstProject();
+  const previewEnabled = typstPreviewEnabled();
   previewKindbarEl?.classList.toggle("visible", isTypst);
-  previewKindWebBtn?.classList.toggle("active", isTypst && mode === "web");
-  previewKindPdfBtn?.classList.toggle("active", !isTypst && mode === "pdf");
-  if (previewKindPdfBtn) previewKindPdfBtn.style.display = isTypst ? "none" : "";
-  typstPreviewWrapEl?.classList.toggle("visible", isTypst && mode === "web");
-  if (pdfCanvasContainer) pdfCanvasContainer.style.display = isTypst && mode === "web" ? "none" : "flex";
-  if (pdfEmpty) pdfEmpty.style.display = isTypst && mode === "web" ? "none" : pdfEmpty.style.display;
-  if (pdfLoadingEl) pdfLoadingEl.style.display = isTypst && mode === "web" ? "none" : pdfLoadingEl.style.display;
-  if (pdfPageInfo) pdfPageInfo.textContent = isTypst && mode === "web" ? "Web preview" : pdfPageInfo.textContent;
+  previewKindWebBtn?.classList.toggle("active", previewEnabled && mode === "web");
+  previewKindPdfBtn?.classList.toggle("active", mode === "pdf");
+  if (previewKindWebBtn) previewKindWebBtn.style.display = previewEnabled ? "" : "none";
+  if (previewKindPdfBtn) previewKindPdfBtn.style.display = isTypst && previewEnabled ? "none" : "";
+  typstPreviewWrapEl?.classList.toggle("visible", previewEnabled && mode === "web");
+  if (pdfCanvasContainer) pdfCanvasContainer.style.display = previewEnabled && mode === "web" ? "none" : "flex";
+  if (pdfEmpty) pdfEmpty.style.display = previewEnabled && mode === "web" ? "none" : pdfEmpty.style.display;
+  if (pdfLoadingEl) pdfLoadingEl.style.display = previewEnabled && mode === "web" ? "none" : pdfLoadingEl.style.display;
+  if (pdfPageInfo) pdfPageInfo.textContent = previewEnabled && mode === "web" ? "Web preview" : pdfPageInfo.textContent;
   if (openPdfLink) {
-    openPdfLink.href = isTypst && mode === "web"
+    openPdfLink.href = previewEnabled && mode === "web"
       ? previewBaseUrl()
       : (s.pdfCurrentUrl ? s.pdfCurrentUrl.split("?")[0] : openPdfLink.href);
-    openPdfLink.title = isTypst && mode === "web" ? "Відкрити Web Preview" : "Відкрити PDF";
+    openPdfLink.title = previewEnabled && mode === "web" ? "Відкрити Web Preview" : "Відкрити PDF";
   }
   if (refreshPdfBtn) {
-    refreshPdfBtn.title = isTypst && mode === "web" ? "Оновити Web Preview" : "Оновити PDF";
+    refreshPdfBtn.title = previewEnabled && mode === "web" ? "Оновити Web Preview" : "Оновити PDF";
   }
   applyPreviewThemeUi();
   applyPreviewSyncUi();
@@ -252,7 +262,7 @@ function previewUserInteractionActive() {
 function schedulePreviewControlReconnect() {
   clearTimeout(_previewControlReconnectTimer);
   _previewControlReconnectTimer = setTimeout(() => {
-    if (isTypstProject() && s.previewMode === "web") connectPreviewControl();
+    if (typstPreviewEnabled() && s.previewMode === "web") connectPreviewControl();
   }, 1200);
 }
 
@@ -272,7 +282,7 @@ function disconnectPreviewControl() {
 }
 
 function connectPreviewControl() {
-  if (!isTypstProject() || s.previewMode !== "web" || !cfg.projectId) return;
+  if (!typstPreviewEnabled() || s.previewMode !== "web" || !cfg.projectId) return;
   if (_previewControlWs && (_previewControlWs.readyState === WebSocket.CONNECTING || _previewControlWs.readyState === WebSocket.OPEN)) {
     return;
   }
@@ -408,6 +418,8 @@ export function initPreviewPanel() {
   loadPreviewSyncPreferences();
   if (!isTypstProject()) {
     s.previewMode = "pdf";
+  } else if (!typstPreviewAutostart()) {
+    s.previewMode = "pdf";
   } else {
     s.previewMode = "web";
   }
@@ -430,7 +442,7 @@ export function initPreviewPanel() {
     _previewUiInitialized = true;
   }
   applyPreviewModeUi();
-  if (isTypstProject() && s.previewMode === "web") {
+  if (typstPreviewEnabled() && s.previewMode === "web") {
     connectPreviewControl();
     if (!typstPreviewFrameEl?.src) refreshTypstPreview(true);
   } else {
@@ -443,7 +455,7 @@ export function getPreviewMode() {
 }
 
 export function setPreviewMode(mode) {
-  s.previewMode = isTypstProject() ? "web" : "pdf";
+  s.previewMode = typstPreviewEnabled() && mode === "web" ? "web" : "pdf";
   _previewLastRevealKey = "";
   applyPreviewModeUi();
   if (s.previewMode === "web") {
@@ -461,7 +473,7 @@ export function setPreviewTheme(theme) {
   s.typstPreviewTheme = next;
   persistPreviewThemePreference();
   applyPreviewModeUi();
-  if (isTypstProject() && s.previewMode === "web") {
+  if (typstPreviewEnabled() && s.previewMode === "web") {
     refreshTypstPreview(true);
   }
 }
@@ -480,7 +492,7 @@ export function togglePreviewClickSync() {
 }
 
 export async function refreshTypstPreview(force = false) {
-  if (!isTypstProject()) return;
+  if (!typstPreviewEnabled()) return;
   _previewBridgeReady = false;
   if (force) _previewLastRevealKey = "";
   const base = previewBaseUrl();
@@ -550,7 +562,7 @@ function postToPreview(message) {
 }
 
 export function revealPreviewSelection(force = false) {
-  if (!isTypstProject() || s.previewMode !== "web") return;
+  if (!typstPreviewEnabled() || s.previewMode !== "web") return;
   if (!force && previewUserInteractionActive()) return;
   clearTimeout(_previewRevealTimer);
   _previewRevealTimer = setTimeout(() => {
@@ -585,7 +597,7 @@ export function revealPreviewSelection(force = false) {
 }
 
 export function syncPreviewMemoryFile(filename, content) {
-  if (!isTypstProject() || s.previewMode !== "web") return;
+  if (!typstPreviewEnabled() || s.previewMode !== "web") return;
   markTypstPreviewEditing();
   if (!previewControlConnected()) return;
   sendPreviewMemoryEvent("updateMemoryFiles", filename, content);
@@ -593,7 +605,7 @@ export function syncPreviewMemoryFile(filename, content) {
 }
 
 export function resyncTypstPreview({ reveal = false, revealDelay = 120 } = {}) {
-  if (!isTypstProject() || s.previewMode !== "web") return;
+  if (!typstPreviewEnabled() || s.previewMode !== "web") return;
   if (!typstPreviewFrameEl?.src) {
     refreshTypstPreview(true).catch(() => {});
     return;
@@ -827,7 +839,7 @@ export async function loadPdfViewer(url) {
   const savedScroll = pdfCanvasContainer.scrollTop;
   const isFirstLoad = s.pdfDoc === null;
   s.pdfCurrentUrl = url;
-  if (isTypstProject() && s.previewMode === "web") {
+  if (typstPreviewEnabled() && s.previewMode === "web") {
     applyPreviewModeUi();
     return;
   }

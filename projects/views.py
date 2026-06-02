@@ -431,6 +431,12 @@ def _project_payload(project: Project, user=None) -> dict:
         "markup_type": project.markup_type,
         "main_file_name": source_file_name,
         "supports_synctex": project.markup_type == MarkupType.LATEX,
+        "tinymist": {
+            "lsp_enabled": bool(getattr(settings, "TINYMIST_LSP_ENABLED", True)),
+            "preview_enabled": bool(getattr(settings, "TINYMIST_PREVIEW_ENABLED", True)),
+            "lsp_autostart": bool(getattr(settings, "TINYMIST_LSP_AUTOSTART", True)),
+            "preview_autostart": bool(getattr(settings, "TINYMIST_PREVIEW_AUTOSTART", True)),
+        },
         "last_status": project.last_status,
         "longdoc": {
             "enabled": bool(longdoc_settings and longdoc_settings.enabled),
@@ -1926,6 +1932,8 @@ def api_project_typst_preview(request: HttpRequest, project_id: int, subpath: st
     project = _project_with_owner(project_id, user)
     if project.markup_type != MarkupType.TYPST:
         return JsonResponse({"detail": "Typst preview is only available for Typst projects"}, status=400)
+    if not bool(getattr(settings, "TINYMIST_PREVIEW_ENABLED", True)):
+        return JsonResponse({"detail": "Tinymist preview is disabled"}, status=404)
 
     from .tinymist_preview_service import get_or_create_preview_session, restart_preview_session
 
@@ -2004,6 +2012,8 @@ def api_project_typst_preview_restart(request: HttpRequest, project_id: int) -> 
     project = _project_with_owner(project_id, user)
     if project.markup_type != MarkupType.TYPST:
         return JsonResponse({"detail": "Typst preview is only available for Typst projects"}, status=400)
+    if not bool(getattr(settings, "TINYMIST_PREVIEW_ENABLED", True)):
+        return JsonResponse({"detail": "Tinymist preview is disabled"}, status=404)
 
     from .tinymist_preview_service import restart_preview_session
 
@@ -2022,6 +2032,12 @@ def api_project_typst_preview_restart(request: HttpRequest, project_id: int) -> 
 def _typst_only(project: Project) -> JsonResponse | None:
     if project.markup_type != MarkupType.TYPST:
         return JsonResponse({"detail": "This endpoint is only available for Typst projects"}, status=400)
+    return None
+
+
+def _tinymist_lsp_enabled() -> JsonResponse | None:
+    if not bool(getattr(settings, "TINYMIST_LSP_ENABLED", True)):
+        return JsonResponse({"detail": "Tinymist LSP is disabled"}, status=404)
     return None
 
 
@@ -2073,9 +2089,11 @@ def api_project_tinymist_diagnostics(request: HttpRequest, project_id: int) -> J
     project = _project_with_owner(project_id, user)
     if err := _typst_only(project):
         return err
+    if err := _tinymist_lsp_enabled():
+        return err
 
     file_name = request.GET.get("file_name") or main_source_filename(project)
-    from .tinymist_service import get_or_create_api_session
+    from .tinymist_service import close_api_session, get_or_create_api_session
     from .services import project_dir
 
     root = project_dir(project)
@@ -2088,8 +2106,12 @@ def api_project_tinymist_diagnostics(request: HttpRequest, project_id: int) -> J
 
     async def _get_diags():
         session = await get_or_create_api_session(project.id, user.id)
-        await session.api_open_file(uri, text)
-        return await session.collect_diagnostics(uri, timeout=4.0)
+        try:
+            await session.api_open_file(uri, text)
+            return await session.collect_diagnostics(uri, timeout=4.0)
+        finally:
+            if not bool(getattr(settings, "TINYMIST_API_SESSION_PERSIST", False)):
+                await close_api_session(project.id, user.id)
 
     try:
         raw = async_to_sync(_get_diags)()
@@ -2123,9 +2145,11 @@ def api_project_tinymist_symbols(request: HttpRequest, project_id: int) -> JsonR
     project = _project_with_owner(project_id, user)
     if err := _typst_only(project):
         return err
+    if err := _tinymist_lsp_enabled():
+        return err
 
     file_name = request.GET.get("file_name") or main_source_filename(project)
-    from .tinymist_service import get_or_create_api_session
+    from .tinymist_service import close_api_session, get_or_create_api_session
     from .services import project_dir
 
     root = project_dir(project)
@@ -2138,10 +2162,14 @@ def api_project_tinymist_symbols(request: HttpRequest, project_id: int) -> JsonR
 
     async def _get_symbols():
         session = await get_or_create_api_session(project.id, user.id)
-        await session.api_open_file(uri, text)
-        return await session.api_request("textDocument/documentSymbol", {
-            "textDocument": _lsp_text_document(uri),
-        })
+        try:
+            await session.api_open_file(uri, text)
+            return await session.api_request("textDocument/documentSymbol", {
+                "textDocument": _lsp_text_document(uri),
+            })
+        finally:
+            if not bool(getattr(settings, "TINYMIST_API_SESSION_PERSIST", False)):
+                await close_api_session(project.id, user.id)
 
     try:
         result = async_to_sync(_get_symbols)()
@@ -2173,9 +2201,11 @@ def api_project_tinymist_format(request: HttpRequest, project_id: int) -> JsonRe
     project = _project_with_owner(project_id, user)
     if err := _typst_only(project):
         return err
+    if err := _tinymist_lsp_enabled():
+        return err
 
     file_name = request.GET.get("file_name") or main_source_filename(project)
-    from .tinymist_service import get_or_create_api_session
+    from .tinymist_service import close_api_session, get_or_create_api_session
     from .services import project_dir
 
     root = project_dir(project)
@@ -2188,11 +2218,15 @@ def api_project_tinymist_format(request: HttpRequest, project_id: int) -> JsonRe
 
     async def _format():
         session = await get_or_create_api_session(project.id, user.id)
-        await session.api_open_file(uri, text)
-        return await session.api_request("textDocument/formatting", {
-            "textDocument": _lsp_text_document(uri),
-            "options": {"tabSize": 2, "insertSpaces": True},
-        })
+        try:
+            await session.api_open_file(uri, text)
+            return await session.api_request("textDocument/formatting", {
+                "textDocument": _lsp_text_document(uri),
+                "options": {"tabSize": 2, "insertSpaces": True},
+            })
+        finally:
+            if not bool(getattr(settings, "TINYMIST_API_SESSION_PERSIST", False)):
+                await close_api_session(project.id, user.id)
 
     try:
         edits = async_to_sync(_format)()
@@ -2216,6 +2250,8 @@ def api_project_tinymist_definition(request: HttpRequest, project_id: int) -> Js
     project = _project_with_owner(project_id, user)
     if err := _typst_only(project):
         return err
+    if err := _tinymist_lsp_enabled():
+        return err
 
     file_name = request.GET.get("file_name") or main_source_filename(project)
     try:
@@ -2224,7 +2260,7 @@ def api_project_tinymist_definition(request: HttpRequest, project_id: int) -> Js
     except (TypeError, ValueError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    from .tinymist_service import get_or_create_api_session
+    from .tinymist_service import close_api_session, get_or_create_api_session
     from .services import project_dir
 
     root = project_dir(project)
@@ -2237,11 +2273,15 @@ def api_project_tinymist_definition(request: HttpRequest, project_id: int) -> Js
 
     async def _definition():
         session = await get_or_create_api_session(project.id, user.id)
-        await session.api_open_file(uri, text)
-        return await session.api_request("textDocument/definition", {
-            "textDocument": _lsp_text_document(uri),
-            "position": _lsp_position(line, column),
-        })
+        try:
+            await session.api_open_file(uri, text)
+            return await session.api_request("textDocument/definition", {
+                "textDocument": _lsp_text_document(uri),
+                "position": _lsp_position(line, column),
+            })
+        finally:
+            if not bool(getattr(settings, "TINYMIST_API_SESSION_PERSIST", False)):
+                await close_api_session(project.id, user.id)
 
     try:
         result = async_to_sync(_definition)()
@@ -2267,6 +2307,8 @@ def api_project_tinymist_references(request: HttpRequest, project_id: int) -> Js
     project = _project_with_owner(project_id, user)
     if err := _typst_only(project):
         return err
+    if err := _tinymist_lsp_enabled():
+        return err
 
     file_name = request.GET.get("file_name") or main_source_filename(project)
     try:
@@ -2275,7 +2317,7 @@ def api_project_tinymist_references(request: HttpRequest, project_id: int) -> Js
     except (TypeError, ValueError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    from .tinymist_service import get_or_create_api_session
+    from .tinymist_service import close_api_session, get_or_create_api_session
     from .services import project_dir
 
     root = project_dir(project)
@@ -2288,12 +2330,16 @@ def api_project_tinymist_references(request: HttpRequest, project_id: int) -> Js
 
     async def _references():
         session = await get_or_create_api_session(project.id, user.id)
-        await session.api_open_file(uri, text)
-        return await session.api_request("textDocument/references", {
-            "textDocument": _lsp_text_document(uri),
-            "position": _lsp_position(line, column),
-            "context": {"includeDeclaration": True},
-        })
+        try:
+            await session.api_open_file(uri, text)
+            return await session.api_request("textDocument/references", {
+                "textDocument": _lsp_text_document(uri),
+                "position": _lsp_position(line, column),
+                "context": {"includeDeclaration": True},
+            })
+        finally:
+            if not bool(getattr(settings, "TINYMIST_API_SESSION_PERSIST", False)):
+                await close_api_session(project.id, user.id)
 
     try:
         result = async_to_sync(_references)()
