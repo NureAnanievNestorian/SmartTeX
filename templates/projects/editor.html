@@ -374,6 +374,86 @@
             position: relative;
         }
 
+        .e-body.left-collapsed {
+            grid-template-columns: var(--left-w, 38px) 0 minmax(0, 1fr) 1px var(--right-w, 420px);
+        }
+
+        .e-body.right-collapsed {
+            grid-template-columns: var(--left-w, 260px) 1px minmax(0, 1fr) 0 var(--right-w, 38px);
+        }
+
+        .e-body.left-collapsed.right-collapsed {
+            grid-template-columns: var(--left-w, 38px) 0 minmax(0, 1fr) 0 var(--right-w, 38px);
+        }
+
+        .e-rail-action-btn {
+            width: 30px;
+            min-width: 30px;
+            height: 30px;
+            border: 1px solid rgba(86, 111, 138, .28);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, .08);
+            color: var(--e-text);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 0 8px;
+            cursor: pointer;
+            flex-shrink: 0;
+            position: relative;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            transition: color .12s, border-color .12s, background .12s;
+        }
+
+        .e-rail-action-btn:hover {
+            color: var(--e-text);
+            background: rgba(34, 197, 94, .12);
+            border-color: rgba(34, 197, 94, .42);
+        }
+
+        .e-rail-action-btn svg {
+            display: none !important;
+        }
+
+        .e-rail-action-btn::before {
+            content: "";
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            flex-shrink: 0;
+        }
+
+        .e-rail-action-btn[data-rail-icon="left"]::before {
+            border-left: 2px solid currentColor;
+            border-bottom: 2px solid currentColor;
+            transform: rotate(45deg);
+        }
+
+        .e-rail-action-btn[data-rail-icon="right"]::before {
+            border-right: 2px solid currentColor;
+            border-bottom: 2px solid currentColor;
+            transform: rotate(-45deg);
+        }
+
+        .e-rail-action-btn[data-rail-icon="down"]::before {
+            border-right: 2px solid currentColor;
+            border-bottom: 2px solid currentColor;
+            transform: rotate(45deg) translate(-1px, -1px);
+        }
+
+        .e-rail-action-btn[data-rail-icon="close"]::before {
+            content: "×";
+            width: auto;
+            height: auto;
+            font-size: 20px;
+            font-weight: 700;
+            line-height: .8;
+            transform: translateY(-1px);
+        }
+
         .e-resize-handle {
             background: var(--e-border);
             cursor: col-resize;
@@ -402,6 +482,15 @@
             border-right: 1px solid var(--e-border);
             background: var(--e-surface);
             overflow: hidden;
+            position: relative;
+        }
+
+        .e-left.collapsed > :not(.e-side-opener) {
+            display: none !important;
+        }
+
+        .e-left.collapsed {
+            border-right-color: rgba(86, 111, 138, .22);
         }
 
         .e-tabs {
@@ -435,6 +524,84 @@
         .e-tab.active {
             color: var(--e-text);
             border-bottom-color: var(--e-accent);
+        }
+
+        .e-side-tabbar-actions {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            padding: 0 6px;
+            border-left: 1px solid rgba(86, 111, 138, .18);
+        }
+
+        .e-side-tabbar-actions .e-rail-action-btn {
+            width: 30px;
+            min-width: 30px;
+            height: 26px;
+            padding: 0;
+        }
+
+        .e-side-opener {
+            display: none;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .015)),
+                var(--e-surface);
+            color: var(--e-text2);
+            cursor: pointer;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 10px 0;
+            transition: color .12s, background .12s;
+        }
+
+        .e-side-opener:hover {
+            color: var(--e-text);
+            background:
+                linear-gradient(180deg, rgba(34, 197, 94, .1), rgba(34, 197, 94, .03)),
+                var(--e-surface);
+        }
+
+        .e-side-opener svg {
+            display: none !important;
+        }
+
+        .e-side-opener::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            flex-shrink: 0;
+        }
+
+        .e-side-opener[data-rail-icon="right"]::before {
+            border-right: 2px solid currentColor;
+            border-bottom: 2px solid currentColor;
+            transform: rotate(-45deg);
+        }
+
+        .e-side-opener[data-rail-icon="left"]::before {
+            border-left: 2px solid currentColor;
+            border-bottom: 2px solid currentColor;
+            transform: rotate(45deg);
+        }
+
+        .e-side-opener-label {
+            writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            font-size: 10px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .e-left.collapsed .e-side-opener,
+        .e-pdf.collapsed .e-side-opener {
+            display: flex;
         }
 
         .e-tabpanel {
@@ -2258,22 +2425,28 @@
 
         .e-bp-spacer {
             flex: 1;
+            min-width: 12px;
+        }
+
+        .e-bp-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+            padding: 0 8px 0 10px;
+            margin-left: 4px;
+            border-left: 1px solid rgba(86, 111, 138, .16);
+            background: linear-gradient(90deg, rgba(255, 255, 255, .02), rgba(255, 255, 255, 0));
         }
 
         .e-bp-close,
         .e-bp-collapse {
             width: 30px;
-            height: 30px;
+            min-width: 30px;
+            height: 26px;
+            padding: 0;
             flex-shrink: 0;
-            border: 0;
-            border-radius: 3px;
-            background: rgba(255, 255, 255, .04);
-            color: var(--e-text2);
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: color .12s, background .12s;
+            border-radius: 6px;
         }
 
         .e-bp-close svg,
@@ -2284,10 +2457,18 @@
             fill: none;
         }
 
+        .e-bp-close svg,
+        .e-bp-collapse svg {
+            width: 15px;
+            height: 15px;
+            display: block;
+        }
+
         .e-bp-close:hover,
         .e-bp-collapse:hover {
             color: var(--e-text);
-            background: rgba(255, 255, 255, .1);
+            background: rgba(255, 255, 255, .12);
+            border-color: rgba(34, 197, 94, .32);
         }
 
         .e-bottom-panel.collapsed .e-bp-collapse svg {
@@ -2387,6 +2568,15 @@
             border-left: 1px solid var(--e-border);
             background: var(--e-surface);
             overflow: hidden;
+            position: relative;
+        }
+
+        .e-pdf.collapsed > :not(.e-side-opener) {
+            display: none !important;
+        }
+
+        .e-pdf.collapsed {
+            border-left-color: rgba(86, 111, 138, .22);
         }
 
         .e-pdf-bar {
@@ -3026,6 +3216,12 @@
             .e-wa-view {
                 width: auto;
                 max-width: none;
+            }
+
+            .e-left .e-rail-action-btn,
+            .e-pdf .e-rail-action-btn,
+            .e-side-opener {
+                display: none !important;
             }
         }
 
@@ -3736,16 +3932,88 @@
             inset: 0;
             z-index: 15;
             cursor: not-allowed;
-            background: transparent;
+            pointer-events: auto;
+            background:
+                linear-gradient(180deg, rgba(15, 23, 42, .48), rgba(15, 23, 42, .10) 140px, transparent 260px),
+                repeating-linear-gradient(135deg, rgba(34, 197, 94, .045) 0, rgba(34, 197, 94, .045) 8px, transparent 8px, transparent 18px);
         }
 
         .e-editor-wrap.project-locked .e-readonly-overlay {
-            display: block;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding-top: 18px;
         }
 
         .e-editor-wrap.project-locked #cm-editor {
-            opacity: .65;
+            opacity: .76;
             pointer-events: none;
+            filter: saturate(.78);
+        }
+
+        .e-readonly-card {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            max-width: min(680px, calc(100% - 32px));
+            padding: 10px 14px 10px 12px;
+            border: 1px solid rgba(74, 222, 128, .35);
+            border-radius: 16px;
+            color: #d9ffe7;
+            background:
+                linear-gradient(135deg, rgba(18, 49, 36, .94), rgba(31, 41, 55, .9));
+            box-shadow: 0 18px 44px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .08);
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: .01em;
+            backdrop-filter: blur(14px);
+        }
+
+        .e-readonly-pulse {
+            width: 24px;
+            height: 24px;
+            border-radius: 10px;
+            display: grid;
+            place-items: center;
+            flex: 0 0 auto;
+            color: #0f2419;
+            background: linear-gradient(135deg, #86efac, #22c55e);
+            box-shadow: 0 0 0 6px rgba(34, 197, 94, .12);
+        }
+
+        .e-readonly-pulse::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: currentColor;
+            animation: readonlyPulse 1.6s ease-in-out infinite;
+        }
+
+        .e-readonly-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .e-readonly-kicker {
+            color: rgba(216, 255, 231, .62);
+            font-size: 10px;
+            line-height: 1;
+            text-transform: uppercase;
+            letter-spacing: .14em;
+        }
+
+        .e-readonly-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        @keyframes readonlyPulse {
+            0%, 100% { transform: scale(.72); opacity: .72; }
+            50% { transform: scale(1); opacity: 1; }
         }
 
         /* Staging PDF tab (added to right PDF panel) */
@@ -5089,6 +5357,13 @@
                         <button class="e-tab" data-tab="history">Історія</button>
                         <button class="e-tab" data-tab="search" id="left-tab-search" style="display:none">Пошук</button>
                     {% endif %}
+                    <div class="e-side-tabbar-actions">
+                        <button class="e-rail-action-btn" id="left-panel-collapse-btn" type="button" title="Згорнути ліву панель" aria-label="Згорнути ліву панель" data-rail-icon="left">
+                            <svg viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M10.5 3.5 5.5 8l5 4.5"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Files tab -->
@@ -5193,6 +5468,12 @@
                     </div>
                     <ul id="outline-list" class="e-outline"></ul>
                 </div>
+                <button class="e-side-opener" id="left-panel-open-btn" type="button" title="Відкрити ліву панель" aria-label="Відкрити ліву панель" data-rail-icon="right">
+                    <svg viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5.5 3.5 10.5 8l-5 4.5"/>
+                    </svg>
+                    <span class="e-side-opener-label">Файли</span>
+                </button>
             </aside>
 
             <!-- ── Resize handle ─────────────────────── -->
@@ -5235,7 +5516,13 @@
                     <div id="cm-editor"></div>
                     <div class="e-drop-overlay">Перетягніть файли сюди</div>
                     <div class="e-readonly-overlay" id="readonly-overlay">
-                        <span>{% if session_review %}Перегляд зміни доступний тільки для читання{% else %}Редактор доступний тільки для читання, доки запропонована зміна активна{% endif %}</span>
+                        <span class="e-readonly-card">
+                            <span class="e-readonly-pulse" aria-hidden="true"></span>
+                            <span class="e-readonly-copy">
+                                <span class="e-readonly-kicker">Read-only</span>
+                                <span class="e-readonly-label" data-readonly-label>{% if session_review %}Перегляд зміни доступний тільки для читання{% else %}Редактор доступний тільки для читання, доки запропонована зміна активна{% endif %}</span>
+                            </span>
+                        </span>
                     </div>
                 </div>
                 <div id="editor-context-menu" class="e-menu" role="menu"></div>
@@ -5280,21 +5567,25 @@
                         </button>
                         {% endif %}
                         <div class="e-bp-spacer"></div>
-                        <button class="e-bp-collapse" id="bottom-collapse-btn" type="button" title="Згорнути панель"
-                                aria-label="Згорнути панель">
-                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
-                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="2 5 7 10 12 5"/>
-                            </svg>
-                        </button>
-                        <button class="e-bp-close" id="bottom-close-btn" type="button" title="Закрити панель"
-                                aria-label="Закрити панель">
-                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
-                                 stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                                <line x1="2" y1="2" x2="12" y2="12"/>
-                                <line x1="12" y1="2" x2="2" y2="12"/>
-                            </svg>
-                        </button>
+                        <div class="e-bp-actions">
+                            <button class="e-bp-collapse e-rail-action-btn" id="bottom-collapse-btn" type="button" title="Згорнути панель"
+                                    data-rail-icon="down"
+                                    aria-label="Згорнути панель">
+                                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="2 5 7 10 12 5"/>
+                                </svg>
+                            </button>
+                            <button class="e-bp-close e-rail-action-btn" id="bottom-close-btn" type="button" title="Закрити панель"
+                                    data-rail-icon="close"
+                                    aria-label="Закрити панель">
+                                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                    <line x1="2" y1="2" x2="12" y2="12"/>
+                                    <line x1="12" y1="2" x2="2" y2="12"/>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <div id="diag-panel" class="e-bp-body active">
                         <div class="e-diag-list" id="diag-list">
@@ -5389,6 +5680,11 @@
                     <span class="e-pdf-label">{% if project.markup_type == "typst" %}Web Preview{% else %}Перегляд PDF{% endif %}</span>
                     <div class="e-pdf-actions">
                         <span id="pdf-page-info" class="e-pdf-page-info"></span>
+                        <button id="right-panel-collapse-btn" class="e-rail-action-btn" type="button" title="Згорнути праву панель" aria-label="Згорнути праву панель" data-rail-icon="right">
+                            <svg viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M5.5 3.5 10.5 8l-5 4.5"/>
+                            </svg>
+                        </button>
                         <button id="refresh-pdf" class="e-icon-btn" type="button" title="Оновити PDF">
                             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
                                  stroke-linecap="round" stroke-linejoin="round">
@@ -5448,6 +5744,12 @@
                     </div>
                     <div id="pdf-loading" class="e-pdf-loading">Завантаження PDF…</div>
                 </div>
+                <button class="e-side-opener" id="right-panel-open-btn" type="button" title="Відкрити праву панель" aria-label="Відкрити праву панель" data-rail-icon="left">
+                    <svg viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10.5 3.5 5.5 8l5 4.5"/>
+                    </svg>
+                    <span class="e-side-opener-label">Preview</span>
+                </button>
             </section>
 
         </div>

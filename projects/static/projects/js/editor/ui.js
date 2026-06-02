@@ -562,49 +562,115 @@ export function initResizeHandles() {
   if (!body) return;
 
   const LS_KEY = "editor-panel-widths";
+  const SIDE_STATE_LS_KEY = "editor-side-panels";
   const MIN_W = 160;
+  const COLLAPSED_W = 38;
+  const DEFAULT_LEFT_W = 260;
+  const DEFAULT_RIGHT_W = 420;
+  const leftPanel = document.querySelector(".e-left");
+  const rightPanel = document.querySelector(".e-pdf");
+  const leftCollapseBtn = document.getElementById("left-panel-collapse-btn");
+  const rightCollapseBtn = document.getElementById("right-panel-collapse-btn");
+  const leftOpenBtn = document.getElementById("left-panel-open-btn");
+  const rightOpenBtn = document.getElementById("right-panel-open-btn");
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function canCollapseSides() { return window.innerWidth > 1200; }
 
   function applyWidths(lw, rw) {
     body.style.setProperty("--left-w", lw + "px");
     body.style.setProperty("--right-w", rw + "px");
   }
 
-  function loadSaved() {
+  function loadSavedWidths() {
+    const fallback = { left: DEFAULT_LEFT_W, right: DEFAULT_RIGHT_W };
     try {
       const d = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
-      if (d.left && d.right) applyWidths(d.left, d.right);
+      return {
+        left: Number.isFinite(Number(d.left)) ? Number(d.left) : fallback.left,
+        right: Number.isFinite(Number(d.right)) ? Number(d.right) : fallback.right,
+      };
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function savePanelWidths() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(expandedWidths)); } catch (_) {}
+  }
+
+  function loadSideState() {
+    try {
+      const d = JSON.parse(localStorage.getItem(SIDE_STATE_LS_KEY) || "{}");
+      return {
+        leftCollapsed: Boolean(d.leftCollapsed),
+        rightCollapsed: Boolean(d.rightCollapsed),
+      };
+    } catch (_) {
+      return { leftCollapsed: false, rightCollapsed: false };
+    }
+  }
+
+  function saveSideState() {
+    try {
+      localStorage.setItem(SIDE_STATE_LS_KEY, JSON.stringify({
+        leftCollapsed,
+        rightCollapsed,
+      }));
     } catch (_) {}
   }
 
-  function savePanelWidths(lw, rw) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ left: lw, right: rw })); } catch (_) {}
+  const expandedWidths = loadSavedWidths();
+  let { leftCollapsed, rightCollapsed } = loadSideState();
+
+  function syncSidePanels() {
+    const collapseEnabled = canCollapseSides();
+    const leftIsCollapsed = collapseEnabled && leftCollapsed;
+    const rightIsCollapsed = collapseEnabled && rightCollapsed;
+    leftPanel?.classList.toggle("collapsed", leftIsCollapsed);
+    rightPanel?.classList.toggle("collapsed", rightIsCollapsed);
+    body.classList.toggle("left-collapsed", leftIsCollapsed);
+    body.classList.toggle("right-collapsed", rightIsCollapsed);
+    leftCollapseBtn?.setAttribute("aria-expanded", leftIsCollapsed ? "false" : "true");
+    rightCollapseBtn?.setAttribute("aria-expanded", rightIsCollapsed ? "false" : "true");
+    leftOpenBtn?.setAttribute("aria-expanded", leftIsCollapsed ? "false" : "true");
+    rightOpenBtn?.setAttribute("aria-expanded", rightIsCollapsed ? "false" : "true");
+    applyWidths(leftIsCollapsed ? COLLAPSED_W : expandedWidths.left, rightIsCollapsed ? COLLAPSED_W : expandedWidths.right);
   }
 
-  loadSaved();
+  function setSideCollapsed(side, collapsed) {
+    if (side === "left") leftCollapsed = Boolean(collapsed);
+    else rightCollapsed = Boolean(collapsed);
+    saveSideState();
+    syncSidePanels();
+  }
+
+  syncSidePanels();
 
   function makeDragger(handleId, side) {
     const handle = document.getElementById(handleId);
     if (!handle) return;
     handle.addEventListener("mousedown", () => {
+      if ((side === "left" && leftCollapsed) || (side === "right" && rightCollapsed) || !canCollapseSides() && side === "right") return;
       handle.classList.add("dragging");
       const totalW = body.clientWidth;
-      const computedLeft  = parseInt(getComputedStyle(body).getPropertyValue("--left-w"))  || 260;
-      const computedRight = parseInt(getComputedStyle(body).getPropertyValue("--right-w")) || 420;
+      const computedLeft  = leftCollapsed ? COLLAPSED_W : expandedWidths.left;
+      const computedRight = rightCollapsed ? COLLAPSED_W : expandedWidths.right;
 
       function onMove(me) {
         const rect = body.getBoundingClientRect();
         const x = me.clientX - rect.left;
         if (side === "left") {
           const lw = clamp(x, MIN_W, totalW - MIN_W - computedRight - 2);
+          expandedWidths.left = lw;
           applyWidths(lw, computedRight);
-          savePanelWidths(lw, computedRight);
+          savePanelWidths();
         } else {
           const rw = clamp(totalW - x, MIN_W, totalW - MIN_W - computedLeft - 2);
+          expandedWidths.right = rw;
           if (s.pdfDoc) { import("./pdfviewer.js").then(m => m.renderPdfPages(true)); }
           applyWidths(computedLeft, rw);
-          savePanelWidths(computedLeft, rw);
+          savePanelWidths();
         }
       }
       function onUp() {
@@ -619,6 +685,28 @@ export function initResizeHandles() {
 
   makeDragger("resize-left", "left");
   makeDragger("resize-right", "right");
+  leftCollapseBtn?.addEventListener("click", e => {
+    e.preventDefault();
+    if (!canCollapseSides()) return;
+    setSideCollapsed("left", true);
+  });
+  rightCollapseBtn?.addEventListener("click", e => {
+    e.preventDefault();
+    if (!canCollapseSides()) return;
+    setSideCollapsed("right", true);
+  });
+  leftOpenBtn?.addEventListener("click", e => {
+    e.preventDefault();
+    setSideCollapsed("left", false);
+  });
+  rightOpenBtn?.addEventListener("click", e => {
+    e.preventDefault();
+    setSideCollapsed("right", false);
+    if (s.pdfDoc) { import("./pdfviewer.js").then(m => m.renderPdfPages(true)); }
+  });
+  window.addEventListener("resize", () => {
+    syncSidePanels();
+  });
 
   // Bottom panel controls: close, collapse, reopen, vertical resize
   const BOTTOM_LS_KEY = "editor-bottom-panel-height";

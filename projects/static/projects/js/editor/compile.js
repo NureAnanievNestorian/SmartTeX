@@ -8,7 +8,7 @@ import * as tinymist from "./tinymist.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
-const { getContent, saveTabState, activateTab, hasTabState, setEditorDiagnostics, replaceContentPreservingViewport } = cm;
+const { getContent, saveTabState, activateTab, hasTabState, getTabStateContent, setEditorDiagnostics, replaceContentPreservingViewport } = cm;
 const { utf8ByteSize, refreshOpenAsset } = files;
 const { setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics } = ui;
 const { loadPdfViewer, pdfEmpty, getPreviewMode, resyncTypstPreview, refreshTypstPreviewStatus } = pdfviewer;
@@ -72,7 +72,7 @@ export function updateCompileArtifacts(logText = "", compilePayload = null) {
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 
-export async function saveCurrentFile() {
+export async function saveCurrentFile(opts = {}) {
   if (cfg.sessionReview) {
     setSaveHint("Session review is read-only", "error");
     return;
@@ -81,7 +81,7 @@ export async function saveCurrentFile() {
     setSaveHint("Read-only: AI session active", "error");
     return;
   }
-  const targetName = String(s.activeTabName || s.selectedFile?.name || "");
+  const targetName = String(opts.targetName || s.activeTabName || s.selectedFile?.name || "");
   if (!targetName) return;
   const targetFile = targetName === s.mainFileName
     ? { name: targetName, type: "main", is_text: true, is_dir: false }
@@ -97,10 +97,15 @@ export async function saveCurrentFile() {
   }
   s.saveQueued = false;
   s.saving = true;
-  const saveGeneration = s.editGeneration;
+  const saveGeneration = Number.isFinite(opts.generation) ? opts.generation : s.editGeneration;
   setSaveHint("Збереження…", "saving");
   try {
-    const content = getContent();
+    const content = typeof opts.contentSnapshot === "string"
+      ? opts.contentSnapshot
+      : targetName === s.activeTabName
+        ? getContent()
+        : getTabStateContent(targetName);
+    if (typeof content !== "string") return;
     if (targetName === s.mainFileName) {
       await api(`/api/projects/${cfg.projectId}/file/`, {
         method: "PUT",
@@ -277,15 +282,17 @@ async function handleMcpUpdate() {
   setSaveHint("Проєкт оновлено через MCP. Оновлюємо…", "saving");
   const { loadMainFile, loadFiles, loadVersions } = await import("./app.js");
   try {
-    await loadMainFile();
-    // Refresh non-main text file if currently open
-    if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
-      try {
-        const params = new URLSearchParams({ include_text: "1" });
-        const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
-        syncTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
-        s.hasUnsavedChanges = false;
-      } catch (_) {}
+    if (!s.hasUnsavedChanges && !s.saving) {
+      await loadMainFile();
+      // Refresh non-main text file if currently open
+      if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
+        try {
+          const params = new URLSearchParams({ include_text: "1" });
+          const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
+          syncTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
+          s.hasUnsavedChanges = false;
+        } catch (_) {}
+      }
     }
   } catch (_) {}
   try {
@@ -306,7 +313,7 @@ async function handleProjectUpdate(source = "web") {
     // Only reload file content from server when there are no local edits in flight.
     // syncTabContent is a no-op when content is identical, so the cursor never
     // jumps in the normal post-compile case where content is already in sync.
-    if (!s.hasUnsavedChanges) {
+    if (!s.hasUnsavedChanges && !s.saving) {
       await main.loadMainFile();
       if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
         try {
@@ -386,7 +393,7 @@ export function connectProjectUpdatesSse() {
     if (!incoming || incoming <= s.lastSeenMcpVersionId) return;
     s.lastSeenMcpVersionId = incoming;
     if (data.source === "mcp") {
-      if (s.hasUnsavedChanges) {
+      if (s.hasUnsavedChanges || s.saving) {
         setSaveHint("Проєкт змінено через MCP. Список файлів оновлено; збережіть локальні правки.", "error");
         import("./app.js").then(({ loadFiles, loadVersions }) =>
           Promise.all([loadFiles(), loadVersions(true)])

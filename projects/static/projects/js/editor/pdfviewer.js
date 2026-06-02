@@ -225,26 +225,28 @@ function applyPreviewSyncUi() {
 
 function applyPreviewModeUi() {
   const mode = s.previewMode || "pdf";
-  const isTypst = isTypstProject();
   const previewEnabled = typstPreviewEnabled();
-  previewKindbarEl?.classList.toggle("visible", isTypst);
+  const webModeActive = previewEnabled && mode === "web";
+  previewKindbarEl?.classList.toggle("visible", previewEnabled);
   previewKindWebBtn?.classList.toggle("active", previewEnabled && mode === "web");
   previewKindPdfBtn?.classList.toggle("active", mode === "pdf");
   if (previewKindWebBtn) previewKindWebBtn.style.display = previewEnabled ? "" : "none";
-  if (previewKindPdfBtn) previewKindPdfBtn.style.display = isTypst && previewEnabled ? "none" : "";
-  typstPreviewWrapEl?.classList.toggle("visible", previewEnabled && mode === "web");
-  if (pdfCanvasContainer) pdfCanvasContainer.style.display = previewEnabled && mode === "web" ? "none" : "flex";
-  if (pdfEmpty) pdfEmpty.style.display = previewEnabled && mode === "web" ? "none" : pdfEmpty.style.display;
-  if (pdfLoadingEl) pdfLoadingEl.style.display = previewEnabled && mode === "web" ? "none" : pdfLoadingEl.style.display;
-  if (pdfPageInfo) pdfPageInfo.textContent = previewEnabled && mode === "web" ? "Web preview" : pdfPageInfo.textContent;
+  if (previewKindPdfBtn) previewKindPdfBtn.style.display = previewEnabled ? "" : "none";
+  if (previewSyncFollowBtn?.parentElement) previewSyncFollowBtn.parentElement.style.display = webModeActive ? "" : "none";
+  if (previewThemeAutoBtn?.parentElement) previewThemeAutoBtn.parentElement.style.display = webModeActive ? "" : "none";
+  typstPreviewWrapEl?.classList.toggle("visible", webModeActive);
+  if (pdfCanvasContainer) pdfCanvasContainer.style.display = webModeActive ? "none" : "flex";
+  if (pdfEmpty) pdfEmpty.style.display = webModeActive ? "none" : pdfEmpty.style.display;
+  if (pdfLoadingEl) pdfLoadingEl.style.display = webModeActive ? "none" : pdfLoadingEl.style.display;
+  if (pdfPageInfo) pdfPageInfo.textContent = webModeActive ? "Web preview" : pdfPageInfo.textContent;
   if (openPdfLink) {
-    openPdfLink.href = previewEnabled && mode === "web"
+    openPdfLink.href = webModeActive
       ? previewBaseUrl()
       : (s.pdfCurrentUrl ? s.pdfCurrentUrl.split("?")[0] : openPdfLink.href);
-    openPdfLink.title = previewEnabled && mode === "web" ? "Відкрити Web Preview" : "Відкрити PDF";
+    openPdfLink.title = webModeActive ? "Відкрити Web Preview" : "Відкрити PDF";
   }
   if (refreshPdfBtn) {
-    refreshPdfBtn.title = previewEnabled && mode === "web" ? "Оновити Web Preview" : "Оновити PDF";
+    refreshPdfBtn.title = webModeActive ? "Оновити Web Preview" : "Оновити PDF";
   }
   applyPreviewThemeUi();
   applyPreviewSyncUi();

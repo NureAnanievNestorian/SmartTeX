@@ -76,6 +76,10 @@ cfg.csrfToken  = editorConfig.csrfToken  || "";
 cfg.sessionReview = Boolean(editorConfig.sessionReview);
 cfg.sessionReviewUrl = editorConfig.sessionReviewUrl || "";
 
+const AUTOSAVE_DEBOUNCE_MS = 2500;
+const TYPST_AUTOSAVE_DEBOUNCE_MS = 900;
+const TYPST_REALTIME_COMPILE_DEBOUNCE_MS = 2500;
+
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
 const editorTabbarEl = document.getElementById("editor-tabbar");
@@ -1471,20 +1475,28 @@ function onEditorInput(action) {
   clearTimeout(s.saveTimer);
   clearTimeout(s.typstCompileTimer);
 
-  const savedName = s.selectedFile.name;
+  const savedName = s.activeTabName || s.selectedFile.name;
   const isTypstTextFile = s.projectMeta?.markup_type === "typst" && String(savedName).toLowerCase().endsWith(".typ");
+  const contentSnapshot = cm.getContent();
+  const generationSnapshot = s.editGeneration;
   if (isTypstTextFile) {
-    const content = cm.getContent();
-    tinymist.didChange(savedName, content);
-    syncPreviewMemoryFile(savedName, content);
+    tinymist.didChange(savedName, contentSnapshot);
+    syncPreviewMemoryFile(savedName, contentSnapshot);
   }
   s.saveTimer = setTimeout(() => {
-    if (isTypstTextFile) s.pendingRealtimeCompile = true;
     if (savedName === s.mainFileName) s.pendingSectionsRefresh = true;
-    saveCurrentFile()
+    saveCurrentFile({ targetName: savedName, contentSnapshot, generation: generationSnapshot })
       .then(() => {})
       .catch(() => {});
-  }, isTypstTextFile ? 400 : 2500);
+  }, isTypstTextFile ? TYPST_AUTOSAVE_DEBOUNCE_MS : AUTOSAVE_DEBOUNCE_MS);
+  if (isTypstTextFile) {
+    s.typstCompileTimer = setTimeout(() => {
+      s.pendingRealtimeCompile = true;
+      saveCurrentFile({ targetName: savedName, contentSnapshot, generation: generationSnapshot })
+        .then(() => {})
+        .catch(() => {});
+    }, TYPST_REALTIME_COMPILE_DEBOUNCE_MS);
+  }
 }
 
 function selectOpenTabByOffset(offset) {

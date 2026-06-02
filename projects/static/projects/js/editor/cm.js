@@ -186,6 +186,7 @@ const typstParser = {
 
 export const langCompartment = new Compartment();
 export const wrapCompartment = new Compartment();
+export const readOnlyCompartment = new Compartment();
 
 const TYPOGRAPHIC_QUOTES = /["'`]/;
 const typstKeywordOptions = [
@@ -563,6 +564,21 @@ export let view = null;
 // Per-tab EditorState cache — preserves independent undo/redo history per tab
 const _tabStates = new Map();
 let _lineWrappingEnabled = true;
+let _readOnlyEnabled = false;
+
+function readOnlyExtensions() {
+  return [
+    EditorState.readOnly.of(_readOnlyEnabled),
+    EditorView.editable.of(!_readOnlyEnabled),
+  ];
+}
+
+function applyReadOnlyState() {
+  if (!view) return;
+  view.dispatch({
+    effects: readOnlyCompartment.reconfigure(readOnlyExtensions()),
+  });
+}
 
 function makeExtensions(filename) {
   const isTypst = String(filename || "").toLowerCase().endsWith(".typ");
@@ -574,6 +590,7 @@ function makeExtensions(filename) {
     syntaxHighlighting(vscodeHighlight),
     langCompartment.of(filename ? getLanguageExt(filename) : []),
     wrapCompartment.of(_lineWrappingEnabled ? EditorView.lineWrapping : []),
+    readOnlyCompartment.of(readOnlyExtensions()),
     autocompletion(isTypst ? { override: [typstCompletionSource], activateOnTyping: true } : {}),
     EditorView.domEventHandlers({
       contextmenu(event) {
@@ -667,6 +684,7 @@ export function activateTab(name, content, filename, forceFresh = false, cacheOn
     if (!cacheOnly) {
       _settingContent = true;
       view.setState(saved);
+      applyReadOnlyState();
       _settingContent = false;
     }
     return true;
@@ -676,6 +694,7 @@ export function activateTab(name, content, filename, forceFresh = false, cacheOn
   _tabStates.set(name, nextState);
   if (!cacheOnly) {
     view.setState(nextState);
+    applyReadOnlyState();
   }
   _settingContent = false;
   return false;
@@ -909,6 +928,17 @@ export function setLineWrapping(enabled) {
 
 export function isLineWrappingEnabled() {
   return _lineWrappingEnabled;
+}
+
+export function setReadOnly(enabled) {
+  const next = Boolean(enabled);
+  if (_readOnlyEnabled === next) return;
+  _readOnlyEnabled = next;
+  applyReadOnlyState();
+}
+
+export function isReadOnly() {
+  return _readOnlyEnabled;
 }
 
 export function focusEditor() { view?.focus(); }

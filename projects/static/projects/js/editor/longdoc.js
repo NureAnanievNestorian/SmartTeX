@@ -19,6 +19,7 @@ const overviewPanelEl = document.getElementById("longdoc-overview-panel");
 const overviewBadgeEl = document.getElementById("writing-assistant-badge");
 const centerEl = document.getElementById("drop-zone");
 const waTabBtnEl = document.getElementById("wa-tab-btn");
+const readonlyOverlayEl = document.getElementById("readonly-overlay");
 
 let _reloadProjectMeta = null;
 let _refreshAnnotationMarkers = null;
@@ -396,6 +397,7 @@ async function loadLongdocSettings() {
     overviewBadgeEl.textContent = s.longdoc.settings.enabled ? "Письмовий асистент" : "Асистент вимкнено";
     overviewBadgeEl.classList.toggle("off", !s.longdoc.settings.enabled);
   }
+  applyProjectEditLock();
 }
 
 async function loadContextFiles() {
@@ -1709,6 +1711,33 @@ function isSessionVisibleInUi(session) {
   return Boolean(session && ["failed_validation", "failed_compile", "ready_for_review"].includes(session.status));
 }
 
+function isProjectLockedForEditing() {
+  return Boolean(cfg.sessionReview || s.longdoc.settings?.locked || s.projectMeta?.longdoc?.locked);
+}
+
+function readonlyReasonText() {
+  if (cfg.sessionReview) return "Перегляд зміни доступний тільки для читання";
+  const session = s.longdoc.activeSession;
+  if (session && !isSessionVisibleInUi(session)) {
+    return "AI готує запропоновану зміну. Редагування тимчасово заблоковано";
+  }
+  if (session) {
+    return "Запропонована зміна активна. Прийміть або відхиліть її, щоб редагувати";
+  }
+  return "Редактор доступний тільки для читання, доки запропонована зміна активна";
+}
+
+function applyProjectEditLock() {
+  const locked = isProjectLockedForEditing();
+  if (editorWrapEl) editorWrapEl.classList.toggle("project-locked", locked);
+  if (readonlyOverlayEl) {
+    readonlyOverlayEl.setAttribute("aria-hidden", locked ? "false" : "true");
+    const label = readonlyOverlayEl.querySelector("[data-readonly-label]");
+    if (label) label.textContent = readonlyReasonText();
+  }
+  cm.setReadOnly?.(locked);
+}
+
 function isSessionAcceptable(session) {
   return Boolean(session && session.status === "ready_for_review");
 }
@@ -1762,7 +1791,7 @@ export function renderSessionBanner() {
   const isActive = isSessionVisibleInUi(session);
 
   if (sessionBannerEl) sessionBannerEl.classList.toggle("visible", Boolean(isActive));
-  if (editorWrapEl) editorWrapEl.classList.toggle("project-locked", Boolean(isActive));
+  applyProjectEditLock();
   if (pdfTabbarEl) pdfTabbarEl.classList.toggle("visible", Boolean(isActive && cfg.sessionReview));
 
   if (!isActive) {
@@ -2026,6 +2055,7 @@ export function initSessionUI() {
   if (cfg.sessionReview) {
     editorWrapEl?.classList.add("project-locked");
   }
+  applyProjectEditLock();
   const _toggleWA = () => {
     if (centerEl?.classList.contains("wa-active")) {
       setAssistantOpen(false);
