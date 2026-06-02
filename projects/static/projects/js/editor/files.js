@@ -297,9 +297,10 @@ export function renderFileList() {
           toggleFolder();
           return;
         }
-        updateSelectedFolderPath(file.name);
+        const isSameFolder = s.selectedFolderPath === file.name;
+        updateSelectedFolderPath(isSameFolder ? "" : file.name);
         persistFileTreeState();
-        setSaveHint(`Цільова папка: ${file.name}`, "saved");
+        setSaveHint(isSameFolder ? "Цільову папку знято" : `Цільова папка: ${file.name}`, "saved");
         renderFileList();
       });
       btn.style.cursor = "pointer";
