@@ -739,7 +739,11 @@ function renderOverviewPanel() {
   const openTasks = Number(taskCounts.open || 0) + Number(taskCounts.in_progress || 0);
   const openAnnotations = Number(annotationCounts.open || 0) + Number(annotationCounts.in_progress || 0);
   const issueReqs = Number(coverageCounts.unchecked || 0) + Number(coverageCounts.partial || 0) + Number(coverageCounts.missing || 0);
-  const session = overview.active_proposal || s.longdoc.activeSession;
+  const session = isSessionVisibleInUi(overview.active_proposal)
+    ? overview.active_proposal
+    : isSessionVisibleInUi(s.longdoc.activeSession)
+      ? s.longdoc.activeSession
+      : null;
 
   overviewPanelEl.innerHTML = `
     <div class="e-workspace-head">
@@ -1701,6 +1705,10 @@ function sessionStatusLabel(status) {
   })[status] || status || "";
 }
 
+function isSessionVisibleInUi(session) {
+  return Boolean(session && ["failed_validation", "failed_compile", "ready_for_review"].includes(session.status));
+}
+
 function isSessionAcceptable(session) {
   return Boolean(session && session.status === "ready_for_review");
 }
@@ -1730,7 +1738,7 @@ function syncSessionModalState(previousSession, nextSession) {
   const nextSig = activeSessionSignature(nextSession);
   updateSessionModalActions(nextSession);
 
-  if (!nextSession) {
+  if (!nextSession || !isSessionVisibleInUi(nextSession)) {
     closeSessionDiffModal();
     s.longdoc.proposalModalDiffSignature = "";
     return;
@@ -1751,7 +1759,7 @@ function syncSessionModalState(previousSession, nextSession) {
 
 export function renderSessionBanner() {
   const session = s.longdoc.activeSession;
-  const isActive = session && ["validating", "failed_validation", "failed_compile", "ready_for_review"].includes(session.status);
+  const isActive = isSessionVisibleInUi(session);
 
   if (sessionBannerEl) sessionBannerEl.classList.toggle("visible", Boolean(isActive));
   if (editorWrapEl) editorWrapEl.classList.toggle("project-locked", Boolean(isActive));
@@ -1776,35 +1784,132 @@ function renderDiffContent(diffText) {
   let totalAdded = 0, totalRemoved = 0;
   const rows = [];
   let leftLine = 0, rightLine = 0;
+  const pendingRemoved = [];
+  const pendingAdded = [];
+
+  function buildInlineDiffPair(beforeText, afterText) {
+    const before = String(beforeText || "");
+    const after = String(afterText || "");
+    const maxPrefix = Math.min(before.length, after.length);
+    let prefixLen = 0;
+    while (prefixLen < maxPrefix && before[prefixLen] === after[prefixLen]) prefixLen += 1;
+
+    let beforeEnd = before.length - 1;
+    let afterEnd = after.length - 1;
+    while (beforeEnd >= prefixLen && afterEnd >= prefixLen && before[beforeEnd] === after[afterEnd]) {
+      beforeEnd -= 1;
+      afterEnd -= 1;
+    }
+
+    const sharedPrefix = before.slice(0, prefixLen);
+    const sharedSuffix = before.slice(beforeEnd + 1);
+    return {
+      beforeHtml:
+        `${escHtml(sharedPrefix)}<span class="diff-inline-del">${escHtml(before.slice(prefixLen, beforeEnd + 1)) || " "}</span>${escHtml(sharedSuffix)}`,
+      afterHtml:
+        `${escHtml(sharedPrefix)}<span class="diff-inline-add">${escHtml(after.slice(prefixLen, afterEnd + 1)) || " "}</span>${escHtml(sharedSuffix)}`,
+    };
+  }
+
+  function renderDiffRow(kind, left, right, codeHtml, sign) {
+    return `<div class="diff-row ${kind}"><span class="diff-sign">${sign}</span><span class="diff-ln">${left || ""}</span><span class="diff-ln">${right || ""}</span><span class="diff-code">${codeHtml}</span></div>`;
+  }
+
+  function flushPendingChanges() {
+    if (!pendingRemoved.length && !pendingAdded.length) return;
+    const pairs = Math.max(pendingRemoved.length, pendingAdded.length);
+    for (let i = 0; i < pairs; i += 1) {
+      const removed = pendingRemoved[i] || null;
+      const added = pendingAdded[i] || null;
+      if (removed && added) {
+        const inline = buildInlineDiffPair(removed.text, added.text);
+        rows.push(renderDiffRow("del", removed.line, "", inline.beforeHtml, "-"));
+        rows.push(renderDiffRow("add", "", added.line, inline.afterHtml, "+"));
+      } else if (removed) {
+        rows.push(renderDiffRow("del", removed.line, "", escHtml(removed.text), "-"));
+      } else if (added) {
+        rows.push(renderDiffRow("add", "", added.line, escHtml(added.text), "+"));
+      }
+    }
+    pendingRemoved.length = 0;
+    pendingAdded.length = 0;
+  }
 
   for (const raw of lines) {
     if (raw.startsWith("---") || raw.startsWith("+++")) {
+      flushPendingChanges();
       rows.push(`<div class="diff-meta">${escHtml(raw)}</div>`);
     } else if (raw.startsWith("@@")) {
+      flushPendingChanges();
       const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
       if (m) { leftLine = parseInt(m[1], 10) - 1; rightLine = parseInt(m[2], 10) - 1; }
       rows.push(`<div class="diff-hunk">${escHtml(raw)}</div>`);
     } else if (raw.startsWith("+")) {
       rightLine++;
       totalAdded++;
-      rows.push(`<div class="diff-row add"><span class="diff-sign">+</span><span class="diff-ln"></span><span class="diff-ln">${rightLine}</span><span class="diff-code">${escHtml(raw.slice(1))}</span></div>`);
+      pendingAdded.push({ line: rightLine, text: raw.slice(1) });
     } else if (raw.startsWith("-")) {
       leftLine++;
       totalRemoved++;
-      rows.push(`<div class="diff-row del"><span class="diff-sign">-</span><span class="diff-ln">${leftLine}</span><span class="diff-ln"></span><span class="diff-code">${escHtml(raw.slice(1))}</span></div>`);
+      pendingRemoved.push({ line: leftLine, text: raw.slice(1) });
     } else {
+      flushPendingChanges();
       leftLine++;
       rightLine++;
-      rows.push(`<div class="diff-row ctx-empty"><span class="diff-sign"> </span><span class="diff-ln">${leftLine}</span><span class="diff-ln">${rightLine}</span><span class="diff-code">${escHtml(raw.slice(1))}</span></div>`);
+      rows.push(renderDiffRow("ctx-empty", leftLine, rightLine, escHtml(raw.slice(1)), " "));
     }
   }
+  flushPendingChanges();
 
   return `
     <div class="diff-summary">
       <span class="diff-chip add">+${totalAdded}</span>
       <span class="diff-chip del">-${totalRemoved}</span>
+      <span class="session-diff-summary-text">Темнішим підсвічено точкові зміни всередині рядків.</span>
     </div>
     <div class="diff-table">${rows.join("")}</div>`;
+}
+
+function truncateDiffFragment(text, maxLen = 260) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return value.length > maxLen ? `${value.slice(0, maxLen - 1)}…` : value;
+}
+
+function renderResolvedAnnotations(items = []) {
+  if (!Array.isArray(items) || !items.length) return "";
+  return `
+    <div class="session-diff-annotation-block">
+      <div class="session-diff-annotation-head">
+        <strong>Помітки, які закриває ця зміна</strong>
+        <span>${items.length}</span>
+      </div>
+      <div class="session-diff-annotation-list">
+        ${items.map(item => {
+          const lineStart = Number(item.line_start || 0);
+          const lineEnd = Number(item.line_end || 0);
+          const lineLabel = lineStart
+            ? `${lineStart}${lineEnd && lineEnd !== lineStart ? `-${lineEnd}` : ""}`
+            : "";
+          return `
+            <article class="session-diff-annotation-card">
+              <div class="session-diff-annotation-meta-row">
+                <div class="session-diff-annotation-meta">${escHtml(item.file_name || "")}${lineLabel ? `:${escHtml(lineLabel)}` : ""}</div>
+                <span class="session-diff-annotation-badge">Буде закрито</span>
+              </div>
+              <div class="session-diff-annotation-text">${escHtml(item.instruction || "")}</div>
+              ${item.selected_text ? `
+                <div class="session-diff-annotation-fragment-wrap">
+                  <div class="session-diff-annotation-fragment-label">Фрагмент</div>
+                  <div class="session-diff-annotation-fragment">${escHtml(truncateDiffFragment(item.selected_text))}</div>
+                </div>
+              ` : ""}
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
 }
 
 async function openSessionDiffModal({ forceReload = false } = {}) {
@@ -1812,7 +1917,7 @@ async function openSessionDiffModal({ forceReload = false } = {}) {
   const content = sessionDiffContentEl;
   const subtitle = sessionDiffSubtitleEl;
   const session = s.longdoc.activeSession;
-  if (!overlay || !session) return;
+  if (!overlay || !session || !isSessionVisibleInUi(session)) return;
 
   const signature = activeSessionSignature(session);
   overlay.classList.add("open");
@@ -1838,13 +1943,14 @@ async function openSessionDiffModal({ forceReload = false } = {}) {
         <span>${warnings.map(w => escHtml(w.message || w.code || "")).join(" · ")}</span>
       </div>
     ` : "";
+    const annotationHtml = renderResolvedAnnotations(data.resolved_annotations || []);
     let diffHtml;
     if (!data.diff_text && data.compile_error_summary) {
       diffHtml = `<pre class="diff-empty diff-compile-error">${escHtml(data.compile_error_summary)}</pre>`;
     } else {
       diffHtml = renderDiffContent(data.diff_text || "");
     }
-    if (content) content.innerHTML = warningHtml + diffHtml;
+    if (content) content.innerHTML = warningHtml + annotationHtml + diffHtml;
 
   } catch (err) {
     if (content) content.innerHTML = `<span class="diff-empty">Помилка завантаження diff: ${escHtml(err.message)}</span>`;

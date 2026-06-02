@@ -1807,6 +1807,46 @@ class AISessionReviewTests(TestCase):
 
         self.assertEqual(resp.status_code, 404)
 
+    def test_api_change_proposal_diff_includes_resolved_annotations(self) -> None:
+        from longdoc.models import AIBatch
+        from longdoc.session_service import create_session
+        from longdoc.services import enable_longdoc
+
+        enable_longdoc(self.project)
+        session = create_session(self.project, goal="Diff payload")
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            goal=session.goal,
+            status=ChangeProposal.Status.READY_FOR_REVIEW,
+            validation_status=ChangeProposal.ValidationStatus.PASSED,
+            compile_status=AISession.CompileStatus.SUCCESS,
+            diff_summary="@@ -1 +1 @@\n-old\n+new\n",
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        annotation = ProjectAnnotation.objects.create(
+            project=self.project,
+            file_name="main.tex",
+            line_start=2,
+            line_end=3,
+            selected_text="Hello World",
+            instruction="Переписати абзац",
+            status=ProjectAnnotation.Status.IN_PROGRESS,
+        )
+        batch = AIBatch.objects.create(session=session, summary="Diff payload batch")
+        batch.annotations_completed.add(annotation)
+        client = Client()
+        client.force_login(self.user)
+
+        resp = client.get(f"/api/projects/{self.project.id}/change-proposals/diff/")
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertEqual(payload["proposal_id"], proposal.id)
+        self.assertEqual(len(payload["resolved_annotations"]), 1)
+        self.assertEqual(payload["resolved_annotations"][0]["id"], annotation.id)
+        self.assertEqual(payload["resolved_annotations"][0]["instruction"], "Переписати абзац")
+
     # ── Project lock enforcement ─────────────────────────────────────────
 
     def test_locked_project_blocks_file_writes_with_423(self) -> None:

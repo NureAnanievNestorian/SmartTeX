@@ -42,6 +42,7 @@ from .services import (
     list_section_summaries,
     list_tasks,
     overview_payload,
+    serialize_annotation,
     serialize_settings,
     sync_context_file_records,
     update_annotation,
@@ -803,6 +804,14 @@ def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonRespo
     proposal = get_active_change_proposal(project)
     if proposal is None:
         return JsonResponse({"error": "NO_ACTIVE_PROPOSAL", "message": "No active suggested change."}, status=404)
+    resolved_annotations = []
+    session = proposal.internal_session
+    batch = getattr(session, "batch", None) if session is not None else None
+    if batch is not None:
+        resolved_annotations = [
+            serialize_annotation(item)
+            for item in batch.annotations_completed.order_by("file_name", "line_start", "id")
+        ]
     return JsonResponse(
         {
             "diff_text": proposal.diff_summary,
@@ -811,6 +820,7 @@ def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonRespo
             "compile_error_summary": proposal.compile_error_summary or "",
             "smcl_risk_level": proposal.smcl_risk_level or "low",
             "smcl_warnings": proposal.smcl_warnings or [],
+            "resolved_annotations": resolved_annotations,
         }
     )
 
