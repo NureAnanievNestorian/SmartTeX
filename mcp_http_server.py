@@ -3032,6 +3032,7 @@ async def propose_document_change(
         ctx: Context,
         patch_ops: list[dict[str, Any]] | None = None,
         validation_token: str | None = None,
+        continue_existing: bool = False,
         addresses_task_id: int | None = None,
         addresses_outline_item_id: int | None = None,
         annotation_ids: list[int] | None = None,
@@ -3088,6 +3089,11 @@ async def propose_document_change(
     one call rather than issuing many small proposals or packing files into
     `import_project_zip`.
 
+    Set `continue_existing=true` to modify the current active MCP-created
+    suggested change instead of creating a new one. This reuses the same hidden
+    staging worktree, applies the new patch ops on top of the current draft,
+    then re-validates, recompiles, and refreshes the review diff/status.
+
     SmartTeX creates the hidden staging session, applies patches, validates the
     document graph, compiles, creates the review diff, and returns proposal
     status. Do not call legacy AI-session tools for normal writing changes.
@@ -3110,6 +3116,8 @@ async def propose_document_change(
             payload["patch_ops"] = list(patch_ops)
     elif patch_ops:
         payload["patch_ops"] = list(patch_ops)
+    if continue_existing:
+        payload["continue_existing"] = True
     if addresses_task_id is not None:
         payload["addresses_task_id"] = int(addresses_task_id)
     if addresses_outline_item_id is not None:
@@ -3180,6 +3188,26 @@ def validate_document_change(
 def get_change_proposal_status(project_id: int) -> dict[str, Any]:
     """Return the active suggested-change status without exposing session internals."""
     return _call_allow_json_errors("GET", f"/api/projects/{project_id}/change-proposals/status/")
+
+
+@mcp.tool
+async def accept_change_proposal(
+        project_id: int,
+        ctx: Context,
+        accept_compile_errors: bool = False,
+) -> dict[str, Any]:
+    """Accept the active suggested change.
+
+    By default this only accepts ready-for-review proposals. To accept a
+    failed-compile proposal anyway, pass `accept_compile_errors=true`. The
+    response will include a warning marker so the caller can surface the risk
+    explicitly to the user.
+    """
+    payload = {"accept_compile_errors": bool(accept_compile_errors)}
+    result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/change-proposals/accept/", payload)
+    if isinstance(result, dict) and not result.get("error"):
+        await _notify_longdoc_updates(ctx, project_id, "overview", "change-proposal")
+    return result
 
 
 @mcp.tool

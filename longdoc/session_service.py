@@ -744,6 +744,9 @@ def finalize_batch(
         check=False,
     )
 
+    if hasattr(session, "batch"):
+        session.batch.delete()
+
     batch = AIBatch.objects.create(session=session, summary=str(summary or "").strip() or "AI session")
 
     if task_ids:
@@ -791,7 +794,7 @@ def finalize_batch(
     return batch
 
 
-def accept_session(session: AISession, user=None) -> None:
+def accept_session(session: AISession, user=None, *, allow_with_compile_errors: bool = False) -> None:
     """
     Merge the session branch into the project HEAD, sync live project files,
     create a ProjectVersion per changed file, complete linked tasks, and clean up.
@@ -815,6 +818,14 @@ def accept_session(session: AISession, user=None) -> None:
         )
 
     project = session.project
+    if session.compile_status != AISession.CompileStatus.SUCCESS and not allow_with_compile_errors:
+        raise SessionWriteError(
+            error="COMPILE_REQUIRED",
+            message="Session has compile errors and cannot be accepted without explicit override.",
+            status_code=409,
+            suggestion="Retry accept with accept_compile_errors=true only if the user explicitly wants to accept a broken compile.",
+            details={"warning_code": "ACCEPT_COMPILE_ERRORS_REQUIRED"},
+        )
 
     # 1. Gather changed files before merge so we know what to version.
     changed_files = sorted(_get_session_changed_files(project, session))

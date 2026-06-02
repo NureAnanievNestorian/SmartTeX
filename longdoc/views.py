@@ -754,6 +754,7 @@ def api_change_proposals(request: HttpRequest, project_id: int) -> JsonResponse:
             addresses_outline_item_id=body.get("addresses_outline_item_id"),
             annotation_ids=list(body.get("annotation_ids") or []),
             validation_token=(str(body.get("validation_token")) if body.get("validation_token") else None),
+            continue_existing=bool(body.get("continue_existing", False)),
         )
     except Exception as exc:
         return _proposal_error_response(exc)
@@ -844,15 +845,30 @@ def api_change_proposal_accept(request: HttpRequest, project_id: int) -> JsonRes
 
     project = _project_with_owner(project_id, request.user)
     proposal = get_active_change_proposal(project)
+    body = _json_body(request)
+    accept_compile_errors = bool(body.get("accept_compile_errors", False))
     if proposal is None or proposal.internal_session is None:
         return JsonResponse({"error": "NO_ACTIVE_PROPOSAL", "message": "No active suggested change."}, status=404)
-    if proposal.status != ChangeProposal.Status.READY_FOR_REVIEW:
+    if proposal.status == ChangeProposal.Status.FAILED_COMPILE and not accept_compile_errors:
+        return JsonResponse(
+            {
+                "error": "COMPILE_FAILED_REVIEW_REQUIRED",
+                "message": "This proposal has compile errors and requires explicit override to accept.",
+                "warning_code": "ACCEPT_COMPILE_ERRORS_REQUIRED",
+                "suggestion": "Retry with accept_compile_errors=true only if the user explicitly wants to accept non-compiling changes.",
+            },
+            status=409,
+        )
+    allowed_statuses = {ChangeProposal.Status.READY_FOR_REVIEW}
+    if accept_compile_errors:
+        allowed_statuses.add(ChangeProposal.Status.FAILED_COMPILE)
+    if proposal.status not in allowed_statuses:
         return JsonResponse(
             {"error": "PROPOSAL_NOT_READY", "message": "Only ready-for-review suggestions can be accepted."},
             status=409,
         )
     try:
-        accept_session(proposal.internal_session, user=request.user)
+        accept_session(proposal.internal_session, user=request.user, allow_with_compile_errors=accept_compile_errors)
     except SessionWriteError as exc:
         return JsonResponse(exc.payload(), status=exc.status_code)
     except Exception as exc:
@@ -860,14 +876,18 @@ def api_change_proposal_accept(request: HttpRequest, project_id: int) -> JsonRes
         return JsonResponse({"error": "ACCEPT_FAILED", "message": str(exc)}, status=500)
     proposal.refresh_from_db()
     project.refresh_from_db()
-    return JsonResponse(
-        {
-            "proposal": serialize_change_proposal(proposal),
-            "pdf_url": pdf_relative_url(project),
-            "pdf_version": pdf_version(project),
-            "project": {"last_status": project.last_status},
+    payload = {
+        "proposal": serialize_change_proposal(proposal),
+        "pdf_url": pdf_relative_url(project),
+        "pdf_version": pdf_version(project),
+        "project": {"last_status": project.last_status},
+    }
+    if accept_compile_errors:
+        payload["warning"] = {
+            "code": "ACCEPTED_WITH_COMPILE_ERRORS",
+            "message": "Accepted despite compile errors by explicit override.",
         }
-    )
+    return JsonResponse(payload)
 
 
 @login_required

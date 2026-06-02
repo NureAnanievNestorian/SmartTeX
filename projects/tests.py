@@ -10,6 +10,7 @@ from django.test import Client, TestCase, override_settings
 
 from SmartTeX.markup import MarkupType
 from projects.models import Project, ProjectVersion
+from projects.pdf_embed_job import _IMPORT_LINE
 from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from projects.services import (
     analyze_typst_project_import,
@@ -24,6 +25,7 @@ from projects.services import (
     split_typst_sections,
     synctex_line_to_pdf,
 )
+from projects.typst_auto_generated import inject_auto_import_into_reachable_typst, remove_auto_imports_from_all_typst
 from templates_lib.models import Template
 
 
@@ -378,3 +380,43 @@ class ProjectTypstSupportTests(TestCase):
         self.assertEqual(typst_diags[0]["file"], "chapters/01-introduction.typ")
         self.assertEqual(typst_diags[0]["line"], 12)
         self.assertEqual(latex_diags[0]["line"], 42)
+
+    def test_pdf_embed_import_is_injected_into_reachable_typst_tree_only(self) -> None:
+        project = Project.objects.create(owner=self.user, title="PDF Embed Reachable", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+        (root / "sections").mkdir(parents=True, exist_ok=True)
+        (root / "main.typ").write_text(
+            '#include "sections/a.typ"\n',
+            encoding="utf-8",
+        )
+        (root / "sections" / "a.typ").write_text(
+            '#include "b.typ"\n#smarttex-include-pdf("docs/file.pdf")\n',
+            encoding="utf-8",
+        )
+        (root / "sections" / "b.typ").write_text(
+            '#smarttex-include-pdf("docs/file.pdf")\n',
+            encoding="utf-8",
+        )
+        (root / "orphan.typ").write_text(
+            '#smarttex-include-pdf("docs/file.pdf")\n',
+            encoding="utf-8",
+        )
+
+        inject_auto_import_into_reachable_typst(project, root, _IMPORT_LINE)
+
+        self.assertIn(_IMPORT_LINE, (root / "main.typ").read_text(encoding="utf-8"))
+        self.assertIn(_IMPORT_LINE, (root / "sections" / "a.typ").read_text(encoding="utf-8"))
+        self.assertIn(_IMPORT_LINE, (root / "sections" / "b.typ").read_text(encoding="utf-8"))
+        self.assertNotIn(_IMPORT_LINE, (root / "orphan.typ").read_text(encoding="utf-8"))
+
+    def test_pdf_embed_remove_imports_cleans_all_typ_files(self) -> None:
+        project = Project.objects.create(owner=self.user, title="PDF Embed Cleanup", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+        auto_block = f"// smarttex:auto-begin\n{_IMPORT_LINE}\n// smarttex:auto-end\n"
+        (root / "main.typ").write_text(auto_block + "= Main\n", encoding="utf-8")
+        (root / "orphan.typ").write_text(auto_block + "= Orphan\n", encoding="utf-8")
+
+        remove_auto_imports_from_all_typst(root)
+
+        self.assertNotIn(_IMPORT_LINE, (root / "main.typ").read_text(encoding="utf-8"))
+        self.assertNotIn(_IMPORT_LINE, (root / "orphan.typ").read_text(encoding="utf-8"))

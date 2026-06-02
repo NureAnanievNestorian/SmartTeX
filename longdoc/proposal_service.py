@@ -639,6 +639,168 @@ def get_active_change_proposal(project) -> ChangeProposal | None:
     return _active_proposal(project)
 
 
+def _prepare_proposal_session_for_iteration(project, proposal: ChangeProposal):
+    from .session_service import create_session
+
+    session = proposal.internal_session
+    if session is None or session.status in (
+        AISession.Status.ACCEPTED,
+        AISession.Status.DISCARDED,
+        AISession.Status.EXPIRED,
+    ):
+        session = create_session(project, proposal.goal, skip_lock_check=True)
+        proposal.internal_session = session
+        proposal.save(update_fields=["internal_session", "updated_at"])
+        return session
+
+    if session.status == AISession.Status.READY_FOR_REVIEW:
+        session.status = AISession.Status.ACTIVE
+        session.save(update_fields=["status", "updated_at"])
+    return session
+
+
+def _finalize_proposal_execution(
+    proposal: ChangeProposal,
+    *,
+    project,
+    user,
+    normalized_ops: list[dict[str, Any]],
+    annotations: list[ProjectAnnotation],
+) -> ChangeProposal:
+    baseline_graph = inspect_document_graph(project)
+    session = _prepare_proposal_session_for_iteration(project, proposal)
+
+    for op in normalized_ops:
+        _apply_patch_op(session, op)
+
+    proposed_graph = inspect_document_graph(project, root=Path(session.worktree_path))
+    graph_errors = introduced_graph_errors(baseline_graph, proposed_graph)
+    if graph_errors:
+        proposal.status = ChangeProposal.Status.FAILED_VALIDATION
+        proposal.validation_status = ChangeProposal.ValidationStatus.FAILED
+        proposal.graph_validation_errors = graph_errors
+        proposal.compile_status = AISession.CompileStatus.NOT_RUN
+        proposal.compile_error_summary = ""
+        proposal.diff_summary = ""
+        proposal.changed_files = []
+        proposal.user_visible_message = "Could not prepare this change"
+        proposal.save(
+            update_fields=[
+                "status",
+                "validation_status",
+                "graph_validation_errors",
+                "compile_status",
+                "compile_error_summary",
+                "diff_summary",
+                "changed_files",
+                "user_visible_message",
+                "updated_at",
+            ]
+        )
+        return proposal
+
+    proposal.validation_status = ChangeProposal.ValidationStatus.PASSED
+    proposal.graph_validation_errors = []
+    proposal.save(update_fields=["validation_status", "graph_validation_errors", "updated_at"])
+
+    compile_result = compile_session(session)
+    session.refresh_from_db()
+    proposal.compile_status = session.compile_status
+    if compile_result.get("status") != "success" or session.compile_status != AISession.CompileStatus.SUCCESS:
+        compile_policy = ProposalPolicyEngine.post_compile_check(user, project, proposal, compile_result)
+        proposal.status = ChangeProposal.Status.FAILED_COMPILE
+        proposal.compile_error_summary = _serialize_compile_failure(compile_result)
+        proposal.diff_summary = generate_diff(session)
+        proposal.changed_files = []
+        proposal.smcl_risk_level = compile_policy.risk_level
+        proposal.smcl_warnings = compile_policy.warnings
+        proposal.smcl_metadata = {**(proposal.smcl_metadata or {}), **compile_policy.metadata}
+        proposal.user_visible_message = (
+            compile_policy.reason
+            if compile_policy.action in {"stop_and_ask_user", "narrow_scope"}
+            else "The document could not be compiled after applying the changes."
+        )
+        proposal.save(
+            update_fields=[
+                "status",
+                "compile_status",
+                "compile_error_summary",
+                "diff_summary",
+                "changed_files",
+                "user_visible_message",
+                "smcl_risk_level",
+                "smcl_warnings",
+                "smcl_metadata",
+                "updated_at",
+            ]
+        )
+        return proposal
+
+    diff = generate_diff(session)
+    post_policy = ProposalPolicyEngine.post_patch_check(user, project, proposal, diff)
+    proposal.smcl_risk_level = post_policy.risk_level
+    proposal.smcl_warnings = post_policy.warnings
+    proposal.smcl_metadata = {**(proposal.smcl_metadata or {}), **post_policy.metadata}
+    if post_policy.action == "reject":
+        proposal.status = ChangeProposal.Status.FAILED_VALIDATION
+        proposal.validation_status = ChangeProposal.ValidationStatus.FAILED
+        proposal.graph_validation_errors = [
+            {
+                "error": "SMCL_DIFF_REJECTED",
+                "message": post_policy.reason or "Suggested change was rejected by AI safety validation.",
+            }
+        ]
+        proposal.compile_error_summary = ""
+        proposal.diff_summary = ""
+        proposal.changed_files = []
+        proposal.user_visible_message = post_policy.reason or "Suggested change needs a narrower patch."
+        proposal.save(
+            update_fields=[
+                "status",
+                "validation_status",
+                "graph_validation_errors",
+                "compile_error_summary",
+                "diff_summary",
+                "changed_files",
+                "user_visible_message",
+                "smcl_risk_level",
+                "smcl_warnings",
+                "smcl_metadata",
+                "updated_at",
+            ]
+        )
+        return proposal
+
+    finalize_batch(
+        session,
+        summary=proposal.goal,
+        task_ids=[proposal.addresses_task_id] if proposal.addresses_task_id else None,
+        annotation_ids=[item.id for item in annotations],
+    )
+    session.refresh_from_db()
+    proposal.status = ChangeProposal.Status.READY_FOR_REVIEW
+    proposal.compile_status = AISession.CompileStatus.SUCCESS
+    proposal.compile_error_summary = ""
+    proposal.diff_summary = diff
+    proposal.changed_files = _changed_files_from_batch(session)
+    proposal.user_visible_message = "Ready for review"
+    proposal.save(
+        update_fields=[
+            "status",
+            "compile_status",
+            "compile_error_summary",
+            "diff_summary",
+            "changed_files",
+            "user_visible_message",
+            "smcl_risk_level",
+            "smcl_warnings",
+            "smcl_metadata",
+            "updated_at",
+        ]
+    )
+    return proposal
+
+
 def propose_document_change(
     project,
     *,
@@ -649,6 +811,7 @@ def propose_document_change(
     annotation_ids: list[int] | None = None,
     created_by: str = ChangeProposal.CreatedBy.MCP,
     validation_token: str | None = None,
+    continue_existing: bool = False,
 ) -> ChangeProposal:
     auto_discarded_previous_failed_proposal_id: int | None = None
     used_validation_token: str | None = None
@@ -685,32 +848,77 @@ def propose_document_change(
             "patch_ops is required when validation_token is not provided.",
         )
     auto_discarded_previous_failed_proposal_id: int | None = None
+    existing_proposal: ChangeProposal | None = None
     if get_locking_session(project) is not None or get_locking_change_proposal(project) is not None:
         session = get_locking_session(project)
         if session is not None:
-            raise ProjectLockedError(project=project, session=session)
+            linked_proposal = getattr(session, "change_proposal", None)
+            if not (
+                continue_existing
+                and linked_proposal is not None
+                and linked_proposal.created_by == ChangeProposal.CreatedBy.MCP
+                and created_by == ChangeProposal.CreatedBy.MCP
+            ):
+                raise ProjectLockedError(project=project, session=session)
+            existing_proposal = linked_proposal
         proposal = get_locking_change_proposal(project)
-        # If the only thing locking the project is an MCP-created proposal that
-        # already failed validation/compile, auto-discard it so the agent can
-        # iterate instead of spinning in PROJECT_LOCKED → cancel → PROJECT_LOCKED.
-        # User-owned or pending/ready proposals still block — those are visible
-        # to the user and must be acted on in the UI.
-        auto_discard_ok = (
-            created_by == ChangeProposal.CreatedBy.MCP
+        if (
+            existing_proposal is None
+            and continue_existing
+            and proposal is not None
             and proposal.created_by == ChangeProposal.CreatedBy.MCP
-            and proposal.status in (
-                ChangeProposal.Status.FAILED_VALIDATION,
-                ChangeProposal.Status.FAILED_COMPILE,
+            and created_by == ChangeProposal.CreatedBy.MCP
+        ):
+            existing_proposal = proposal
+        if existing_proposal is not None:
+            proposal = existing_proposal
+            session = proposal.internal_session
+            if session is not None and session.status == AISession.Status.READY_FOR_REVIEW:
+                session.status = AISession.Status.ACTIVE
+                session.save(update_fields=["status", "updated_at"])
+            proposal.status = ChangeProposal.Status.VALIDATING
+            proposal.validation_status = ChangeProposal.ValidationStatus.PENDING
+            proposal.goal = str(goal or "").strip() or proposal.goal
+            proposal.compile_status = AISession.CompileStatus.NOT_RUN
+            proposal.compile_error_summary = ""
+            proposal.graph_validation_errors = []
+            proposal.user_visible_message = "Preparing suggested change..."
+            proposal.save(
+                update_fields=[
+                    "status",
+                    "validation_status",
+                    "goal",
+                    "compile_status",
+                    "compile_error_summary",
+                    "graph_validation_errors",
+                    "user_visible_message",
+                    "updated_at",
+                ]
             )
-        )
-        if auto_discard_ok:
-            try:
-                cancel_change_proposal(proposal)
-                auto_discarded_previous_failed_proposal_id = proposal.id
-            except SessionWriteError:
-                pass
+        if existing_proposal is not None:
+            proposal = existing_proposal
+        elif proposal is not None:
+            # If the only thing locking the project is an MCP-created proposal that
+            # already failed validation/compile, auto-discard it so the agent can
+            # iterate instead of spinning in PROJECT_LOCKED → cancel → PROJECT_LOCKED.
+            # User-owned or pending/ready proposals still block — those are visible
+            # to the user and must be acted on in the UI.
+            auto_discard_ok = (
+                created_by == ChangeProposal.CreatedBy.MCP
+                and proposal.created_by == ChangeProposal.CreatedBy.MCP
+                and proposal.status in (
+                    ChangeProposal.Status.FAILED_VALIDATION,
+                    ChangeProposal.Status.FAILED_COMPILE,
+                )
+            )
+            if auto_discard_ok:
+                try:
+                    cancel_change_proposal(proposal)
+                    auto_discarded_previous_failed_proposal_id = proposal.id
+                except SessionWriteError:
+                    pass
         # Re-check the lock — auto-discard may have cleared it.
-        if get_locking_session(project) is not None or get_locking_change_proposal(project) is not None:
+        if existing_proposal is None and (get_locking_session(project) is not None or get_locking_change_proposal(project) is not None):
             session = get_locking_session(project)
             if session is not None:
                 raise ProjectLockedError(project=project, session=session)
@@ -757,175 +965,85 @@ def propose_document_change(
             suggestion="Call list_annotations for this project and retry with only valid annotation ids.",
         )
 
-    try:
-        proposal = ChangeProposal.objects.create(
-            project=project,
-            goal=str(goal or "").strip() or "Suggested change",
-            status=ChangeProposal.Status.VALIDATING,
-            validation_status=ChangeProposal.ValidationStatus.PENDING,
-            patch_ops=normalized_ops,
-            smcl_metadata=pre_policy.metadata,
-            addresses_task=task,
-            addresses_outline_item=outline_item,
-            created_by=created_by,
-            expires_at=expires_at,
-            user_visible_message="Preparing suggested change...",
-        )
-        # Transient attribute — serializer surfaces it so the agent can log
-        # that the previous failed MCP proposal was auto-discarded.
-        proposal.auto_discarded_previous_failed_proposal_id = auto_discarded_previous_failed_proposal_id
-    except IntegrityError:
-        active = get_locking_change_proposal(project)
-        if active is not None:
-            message = f"This project already has pending suggested change #{active.id}: {active.goal}"
-            suggestion = f"Ask the user to review/discard proposal #{active.id} in the UI before submitting another."
-        else:
-            message = "This project already has a pending suggested change."
-            suggestion = "Ask the user to review/discard the existing proposal in the UI before submitting another."
-        raise SessionWriteError(
-            "PROJECT_LOCKED",
-            message,
-            status_code=423,
-            suggestion=suggestion,
-        )
-
-    try:
-        baseline_graph = inspect_document_graph(project)
-        session = create_session(project, proposal.goal, skip_lock_check=True)
-        proposal.internal_session = session
-        proposal.save(update_fields=["internal_session", "updated_at"])
-
-        for op in normalized_ops:
-            _apply_patch_op(session, op)
-
-        proposed_graph = inspect_document_graph(project, root=Path(session.worktree_path))
-        graph_errors = introduced_graph_errors(baseline_graph, proposed_graph)
-        if graph_errors:
-            try:
-                discard_session(session)
-            except Exception:
-                pass
-            proposal.status = ChangeProposal.Status.FAILED_VALIDATION
-            proposal.validation_status = ChangeProposal.ValidationStatus.FAILED
-            proposal.graph_validation_errors = graph_errors
-            proposal.user_visible_message = "Could not prepare this change"
-            proposal.save(
-                update_fields=[
-                    "status",
-                    "validation_status",
-                    "graph_validation_errors",
-                    "user_visible_message",
-                    "updated_at",
-                ]
+    if existing_proposal is None:
+        try:
+            proposal = ChangeProposal.objects.create(
+                project=project,
+                goal=str(goal or "").strip() or "Suggested change",
+                status=ChangeProposal.Status.VALIDATING,
+                validation_status=ChangeProposal.ValidationStatus.PENDING,
+                patch_ops=normalized_ops,
+                smcl_metadata=pre_policy.metadata,
+                addresses_task=task,
+                addresses_outline_item=outline_item,
+                created_by=created_by,
+                expires_at=expires_at,
+                user_visible_message="Preparing suggested change...",
             )
-            return proposal
-
-        proposal.validation_status = ChangeProposal.ValidationStatus.PASSED
-        proposal.save(update_fields=["validation_status", "updated_at"])
-
-        compile_result = compile_session(session)
-        session.refresh_from_db()
-        proposal.compile_status = session.compile_status
-        if compile_result.get("status") != "success" or session.compile_status != AISession.CompileStatus.SUCCESS:
-            compile_policy = ProposalPolicyEngine.post_compile_check(user, project, proposal, compile_result)
-            proposal.status = ChangeProposal.Status.FAILED_COMPILE
-            proposal.compile_error_summary = _serialize_compile_failure(compile_result)
-            proposal.smcl_risk_level = compile_policy.risk_level
-            proposal.smcl_warnings = compile_policy.warnings
-            proposal.smcl_metadata = {**(proposal.smcl_metadata or {}), **compile_policy.metadata}
-            proposal.user_visible_message = (
-                compile_policy.reason
-                if compile_policy.action in {"stop_and_ask_user", "narrow_scope"}
-                else "The document could not be compiled after applying the changes."
+            # Transient attribute — serializer surfaces it so the agent can log
+            # that the previous failed MCP proposal was auto-discarded.
+            proposal.auto_discarded_previous_failed_proposal_id = auto_discarded_previous_failed_proposal_id
+        except IntegrityError:
+            active = get_locking_change_proposal(project)
+            if active is not None:
+                message = f"This project already has pending suggested change #{active.id}: {active.goal}"
+                suggestion = f"Ask the user to review/discard proposal #{active.id} in the UI before submitting another."
+            else:
+                message = "This project already has a pending suggested change."
+                suggestion = "Ask the user to review/discard the existing proposal in the UI before submitting another."
+            raise SessionWriteError(
+                "PROJECT_LOCKED",
+                message,
+                status_code=423,
+                suggestion=suggestion,
             )
-            proposal.save(
-                update_fields=[
-                    "status",
-                    "compile_status",
-                    "compile_error_summary",
-                    "user_visible_message",
-                    "smcl_risk_level",
-                    "smcl_warnings",
-                    "smcl_metadata",
-                    "updated_at",
-                ]
-            )
-            return proposal
-
-        diff = generate_diff(session)
-        post_policy = ProposalPolicyEngine.post_patch_check(user, project, proposal, diff)
-        proposal.smcl_risk_level = post_policy.risk_level
-        proposal.smcl_warnings = post_policy.warnings
-        proposal.smcl_metadata = {**(proposal.smcl_metadata or {}), **post_policy.metadata}
-        if post_policy.action == "reject":
-            try:
-                discard_session(session)
-            except Exception:
-                pass
-            proposal.status = ChangeProposal.Status.FAILED_VALIDATION
-            proposal.validation_status = ChangeProposal.ValidationStatus.FAILED
-            proposal.graph_validation_errors = [
-                {
-                    "error": "SMCL_DIFF_REJECTED",
-                    "message": post_policy.reason or "Suggested change was rejected by AI safety validation.",
-                }
-            ]
-            proposal.user_visible_message = post_policy.reason or "Suggested change needs a narrower patch."
-            proposal.save(
-                update_fields=[
-                    "status",
-                    "validation_status",
-                    "graph_validation_errors",
-                    "user_visible_message",
-                    "smcl_risk_level",
-                    "smcl_warnings",
-                    "smcl_metadata",
-                    "updated_at",
-                ]
-            )
-            return proposal
-        finalize_batch(
-            session,
-            summary=proposal.goal,
-            task_ids=[proposal.addresses_task_id] if proposal.addresses_task_id else None,
-            annotation_ids=[item.id for item in annotations],
-        )
-        session.refresh_from_db()
-        proposal.status = ChangeProposal.Status.READY_FOR_REVIEW
-        proposal.compile_status = AISession.CompileStatus.SUCCESS
-        proposal.diff_summary = diff
-        proposal.changed_files = _changed_files_from_batch(session)
-        proposal.user_visible_message = "Ready for review"
+    else:
+        proposal = existing_proposal
+        proposal.goal = str(goal or "").strip() or proposal.goal
+        proposal.patch_ops = [*(proposal.patch_ops or []), *normalized_ops]
+        proposal.smcl_metadata = {**(proposal.smcl_metadata or {}), **pre_policy.metadata}
+        proposal.addresses_task = task
+        proposal.addresses_outline_item = outline_item
         proposal.save(
             update_fields=[
-                "status",
-                "compile_status",
-                "diff_summary",
-                "changed_files",
-                "user_visible_message",
-                "smcl_risk_level",
-                "smcl_warnings",
+                "goal",
+                "patch_ops",
                 "smcl_metadata",
+                "addresses_task",
+                "addresses_outline_item",
                 "updated_at",
             ]
         )
-        return proposal
+
+    try:
+        return _finalize_proposal_execution(
+            proposal,
+            project=project,
+            user=user,
+            normalized_ops=normalized_ops,
+            annotations=annotations,
+        )
 
     except SessionWriteError as exc:
         if proposal.internal_session_id:
-            try:
-                discard_session(proposal.internal_session)
-            except Exception:
-                pass
+            proposal.internal_session.refresh_from_db()
         proposal.status = ChangeProposal.Status.FAILED_VALIDATION
         proposal.validation_status = ChangeProposal.ValidationStatus.FAILED
         proposal.graph_validation_errors = [exc.payload()]
+        proposal.compile_status = AISession.CompileStatus.NOT_RUN
+        proposal.compile_error_summary = ""
+        proposal.diff_summary = ""
+        proposal.changed_files = []
         proposal.user_visible_message = "Could not prepare this change"
         proposal.save(
             update_fields=[
                 "status",
                 "validation_status",
                 "graph_validation_errors",
+                "compile_status",
+                "compile_error_summary",
+                "diff_summary",
+                "changed_files",
                 "user_visible_message",
                 "updated_at",
             ]

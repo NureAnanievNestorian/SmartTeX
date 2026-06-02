@@ -1268,6 +1268,49 @@ class ChangeProposalServiceTests(TestCase):
         self.assertEqual(second.status, ChangeProposal.Status.READY_FOR_REVIEW)
         self.assertEqual(second.auto_discarded_previous_failed_proposal_id, first.id)
 
+    def test_propose_document_change_can_continue_existing_mcp_proposal(self) -> None:
+        from longdoc.proposal_service import propose_document_change
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_success):
+            first = propose_document_change(
+                self.project,
+                goal="Initial proposal",
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello World",
+                        "new_text": "Hello Proposal",
+                        "change_summary": "Initial change",
+                    }
+                ],
+            )
+
+            second = propose_document_change(
+                self.project,
+                goal="Refine existing proposal",
+                continue_existing=True,
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello Proposal",
+                        "new_text": "Hello Proposal v2",
+                        "change_summary": "Refine draft",
+                    }
+                ],
+            )
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(first.internal_session_id, second.internal_session_id)
+        self.assertEqual(second.status, ChangeProposal.Status.READY_FOR_REVIEW)
+        self.assertEqual(second.goal, "Refine existing proposal")
+        self.assertEqual(len(second.patch_ops), 2)
+        self.assertEqual(second.internal_session.batch.summary, "Refine existing proposal")
+        self.assertIn("Hello Proposal v2", second.internal_session.batch.changes.get(filename="main.tex").diff_text)
+
     def test_retry_lock_suggestion_guides_mcp_retry_workflow(self) -> None:
         from longdoc.proposal_service import _retry_lock_suggestion
         from longdoc.session_service import create_session
@@ -1656,6 +1699,69 @@ class AISessionReviewTests(TestCase):
         proposal.refresh_from_db()
         self.assertEqual(session.status, AISession.Status.ACCEPTED)
         self.assertEqual(proposal.status, ChangeProposal.Status.ACCEPTED)
+
+    def test_api_change_proposal_accept_rejects_failed_compile_without_override(self) -> None:
+        from longdoc.session_service import create_session, write_to_session
+
+        session = create_session(self.project, goal="HTTP failed compile")
+        write_to_session(session, "main.tex", op="replace_text",
+                         old_text="Hello World", new_text="Broken but wanted")
+        session.compile_status = AISession.CompileStatus.ERROR
+        session.status = AISession.Status.ACTIVE
+        session.save(update_fields=["compile_status", "status", "updated_at"])
+        ChangeProposal.objects.create(
+            project=self.project,
+            goal=session.goal,
+            status=ChangeProposal.Status.FAILED_COMPILE,
+            validation_status=ChangeProposal.ValidationStatus.PASSED,
+            compile_status=AISession.CompileStatus.ERROR,
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        client = Client()
+        client.force_login(self.user)
+
+        resp = client.post(
+            f"/api/projects/{self.project.id}/change-proposals/accept/",
+            content_type="application/json",
+        )
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["warning_code"], "ACCEPT_COMPILE_ERRORS_REQUIRED")
+
+    def test_api_change_proposal_accept_allows_failed_compile_with_override(self) -> None:
+        from longdoc.session_service import create_session, write_to_session
+
+        session = create_session(self.project, goal="HTTP force accept")
+        write_to_session(session, "main.tex", op="replace_text",
+                         old_text="Hello World", new_text="Broken but accepted")
+        session.compile_status = AISession.CompileStatus.ERROR
+        session.status = AISession.Status.ACTIVE
+        session.save(update_fields=["compile_status", "status", "updated_at"])
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            goal=session.goal,
+            status=ChangeProposal.Status.FAILED_COMPILE,
+            validation_status=ChangeProposal.ValidationStatus.PASSED,
+            compile_status=AISession.CompileStatus.ERROR,
+            internal_session=session,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        client = Client()
+        client.force_login(self.user)
+
+        resp = client.post(
+            f"/api/projects/{self.project.id}/change-proposals/accept/",
+            data=json.dumps({"accept_compile_errors": True}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        session.refresh_from_db()
+        proposal.refresh_from_db()
+        self.assertEqual(session.status, AISession.Status.ACCEPTED)
+        self.assertEqual(proposal.status, ChangeProposal.Status.ACCEPTED)
+        self.assertEqual(resp.json()["warning"]["code"], "ACCEPTED_WITH_COMPILE_ERRORS")
 
     def test_api_change_proposal_discard_discards_proposal(self) -> None:
         from longdoc.session_service import create_session
