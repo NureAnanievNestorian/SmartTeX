@@ -105,6 +105,7 @@ def _small_model_profile_payload(user) -> dict:
     credits_limit = quota.credits_limit if quota else Decimal("0")
     credits_used = quota.credits_used if quota else Decimal("0")
     credits_pct = int(min(100, float(credits_used / credits_limit * 100) if credits_limit > 0 else 0))
+    credits_remaining_pct = max(0, 100 - credits_pct)
 
     return {
         "has_access_record": access is not None,
@@ -117,6 +118,7 @@ def _small_model_profile_payload(user) -> dict:
         "credits_used": f"{float(credits_used):.4f}",
         "credits_remaining": f"{float(quota_check.credits_remaining):.4f}",
         "credits_used_pct": credits_pct,
+        "credits_remaining_pct": credits_remaining_pct,
     }
 
 

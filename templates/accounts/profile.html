@@ -43,15 +43,13 @@
           <span class="small" style="margin-left:auto">{{ small_model.credits_used_pct }}% used</span>
         </div>
         <div style="background:var(--border); border-radius:4px; height:10px; overflow:hidden">
-          {% with remaining_pct=100|add:"-"|add:small_model.credits_used_pct %}
           <div style="
             background:{% if small_model.credits_used_pct >= 90 %}var(--danger, #e53e3e){% elif small_model.credits_used_pct >= 70 %}var(--warn, #d97706){% else %}var(--accent, #4f8ef7){% endif %};
-            width:{{ remaining_pct }}%;
+            width:{{ small_model.credits_remaining_pct }}%;
             height:100%;
             border-radius:4px;
             transition:width 0.3s
           "></div>
-          {% endwith %}
         </div>
       </div>
 

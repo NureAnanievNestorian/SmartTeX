@@ -146,3 +146,5 @@ class ProfileViewTests(TestCase):
         self.assertContains(response, "AI Credits")
         self.assertContains(response, "gemini-2.5-flash")
         self.assertContains(response, "0.7500")
+        self.assertContains(response, "75%")
+        self.assertContains(response, "width:75%")
