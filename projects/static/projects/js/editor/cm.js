@@ -575,6 +575,12 @@ function makeExtensions(filename) {
     langCompartment.of(filename ? getLanguageExt(filename) : []),
     wrapCompartment.of(_lineWrappingEnabled ? EditorView.lineWrapping : []),
     autocompletion(isTypst ? { override: [typstCompletionSource], activateOnTyping: true } : {}),
+    EditorView.domEventHandlers({
+      contextmenu(event) {
+        if (!_editorContextMenuFn) return false;
+        return _editorContextMenuFn(event, view) === true;
+      },
+    }),
     ...(isTypst ? [
       foldService.of((state, lineStart, lineEnd) => _lspFoldFn ? _lspFoldFn(state, lineStart, lineEnd) : null),
       EditorView.updateListener.of(update => {
@@ -628,10 +634,6 @@ function makeExtensions(filename) {
           }
           if (!jumpToTypstDefinition(pos)) return typstClickHandler(event);
           return true;
-        },
-        contextmenu(event) {
-          if (!_editorContextMenuFn) return false;
-          return _editorContextMenuFn(event, view) === true;
         },
       }),
     ] : []),
