@@ -377,6 +377,10 @@ export function connectProjectUpdatesSse() {
       import("./app.js").then(m => m.loadProjectMeta?.()).catch(() => {});
       return;
     }
+    if (data.type === "longdoc_updated") {
+      import("./longdoc.js").then(m => m.loadLongdocData?.()).catch(() => {});
+      return;
+    }
     if (data.type !== "project_updated") return;
     const incoming = Number(data.version_id || 0);
     if (!incoming || incoming <= s.lastSeenMcpVersionId) return;

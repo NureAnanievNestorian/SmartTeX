@@ -47,7 +47,7 @@ from projects.services import (
 )
 
 from .locks import ProjectLockedError, assert_not_locked, get_locking_session
-from .models import AIBatch, AIBatchChange, AISession, ChangeProposal, ProjectTask
+from .models import AIBatch, AIBatchChange, AISession, ChangeProposal, ProjectAnnotation, ProjectTask
 
 
 logger = logging.getLogger(__name__)
@@ -506,6 +506,8 @@ def compile_session(session: AISession) -> dict[str, Any]:
     else:
         docker_mount_source = worktree
 
+    (worktree / ".smarttex").mkdir(parents=True, exist_ok=True)
+
     cmd, run_kwargs, timeout = build_compiler_cmd(
         project.markup_type, src_filename, worktree, docker_mount_source
     )
@@ -532,12 +534,13 @@ def compile_session(session: AISession) -> dict[str, Any]:
         )
         log_text = (proc.stdout or "") + "\n" + (proc.stderr or "")
 
-        compiled_pdf = worktree / "main.pdf"
+        compiled_pdf = worktree / ".smarttex" / "main.pdf"
         if compiled_pdf.exists():
             shutil.move(str(compiled_pdf), str(pdf_output))
 
         # Remove LaTeX build artifacts from the worktree (don't pollute the session branch).
         for ext in (".aux", ".log", ".out", ".toc", ".synctex.gz", ".fls", ".fdb_latexmk", ".xdv", ".bbl", ".blg"):
+            (worktree / ".smarttex" / f"main{ext}").unlink(missing_ok=True)
             (worktree / f"main{ext}").unlink(missing_ok=True)
 
         if pdf_output.exists():
@@ -683,6 +686,7 @@ def finalize_batch(
     session: AISession,
     summary: str,
     task_ids: list[int] | None = None,
+    annotation_ids: list[int] | None = None,
 ) -> AIBatch:
     """
     Create AIBatch + AIBatchChange rows from the current session diff and set
@@ -722,6 +726,9 @@ def finalize_batch(
     if task_ids:
         tasks = list(ProjectTask.objects.filter(project=project, id__in=task_ids))
         batch.tasks_completed.set(tasks)
+    if annotation_ids:
+        annotations = list(ProjectAnnotation.objects.filter(project=project, id__in=annotation_ids))
+        batch.annotations_completed.set(annotations)
 
     for line in (proc.stdout or "").splitlines():
         line = line.strip()
@@ -885,13 +892,20 @@ def accept_session(session: AISession, user=None) -> None:
             is_revertible=True,
         )
 
-    # 5. Complete linked tasks from the batch.
+    # 5. Complete linked tasks and annotations from the batch.
     try:
         batch = session.batch
         now = timezone.now()
         batch.tasks_completed.filter(
             status__in=(ProjectTask.Status.OPEN, ProjectTask.Status.IN_PROGRESS)
         ).update(status=ProjectTask.Status.DONE, completed_at=now, ai_session=session)
+        batch.annotations_completed.filter(
+            status__in=(ProjectAnnotation.Status.OPEN, ProjectAnnotation.Status.IN_PROGRESS)
+        ).update(
+            status=ProjectAnnotation.Status.DONE,
+            resolved_at=now,
+            resolved_by_session=session,
+        )
     except Exception:
         pass
 

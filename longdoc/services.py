@@ -29,6 +29,7 @@ from .models import (
     AssistantAuditLog,
     ProjectContextFile,
     ProjectLongDocSettings,
+    ProjectAnnotation,
     ProjectNoteSection,
     ProjectOutlineItem,
     ProjectRequirement,
@@ -84,6 +85,7 @@ def longdoc_default_settings() -> dict[str, bool]:
         "context_enabled": bool(defaults.get("context_enabled", True)),
         "outline_enabled": bool(defaults.get("outline_enabled", True)),
         "tasks_enabled": bool(defaults.get("tasks_enabled", True)),
+        "annotations_enabled": bool(defaults.get("annotations_enabled", True)),
         "notes_enabled": bool(defaults.get("notes_enabled", True)),
         "summaries_enabled": bool(defaults.get("summaries_enabled", True)),
         "requirements_enabled": bool(defaults.get("requirements_enabled", False)),
@@ -249,6 +251,7 @@ def update_longdoc_settings(project, **changes) -> ProjectLongDocSettings:
         "context_enabled",
         "outline_enabled",
         "tasks_enabled",
+        "annotations_enabled",
         "notes_enabled",
         "summaries_enabled",
         "requirements_enabled",
@@ -314,6 +317,7 @@ def serialize_settings(
         "context_enabled": settings_obj.context_enabled,
         "outline_enabled": settings_obj.outline_enabled,
         "tasks_enabled": settings_obj.tasks_enabled,
+        "annotations_enabled": settings_obj.annotations_enabled,
         "notes_enabled": settings_obj.notes_enabled,
         "summaries_enabled": settings_obj.summaries_enabled,
         "requirements_enabled": settings_obj.requirements_enabled,
@@ -832,6 +836,149 @@ def delete_task(project, *, task_id: int, actor=None, source: str = "web", summa
     )
 
 
+def serialize_annotation(item: ProjectAnnotation) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "task_id": item.task_id,
+        "file_name": item.file_name,
+        "line_start": item.line_start,
+        "line_end": item.line_end,
+        "selected_text": item.selected_text,
+        "instruction": item.instruction,
+        "status": item.status,
+        "created_by": item.created_by,
+        "resolved_by_session_id": item.resolved_by_session_id,
+        "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def list_annotations(project, *, status: str | None = None, file_name: str | None = None) -> list[dict[str, Any]]:
+    qs = ProjectAnnotation.objects.filter(project=project)
+    if status:
+        qs = qs.filter(status=status)
+    if file_name:
+        qs = qs.filter(file_name=file_name)
+    qs = qs.order_by("status", "file_name", "line_start", "-updated_at", "-id")
+    return [serialize_annotation(item) for item in qs]
+
+
+def create_annotation(
+    project,
+    *,
+    file_name: str,
+    instruction: str,
+    line_start: int | None = None,
+    line_end: int | None = None,
+    selected_text: str = "",
+    task_id: int | None = None,
+    actor=None,
+    source: str = "web",
+    summary: str = "",
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    file_name = str(file_name or "").strip()
+    instruction = str(instruction or "").strip()
+    if not file_name:
+        raise ValueError("file_name is required")
+    if not instruction:
+        raise ValueError("instruction is required")
+    task = None
+    if task_id is not None:
+        task = ProjectTask.objects.get(project=project, id=int(task_id))
+    if line_start is not None:
+        line_start = max(1, int(line_start))
+    if line_end is not None:
+        line_end = max(1, int(line_end))
+    if line_start is not None and line_end is not None and line_end < line_start:
+        line_end = line_start
+    item = ProjectAnnotation.objects.create(
+        project=project,
+        task=task,
+        file_name=file_name,
+        line_start=line_start,
+        line_end=line_end,
+        selected_text=str(selected_text or ""),
+        instruction=instruction,
+        created_by=created_by or (ProjectAnnotation.CreatedBy.MCP if source == "mcp" else ProjectAnnotation.CreatedBy.USER),
+    )
+    _audit_db_change(
+        item,
+        operation=AssistantAuditLog.Operation.CREATE,
+        actor=actor,
+        source=source,
+        summary=summary or f"Created annotation in {item.file_name}",
+    )
+    return serialize_annotation(item)
+
+
+def update_annotation(project, *, annotation_id: int, actor=None, source: str = "web", summary: str = "", **changes) -> dict[str, Any]:
+    item = ProjectAnnotation.objects.get(project=project, id=annotation_id)
+    before = serialize_model_instance(item)
+    if "file_name" in changes:
+        item.file_name = str(changes.pop("file_name") or "").strip()
+        if not item.file_name:
+            raise ValueError("file_name is required")
+    if "line_start" in changes:
+        raw = changes.pop("line_start")
+        item.line_start = None if raw in (None, "") else max(1, int(raw))
+    if "line_end" in changes:
+        raw = changes.pop("line_end")
+        item.line_end = None if raw in (None, "") else max(1, int(raw))
+    if item.line_start is not None and item.line_end is not None and item.line_end < item.line_start:
+        item.line_end = item.line_start
+    if "selected_text" in changes:
+        item.selected_text = str(changes.pop("selected_text") or "")
+    if "instruction" in changes:
+        item.instruction = str(changes.pop("instruction") or "").strip()
+        if not item.instruction:
+            raise ValueError("instruction is required")
+    if "status" in changes:
+        status = str(changes.pop("status") or "").strip()
+        item.status = status
+        done_statuses = {ProjectAnnotation.Status.DONE, ProjectAnnotation.Status.DISMISSED}
+        item.resolved_at = timezone.now() if status in done_statuses else None
+        if status not in done_statuses:
+            item.resolved_by_session = None
+    if "task_id" in changes:
+        raw_task_id = changes.pop("task_id")
+        item.task = None if raw_task_id in (None, "") else ProjectTask.objects.get(project=project, id=int(raw_task_id))
+    if changes:
+        raise ValueError(f"unsupported annotation changes: {', '.join(sorted(changes))}")
+    item.save()
+    _audit_db_change(
+        item,
+        operation=AssistantAuditLog.Operation.UPDATE,
+        actor=actor,
+        source=source,
+        summary=summary or f"Updated annotation in {item.file_name}",
+        before_snapshot=before,
+    )
+    return serialize_annotation(item)
+
+
+def delete_annotation(project, *, annotation_id: int, actor=None, source: str = "web", summary: str = "") -> None:
+    item = ProjectAnnotation.objects.get(project=project, id=annotation_id)
+    before = serialize_model_instance(item)
+    object_id = item.id
+    item.delete()
+    phantom = ProjectAnnotation(
+        project=project,
+        file_name=before.get("file_name", ""),
+        instruction=before.get("instruction", ""),
+        status=before.get("status", ProjectAnnotation.Status.OPEN),
+    )
+    _audit_db_change(
+        phantom,
+        operation=AssistantAuditLog.Operation.DELETE,
+        actor=actor,
+        source=source,
+        summary=summary or f"Deleted annotation in {before.get('file_name', '')}",
+        before_snapshot=before,
+        object_id=object_id,
+    )
+
+
 def serialize_note_section(item: ProjectNoteSection, *, include_preview: bool = False) -> dict[str, Any]:
     payload = {
         "id": item.id,
@@ -1308,6 +1455,7 @@ _LONGDOC_FIELD_SYSTEM_DEFAULTS: dict[str, bool] = {
     "context_enabled": True,
     "outline_enabled": True,
     "tasks_enabled": True,
+    "annotations_enabled": True,
     "notes_enabled": True,
     "summaries_enabled": True,
     "requirements_enabled": False,
@@ -1320,6 +1468,7 @@ _TEMPLATE_LONGDOC_FIELDS = {
     "context_enabled": "longdoc_context_enabled",
     "outline_enabled": "longdoc_outline_enabled",
     "tasks_enabled": "longdoc_tasks_enabled",
+    "annotations_enabled": "longdoc_annotations_enabled",
     "notes_enabled": "longdoc_notes_enabled",
     "summaries_enabled": "longdoc_summaries_enabled",
     "requirements_enabled": "longdoc_requirements_enabled",
@@ -1468,6 +1617,7 @@ def overview_payload(project) -> dict[str, Any]:
     context_items = list(ProjectContextFile.objects.filter(project=project).order_by("filename"))
     outline_items = list(ProjectOutlineItem.objects.filter(project=project).order_by("order", "id"))
     tasks = list(ProjectTask.objects.filter(project=project).order_by("status", "-updated_at"))
+    annotations = list(ProjectAnnotation.objects.filter(project=project).order_by("status", "file_name", "line_start", "-updated_at"))
     notes = list(ProjectNoteSection.objects.filter(project=project).order_by("order", "id"))
     summaries = list(SectionSummary.objects.filter(project=project).order_by("section_title"))
     requirements = list(ProjectRequirement.objects.filter(project=project).order_by("req_id"))
@@ -1513,6 +1663,24 @@ def overview_payload(project) -> dict[str, Any]:
             }
             for item in tasks[:12]
         ],
+        "annotation_counts": {
+            "open": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.OPEN),
+            "in_progress": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.IN_PROGRESS),
+            "done": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.DONE),
+            "dismissed": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.DISMISSED),
+        },
+        "annotations": [
+            {
+                "id": item.id,
+                "file_name": item.file_name,
+                "line_start": item.line_start,
+                "line_end": item.line_end,
+                "instruction": item.instruction,
+                "status": item.status,
+            }
+            for item in annotations[:12]
+        ],
+        "annotation_count": len(annotations),
         "note_sections": [
             {
                 "id": item.id,

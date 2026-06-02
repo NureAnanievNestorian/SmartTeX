@@ -21,7 +21,7 @@ from templates_lib.models import Template, TemplateContextFile, TemplateLongDocD
 
 from .audit import audit_assistant_change
 from .locks import ProjectLockedError, assert_not_locked, get_locking_session, is_project_locked
-from .models import AISession, AssistantAuditLog, ChangeProposal, ProjectLongDocSettings, ProjectOutlineItem, ProjectRequirement, ProjectTask, SectionSummary
+from .models import AISession, AssistantAuditLog, ChangeProposal, ProjectAnnotation, ProjectLongDocSettings, ProjectOutlineItem, ProjectRequirement, ProjectTask, SectionSummary
 from .services import (
     DEFAULT_NOTE_SECTION_HEADINGS,
     SAMPLE_CONTEXT_FILENAME,
@@ -54,6 +54,7 @@ class LongdocFoundationTests(TestCase):
             "context_enabled": False,
             "outline_enabled": True,
             "tasks_enabled": True,
+            "annotations_enabled": True,
             "notes_enabled": True,
             "summaries_enabled": False,
             "requirements_enabled": True,
@@ -69,6 +70,7 @@ class LongdocFoundationTests(TestCase):
         self.assertTrue(created)
         self.assertEqual(defaults["context_enabled"], False)
         self.assertEqual(settings_obj.context_enabled, False)
+        self.assertEqual(settings_obj.annotations_enabled, True)
         self.assertEqual(settings_obj.requirements_enabled, True)
         self.assertEqual(settings_obj.mcp_write_context, True)
         self.assertEqual(self.project.note_sections.count(), len(DEFAULT_NOTE_SECTION_HEADINGS))
@@ -284,6 +286,7 @@ class LongdocPackage3Tests(TestCase):
 
         self.assertEqual(get_response.status_code, 200)
         self.assertIn("summaries_enabled", get_response.json())
+        self.assertIn("annotations_enabled", get_response.json())
         self.assertIn("requirements_enabled", get_response.json())
         self.assertFalse(get_response.json()["locked"])
 
@@ -295,6 +298,7 @@ class LongdocPackage3Tests(TestCase):
                     "context_enabled": True,
                     "outline_enabled": True,
                     "tasks_enabled": False,
+                    "annotations_enabled": True,
                     "notes_enabled": True,
                     "summaries_enabled": True,
                     "requirements_enabled": True,
@@ -308,6 +312,7 @@ class LongdocPackage3Tests(TestCase):
         payload = patch_response.json()
         self.assertTrue(payload["enabled"])
         self.assertTrue(payload["summaries_enabled"])
+        self.assertTrue(payload["annotations_enabled"])
         self.assertTrue(payload["requirements_enabled"])
         self.assertTrue(payload["mcp_controlled_access"])
         self.assertFalse(payload["tasks_enabled"])
@@ -344,7 +349,7 @@ class LongdocPackage3Tests(TestCase):
         self.assertEqual(update_response.status_code, 200)
         self.assertEqual(get_context_file(self.project, "sources/interview-notes.md")["description"], "Updated notes")
 
-    def test_outline_task_and_note_endpoints_support_crud(self) -> None:
+    def test_outline_task_annotation_and_note_endpoints_support_crud(self) -> None:
         enable_longdoc(self.project)
 
         outline_response = self.client.post(
@@ -376,6 +381,29 @@ class LongdocPackage3Tests(TestCase):
         )
         self.assertEqual(complete_task.status_code, 200)
         self.assertIsNotNone(complete_task.json()["completed_at"])
+
+        annotation_response = self.client.post(
+            f"/api/projects/{self.project.id}/annotations/",
+            data=json.dumps({
+                "file_name": "main.tex",
+                "line_start": 3,
+                "line_end": 4,
+                "instruction": "Tighten this argument",
+                "selected_text": "Original paragraph",
+                "task_id": task_id,
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(annotation_response.status_code, 201)
+        annotation_id = annotation_response.json()["id"]
+        patch_annotation = self.client.patch(
+            f"/api/projects/{self.project.id}/annotations/{annotation_id}/",
+            data=json.dumps({"status": "done", "instruction": "Applied"}),
+            content_type="application/json",
+        )
+        self.assertEqual(patch_annotation.status_code, 200)
+        self.assertEqual(patch_annotation.json()["status"], "done")
+        self.assertIsNotNone(patch_annotation.json()["resolved_at"])
 
         note_response = self.client.post(
             f"/api/projects/{self.project.id}/note-sections/",
@@ -1359,6 +1387,29 @@ class AISessionReviewTests(TestCase):
 
         self.assertIn(task, batch.tasks_completed.all())
 
+    def test_finalize_batch_links_annotations(self) -> None:
+        from longdoc.session_service import create_session, finalize_batch, write_to_session
+        from longdoc.models import ProjectAnnotation
+        from longdoc.services import enable_longdoc
+
+        enable_longdoc(self.project)
+        session = create_session(self.project, goal="Annotations check")
+        annotation = ProjectAnnotation.objects.create(
+            project=self.project,
+            file_name="main.tex",
+            line_start=2,
+            line_end=3,
+            instruction="Tighten this paragraph",
+            status=ProjectAnnotation.Status.IN_PROGRESS,
+        )
+        write_to_session(session, "main.tex", op="replace_text",
+                         old_text="Hello World", new_text="Edited paragraph")
+        self._mark_session_compiled(session)
+
+        batch = finalize_batch(session, summary="Done", annotation_ids=[annotation.id])
+
+        self.assertIn(annotation, batch.annotations_completed.all())
+
     def test_finalize_batch_rejects_uncompiled_session(self) -> None:
         from longdoc.session_service import SessionWriteError, create_session, finalize_batch, write_to_session
 
@@ -1462,6 +1513,33 @@ class AISessionReviewTests(TestCase):
         task.refresh_from_db()
         self.assertEqual(task.status, ProjectTask.Status.DONE)
         self.assertIsNotNone(task.completed_at)
+
+    def test_accept_session_completes_linked_annotations(self) -> None:
+        from longdoc.session_service import create_session, finalize_batch, accept_session, write_to_session
+        from longdoc.models import ProjectAnnotation
+        from longdoc.services import enable_longdoc
+
+        enable_longdoc(self.project)
+        session = create_session(self.project, goal="Annotation completion")
+        annotation = ProjectAnnotation.objects.create(
+            project=self.project,
+            file_name="main.tex",
+            line_start=2,
+            line_end=2,
+            instruction="Rewrite this sentence",
+            status=ProjectAnnotation.Status.IN_PROGRESS,
+        )
+        write_to_session(session, "main.tex", op="replace_text",
+                         old_text="Hello World", new_text="Rewritten sentence")
+        self._mark_session_compiled(session)
+        finalize_batch(session, summary="Completed annotation", annotation_ids=[annotation.id])
+
+        accept_session(session, user=self.user)
+
+        annotation.refresh_from_db()
+        self.assertEqual(annotation.status, ProjectAnnotation.Status.DONE)
+        self.assertIsNotNone(annotation.resolved_at)
+        self.assertEqual(annotation.resolved_by_session_id, session.id)
 
     def test_accept_session_unlocks_project(self) -> None:
         from longdoc.locks import is_project_locked

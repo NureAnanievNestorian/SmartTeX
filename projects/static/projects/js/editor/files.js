@@ -178,7 +178,10 @@ export function renderFileList() {
     const size     = displaySizeForEntry(file);
     const label    = labelOverride || pathBaseName(file.name) || file.name;
     const mainStar = file.name === s.mainFileName ? `<span class="e-main-star" title="Main file">●</span>` : "";
-    btn.innerHTML  = `<span class="e-file-name">${folderToggle}${icon}${escHtml(label)}${mainStar}</span><span class="e-file-sz">${size == null ? "" : fmtBytes(size)}</span>`;
+    const pdfEmbed = (!file.is_dir && String(file.name).toLowerCase().endsWith(".pdf") && s.pdfEmbeds?.[file.name]?.enabled)
+      ? `<span class="e-pdf-embed-badge" title="PDF embed увімкнено${s.pdfEmbeds[file.name].page_count ? ` · ${s.pdfEmbeds[file.name].page_count} стор.` : ""}">↪</span>`
+      : "";
+    btn.innerHTML  = `<span class="e-file-name">${folderToggle}${icon}${escHtml(label)}${mainStar}${pdfEmbed}</span><span class="e-file-sz">${size == null ? "" : fmtBytes(size)}</span>`;
     if (file.is_dir) {
       const toggleFolder = () => {
         if (s.collapsedFolders.has(file.name)) s.collapsedFolders.delete(file.name);

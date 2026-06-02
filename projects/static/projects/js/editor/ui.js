@@ -253,6 +253,94 @@ export function showCreateEntryDialog(kind, opts = {}) {
   });
 }
 
+function placeAnnotationPopover(popover, opts = {}) {
+  if (!popover) return;
+  const margin = 12;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const rect = opts.rect || null;
+  const anchorLeft = rect ? (rect.left + rect.right) / 2 : Number(opts.x || viewportWidth / 2);
+  const anchorTop = rect ? rect.top : Number(opts.y || viewportHeight / 2);
+  const anchorBottom = rect ? rect.bottom : Number(opts.y || viewportHeight / 2);
+  const prefersBottom = anchorBottom + 18 + popover.offsetHeight <= viewportHeight - margin;
+  const placement = prefersBottom ? "bottom" : "top";
+  const top = placement === "bottom"
+    ? Math.min(anchorBottom + 14, viewportHeight - popover.offsetHeight - margin)
+    : Math.max(anchorTop - popover.offsetHeight - 14, margin);
+  const left = Math.max(margin, Math.min(anchorLeft - popover.offsetWidth / 2, viewportWidth - popover.offsetWidth - margin));
+  const arrowLeft = Math.max(20, Math.min(anchorLeft - left, popover.offsetWidth - 20));
+  popover.dataset.placement = placement;
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+  popover.style.setProperty("--annotation-arrow-left", `${Math.round(arrowLeft)}px`);
+}
+
+export function showAnnotationPopover(opts = {}) {
+  return new Promise(resolve => {
+    s._annotationResolve = resolve;
+    const popover = document.getElementById("annotation-popover");
+    const titleEl = document.getElementById("annotation-title");
+    const hintEl = document.getElementById("annotation-hint");
+    const targetEl = document.getElementById("annotation-target");
+    const textEl = document.getElementById("annotation-selected-text");
+    const inputEl = document.getElementById("annotation-input");
+    if (titleEl) titleEl.textContent = opts.title || "Нова помітка";
+    if (hintEl) hintEl.textContent = opts.hint || "";
+    if (targetEl) targetEl.textContent = opts.target || "";
+    if (textEl) textEl.textContent = opts.selectedText || "Текст не виділено.";
+    if (inputEl) inputEl.value = opts.defaultValue || "";
+    popover?.classList.add("open");
+    requestAnimationFrame(() => {
+      placeAnnotationPopover(popover, opts);
+      inputEl?.focus();
+    });
+  });
+}
+
+export function showAnnotationInfoPopover(opts = {}) {
+  return new Promise(resolve => {
+    s._annotationInfoResolve = resolve;
+    const popover = document.getElementById("annotation-info-popover");
+    const titleEl = document.getElementById("annotation-info-title");
+    const targetEl = document.getElementById("annotation-info-target");
+    const listEl = document.getElementById("annotation-info-list");
+    if (titleEl) titleEl.textContent = opts.title || "Помітки";
+    if (targetEl) targetEl.textContent = opts.target || "";
+    if (listEl) {
+      const items = Array.isArray(opts.items) ? opts.items : [];
+      listEl.innerHTML = items.map(item => {
+        const selectedText = String(item.selected_text || "").trim();
+        const status = String(item.status || "open");
+        const statusLabel = {
+          open: "Відкрита",
+          in_progress: "У роботі",
+          done: "Готова",
+          dismissed: "Відхилена",
+        }[status] || status;
+        return `
+          <article class="annotation-info-item ${escHtml(status)}" data-annotation-id="${escHtml(String(item.id))}">
+            <div class="annotation-info-item-head">
+              <span class="e-longdoc-chip ${escHtml(status)}">${escHtml(statusLabel)}</span>
+              <span class="e-longdoc-meta">#${escHtml(String(item.id))}</span>
+            </div>
+            <div class="annotation-info-item-text">${escHtml(item.instruction || "")}</div>
+            ${selectedText ? `<div class="annotation-popover-fragment e-rendered-text">${escHtml(selectedText)}</div>` : ""}
+            <div class="annotation-info-actions">
+              ${status !== "done" ? `<button class="e-btn primary" type="button" data-action="done" data-id="${escHtml(String(item.id))}">Готово</button>` : ""}
+              ${status !== "dismissed" ? `<button class="e-btn" type="button" data-action="dismiss" data-id="${escHtml(String(item.id))}">Відхилити</button>` : ""}
+              <button class="e-btn" type="button" data-action="open" data-id="${escHtml(String(item.id))}">Відкрити</button>
+            </div>
+          </article>
+        `;
+      }).join("") || `<div class="e-longdoc-muted">Поміток тут немає.</div>`;
+    }
+    popover?.classList.add("open");
+    requestAnimationFrame(() => {
+      placeAnnotationPopover(popover, opts);
+    });
+  });
+}
+
 // Wire up dialog buttons (called from main.js after DOM ready)
 export function initDialogs() {
   // Confirm dialog
@@ -319,6 +407,60 @@ export function initDialogs() {
   document.getElementById("create-entry-input")?.addEventListener("keydown", e => {
     if (e.key === "Enter") document.getElementById("create-entry-ok")?.click();
     if (e.key === "Escape") document.getElementById("create-entry-cancel")?.click();
+  });
+
+  // Annotation popover
+  const annotationPopover = document.getElementById("annotation-popover");
+  const closeAnnotationPopover = (result = null) => {
+    annotationPopover?.classList.remove("open");
+    s._annotationResolve?.(result);
+    s._annotationResolve = null;
+  };
+  document.getElementById("annotation-ok")?.addEventListener("click", () => {
+    const v = document.getElementById("annotation-input")?.value?.trim() || "";
+    closeAnnotationPopover(v || null);
+  });
+  document.getElementById("annotation-cancel")?.addEventListener("click", () => closeAnnotationPopover());
+  document.getElementById("annotation-cancel-x")?.addEventListener("click", () => closeAnnotationPopover());
+  document.addEventListener("mousedown", e => {
+    if (!annotationPopover?.classList.contains("open")) return;
+    if (annotationPopover.contains(e.target)) return;
+    closeAnnotationPopover();
+  });
+  document.getElementById("annotation-input")?.addEventListener("keydown", e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") document.getElementById("annotation-ok")?.click();
+    if (e.key === "Escape") document.getElementById("annotation-cancel")?.click();
+  });
+  window.addEventListener("resize", () => {
+    if (!annotationPopover?.classList.contains("open")) return;
+    closeAnnotationPopover();
+  });
+
+  // Annotation info popover
+  const annotationInfoPopover = document.getElementById("annotation-info-popover");
+  const closeAnnotationInfoPopover = (result = null) => {
+    annotationInfoPopover?.classList.remove("open");
+    s._annotationInfoResolve?.(result);
+    s._annotationInfoResolve = null;
+  };
+  document.getElementById("annotation-info-close")?.addEventListener("click", () => closeAnnotationInfoPopover());
+  document.getElementById("annotation-info-close-x")?.addEventListener("click", () => closeAnnotationInfoPopover());
+  document.getElementById("annotation-info-list")?.addEventListener("click", e => {
+    const actionEl = e.target instanceof Element ? e.target.closest("[data-action][data-id]") : null;
+    if (!actionEl) return;
+    closeAnnotationInfoPopover({
+      action: actionEl.getAttribute("data-action") || "",
+      id: Number(actionEl.getAttribute("data-id") || 0),
+    });
+  });
+  document.addEventListener("mousedown", e => {
+    if (!annotationInfoPopover?.classList.contains("open")) return;
+    if (annotationInfoPopover.contains(e.target)) return;
+    closeAnnotationInfoPopover();
+  });
+  window.addEventListener("resize", () => {
+    if (!annotationInfoPopover?.classList.contains("open")) return;
+    closeAnnotationInfoPopover();
   });
 }
 

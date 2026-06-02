@@ -16,13 +16,13 @@ const {
   initCodeMirror, switchLanguage,
   focusEditor, jumpToLine, getSelectionSnapshot, setSelectionSnapshot, setEditorDiagnostics,
   setLineWrapping, isLineWrappingEnabled, replaceContentPreservingViewport,
-  saveTabState, hasTabState, activateTab, dropTabState, runUndo, runRedo,
+  saveTabState, hasTabState, activateTab, dropTabState, runUndo, runRedo, setEditorContextMenuProvider, insertAtCursor,
 } = cm;
 const { loadPdfViewer, pdfEmpty } = pdfviewer;
 const { initPreviewPanel, getPreviewMode, refreshTypstPreview, revealPreviewSelection, setPreviewCodeNavigationCallback, syncPreviewMemoryFile } = pdfviewer;
 const {
   setSaveHint, setCompileState, updateEditorTab, openLog,
-  switchBottomTab, initDialogs, initResizeHandles, updateLineCol, updateWrapToggle,
+  switchBottomTab, initDialogs, initResizeHandles, updateLineCol, updateWrapToggle, showAnnotationPopover, showAnnotationInfoPopover,
   logToggleBtn, tabProblemsBtn, bottomCloseBtn, bottomPanel, editorWrapEl, assetView,
 } = ui;
 const {
@@ -335,6 +335,10 @@ function getTokenAroundCursor() {
   const right = text.slice(pos).match(/^[A-Za-z0-9_-]*/);
   return `${left?.[0] || ""}${right?.[0] || ""}`.trim();
 }
+const MENU_ICONS_PDF_EMBED = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h7l3 3v5H3z"/><path d="M10 4v3h3"/><path d="M6 8.5h4"/><path d="M8 7v3"/></svg>`;
+const MENU_ICONS_PDF_EMBED_OFF = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h7l3 3v5H3z"/><path d="M10 4v3h3"/><path d="M5 5l6 6"/></svg>`;
+const MENU_ICONS_INSERT_SNIPPET = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h8"/><path d="M4 7h6"/><path d="M4 10h4"/><path d="M11 10l2 2-2 2"/></svg>`;
+
 const MENU_ICONS = {
   newFile: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6z"/><path d="M9.5 2v4h4"/><path d="M8 8.5v3"/><path d="M6.5 10h3"/></svg>`,
   newFolder: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5a1 1 0 0 1 1-1h3.4l1.3 1.5h6.3a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/><path d="M7.5 7.5v3"/><path d="M6 9h3"/></svg>`,
@@ -345,6 +349,7 @@ const MENU_ICONS = {
   closeOthers: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M6 6.2 10 10.2"/><path d="M10 6.2 6 10.2"/></svg>`,
   closeRight: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h5"/><path d="M2.5 8h5"/><path d="M2.5 11.5h5"/><path d="m9 4 4 4-4 4"/></svg>`,
   closeAll: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 3.5h9v9h-9z"/><path d="M5.5 5.5 10.5 10.5"/><path d="M10.5 5.5 5.5 10.5"/></svg>`,
+  annotate: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.5h10v7H7l-3 2z"/><path d="M5.5 6.2h5"/><path d="M5.5 8.4h3.5"/></svg>`,
 };
 
 function humanQuotaReason(reason) {
@@ -560,6 +565,30 @@ function buildFileContextMenuItems(file) {
       items.push({ label: "Зробити main файлом", icon: MENU_ICONS.main, onSelect: () => setMainFile(file.name).then(() => reloadProjectTree({ selectPath: file.name })).catch(err => setSaveHint(`Помилка: ${err.message}`, "error")) });
     }
 
+    if (!isDir && s.projectMeta?.markup_type === "typst" && String(file.name).toLowerCase().endsWith(".pdf")) {
+      const embed = s.pdfEmbeds[file.name];
+      const isEmbedEnabled = Boolean(embed?.enabled);
+      items.push({ type: "separator" });
+      if (isEmbedEnabled) {
+        items.push({
+          label: "Вставити у документ",
+          icon: MENU_ICONS_INSERT_SNIPPET,
+          onSelect: () => insertPdfEmbedSnippet(file.name),
+        });
+        items.push({
+          label: "Відключити PDF embed",
+          icon: MENU_ICONS_PDF_EMBED_OFF,
+          onSelect: () => togglePdfEmbed(file.name, false),
+        });
+      } else {
+        items.push({
+          label: "Включити PDF embed",
+          icon: MENU_ICONS_PDF_EMBED,
+          onSelect: () => togglePdfEmbed(file.name, true),
+        });
+      }
+    }
+
     items.push({ type: "separator" });
     items.push({ label: "Перейменувати", icon: MENU_ICONS.rename, shortcut: "F2", onSelect: () => handleRenameFile(file).catch(err => setSaveHint(`Помилка: ${err.message}`, "error")) });
     if (!isMain) {
@@ -643,6 +672,120 @@ function getSelectedProjectFile() {
   const name = String(s.selectedFile?.name || "");
   if (!name || name === s.mainFileName) return s.selectedFile?.name ? s.selectedFile : { name: s.mainFileName, type: "main", is_text: true, is_dir: false };
   return s.projectFiles.find(file => file.name === name) || s.selectedFile;
+}
+
+function buildEditorSelectionContextMenuItems(event = null) {
+  const isTextFile = Boolean(s.selectedFile?.is_text && !s.selectedFile?.is_dir);
+  const annotationsEnabled = Boolean(s.projectMeta?.longdoc?.enabled && s.projectMeta?.longdoc?.annotations_enabled);
+  const selection = cm.getActiveSelectionDetails?.();
+  const selectionRect = cm.getSelectionScreenRect?.();
+  const hasSelection = Boolean(selection && !selection.empty && String(selection.selectedText || "").trim());
+  return [
+    {
+      label: hasSelection ? "Додати помітку до виділення" : "Додати помітку тут",
+      icon: MENU_ICONS.annotate,
+      disabled: !isTextFile || !annotationsEnabled,
+      onSelect: async () => {
+        const fileName = String(s.activeTabName || s.selectedFile?.name || "");
+        const lineStart = selection?.lineStart || 1;
+        const lineEnd = selection?.lineEnd || lineStart;
+        const instruction = await showAnnotationPopover({
+          title: hasSelection ? "Помітка до виділення" : "Помітка до рядка",
+          hint: hasSelection ? "Опишіть, що треба змінити в обраному фрагменті." : "Опишіть, що треба змінити в цьому місці.",
+          target: `${fileName}:${lineStart}${lineEnd !== lineStart ? `-${lineEnd}` : ""}`,
+          selectedText: hasSelection ? selection.selectedText : "Текст не виділено. Помітка буде прив’язана до поточного рядка.",
+          rect: selectionRect,
+          x: event?.clientX,
+          y: event?.clientY,
+        });
+        if (!instruction || !instruction.trim()) return;
+        try {
+          await longdoc.createAnnotationFromEditorSelection?.(instruction.trim());
+          setSaveHint("Помітку додано", "saved");
+        } catch (err) {
+          setSaveHint(`Помилка: ${err.message}`, "error");
+        }
+      },
+    },
+  ];
+}
+
+function openSelectionContextMenu(event) {
+  const hadSelection = Boolean(cm.getActiveSelectionDetails?.() && !cm.getActiveSelectionDetails?.().empty);
+  if (!hadSelection && event) {
+    cm.setCursorFromClientPoint?.(event.clientX, event.clientY);
+  }
+  const items = buildEditorSelectionContextMenuItems(event).filter(Boolean);
+  if (!items.length) return false;
+  openEditorContextMenu(items, event);
+  return true;
+}
+
+function renderAnnotationMarkers() {
+  const currentFile = String(s.activeTabName || s.selectedFile?.name || "");
+  const activeFile =
+    currentFile === s.mainFileName
+      ? { name: s.mainFileName, is_text: true, is_dir: false }
+      : s.projectFiles.find(file => file.name === currentFile) || s.selectedFile;
+  const isTextFile = Boolean(activeFile?.is_text && !activeFile?.is_dir);
+  if (!currentFile || !isTextFile) {
+    cm.setAnnotationMarkers?.([]);
+    return;
+  }
+  const activeStatuses = new Set(["open", "in_progress"]);
+  const groups = new Map();
+  for (const item of s.longdoc.annotations || []) {
+    if (!item || item.file_name !== currentFile || !activeStatuses.has(String(item.status || ""))) continue;
+    const line = Math.max(1, Number(item.line_start) || 1);
+    const existing = groups.get(line) || { line, count: 0, ids: [], status: "open", titles: [] };
+    existing.count += 1;
+    existing.ids.push(item.id);
+    existing.status = existing.status === "in_progress" || item.status === "in_progress" ? "in_progress" : "open";
+    existing.titles.push(String(item.instruction || "").trim());
+    groups.set(line, existing);
+  }
+  cm.setAnnotationMarkers?.([...groups.values()].map(item => ({
+    line: item.line,
+    count: item.count,
+    ids: item.ids,
+    status: item.status,
+    title: item.titles.filter(Boolean).slice(0, 3).join("\n"),
+  })));
+}
+
+async function openAnnotationMarkerPopover(info, event) {
+  const ids = Array.isArray(info?.ids) ? info.ids.map(Number).filter(Boolean) : [];
+  if (!ids.length) return;
+  const items = ids
+    .map(id => (s.longdoc.annotations || []).find(item => Number(item?.id) === id))
+    .filter(Boolean);
+  if (!items.length) return;
+  const currentFile = String(s.activeTabName || s.selectedFile?.name || "");
+  const line = Math.max(1, Number(info?.line) || Number(items[0]?.line_start) || 1);
+  const result = await showAnnotationInfoPopover({
+    title: items.length > 1 ? `Помітки: ${items.length}` : "Помітка",
+    target: `${currentFile}:${line}`,
+    items,
+    x: event?.clientX,
+    y: event?.clientY,
+  });
+  if (!result?.action || !result?.id) return;
+  if (result.action === "open") {
+    longdoc.openAnnotationsPanel?.(result.id);
+    return;
+  }
+  const nextStatus = result.action === "done" ? "done" : result.action === "dismiss" ? "dismissed" : "";
+  if (!nextStatus) return;
+  try {
+    await api(`/api/projects/${cfg.projectId}/annotations/${result.id}/`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: nextStatus }),
+    });
+    await longdoc.loadLongdocData?.();
+    setSaveHint(nextStatus === "done" ? "Помітку завершено" : "Помітку відхилено", "saved");
+  } catch (err) {
+    setSaveHint(`Помилка: ${err.message}`, "error");
+  }
 }
 
 function buildCommandPaletteItems() {
@@ -907,6 +1050,34 @@ export async function loadFiles() {
   renderFileList();
 }
 
+export async function loadPdfEmbeds() {
+  if (s.projectMeta?.markup_type !== "typst") return;
+  const p = await api(`/api/projects/${cfg.projectId}/pdf-embed/`, { method: "GET" });
+  s.pdfEmbeds = p.embeds || {};
+  renderFileList();
+}
+
+async function togglePdfEmbed(filePath, enabled) {
+  try {
+    const result = await api(`/api/projects/${cfg.projectId}/pdf-embed/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: filePath, enabled }),
+    });
+    s.pdfEmbeds = { ...s.pdfEmbeds, [filePath]: result.entry };
+    renderFileList();
+    setSaveHint(enabled ? `PDF embed увімкнено. Скомпілюйте для генерації сторінок.` : `PDF embed вимкнено.`, "saved");
+  } catch (err) {
+    setSaveHint(`Помилка: ${err.message}`, "error");
+  }
+}
+
+function insertPdfEmbedSnippet(filePath) {
+  const snippet = `#smarttex-include-pdf("${filePath}")`;
+  insertAtCursor(snippet);
+  setSaveHint("Сніпет вставлено", "saved");
+}
+
 export async function loadSections() {
   const p = await api(`/api/projects/${cfg.projectId}/sections/`, { method: "GET" });
   s.sections = p.sections || [];
@@ -999,6 +1170,7 @@ async function selectFile(file) {
       tinymist.didOpen(file.name, cm.getContent());
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
+      renderAnnotationMarkers();
       return;
     }
     setSaveHint("Завантаження…", "saving");
@@ -1015,6 +1187,7 @@ async function selectFile(file) {
       tinymist.didOpen(file.name, cm.getContent());
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
+      renderAnnotationMarkers();
     } catch (err) {
       if (s.activeTabName !== file.name) return;
       setSaveHint(`Помилка: ${err.message}`, "error");
@@ -1038,6 +1211,7 @@ async function selectFile(file) {
       tinymist.didOpen(file.name, cm.getContent());
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
+      renderAnnotationMarkers();
       return;
     }
 
@@ -1063,6 +1237,7 @@ async function selectFile(file) {
       tinymist.didOpen(file.name, data.text_content || "");
       tinymist.refreshActiveDocument(file.name);
       updateSignatureHelp();
+      renderAnnotationMarkers();
     } catch (err) {
       if (s.activeTabName !== file.name) return;
       setSaveHint(`Помилка: ${err.message}`, "error");
@@ -1076,6 +1251,7 @@ async function selectFile(file) {
   }
 
   setEditorDiagnostics("", []);
+  renderAnnotationMarkers();
   tinymist.refreshActiveDocument("");
   hideSignatureHelp();
   showAssetViewer(file);
@@ -1356,6 +1532,7 @@ export function initEditorApp() {
   setFileContextMenuRef(openFileContextMenu);
   setOutlineLocationRef(openOutlineLocation);
   longdoc.setLongdocProjectMetaRef?.(loadProjectMeta);
+  longdoc.setLongdocAnnotationMarkersRef?.(renderAnnotationMarkers);
   longdoc.initSessionUI?.();
   search.setSearchSelectFileRef?.((file, line) => selectFile(file).then(() => {
     if (line && line > 1) jumpToLine(line);
@@ -1374,6 +1551,12 @@ export function initEditorApp() {
       revealPreviewSelection(false);
     }
   );
+  setEditorContextMenuProvider(openSelectionContextMenu);
+  cm.setAnnotationMarkerClickProvider?.((info, event) => {
+    openAnnotationMarkerPopover(info, event).catch(err => {
+      setSaveHint(`Помилка: ${err.message}`, "error");
+    });
+  });
   applyWrapPreference(readWrapPreference());
   attachScrollListener();
 
@@ -1624,7 +1807,7 @@ export function initEditorApp() {
   if (s.projectMeta?.markup_type === "typst") {
     await loadMainFile();
   }
-  await Promise.all([loadFiles(), loadSections(), loadVersions(true), longdoc.loadLongdocData?.()]);
+  await Promise.all([loadFiles(), loadSections(), loadVersions(true), loadPdfEmbeds(), longdoc.loadLongdocData?.()]);
   setCompileState("out_of_date");
   if (s.projectMeta?.markup_type === "typst") tinymist.connect();
 

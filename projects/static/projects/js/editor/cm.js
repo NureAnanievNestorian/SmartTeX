@@ -2,7 +2,7 @@ import {
   EditorView, keymap, Decoration,
   lineNumbers, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, rectangularSelection, crosshairCursor,
-  highlightActiveLine, hoverTooltip,
+  highlightActiveLine, hoverTooltip, gutter, GutterMarker,
 } from "https://esm.sh/@codemirror/view@6";
 import { EditorState, Compartment, StateEffect, StateField, RangeSetBuilder } from "https://esm.sh/@codemirror/state@6";
 import {
@@ -78,6 +78,38 @@ const darkTheme = EditorView.theme({
     textAlign: "right",
     minWidth: "44px",
   },
+  ".cm-annotation-gutter": {
+    width: "20px",
+    minWidth: "20px",
+    borderRight: "1px solid rgba(62,62,66,.24)",
+  },
+  ".cm-annotation-gutter .cm-gutterElement": {
+    padding: "0",
+    width: "20px",
+  },
+  ".cm-annotation-marker": {
+    width: "16px",
+    minWidth: "16px",
+    height: "16px",
+    margin: "3px auto 0",
+    borderRadius: "999px",
+    border: "0",
+    display: "grid",
+    placeItems: "center",
+    background: "transparent",
+    color: "#b6bec8",
+    cursor: "pointer",
+    padding: "0",
+    opacity: ".92",
+  },
+  ".cm-annotation-marker.in_progress": {
+    color: "#7dd3fc",
+  },
+  ".cm-annotation-marker.done": {
+    color: "#86efac",
+  },
+  ".cm-annotation-marker:hover": { color: "#f2f5f8", background: "rgba(255,255,255,.06)" },
+  ".cm-annotation-marker svg": { width: "14px", height: "14px", display: "block" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#d4d4d4 !important" },
   ".cm-selectionBackground": { background: "rgba(38,79,120,.7) !important" },
   "&.cm-focused .cm-selectionBackground": { background: "rgba(38,79,120,.7) !important" },
@@ -316,12 +348,16 @@ let _lspHoverFn = null;
 let _lspDefinitionFn = null;
 let _lspMetaClickFn = null;
 let _lspFoldFn = null;
+let _editorContextMenuFn = null;
+let _annotationMarkerClickFn = null;
 
 export function setLspCompletionProvider(fn)  { _lspCompletionFn = fn; }
 export function setLspHoverProvider(fn)        { _lspHoverFn = fn; }
 export function setLspDefinitionProvider(fn)   { _lspDefinitionFn = fn; }
 export function setLspMetaClickProvider(fn)    { _lspMetaClickFn = fn; }
 export function setLspFoldProvider(fn)         { _lspFoldFn = fn; }
+export function setEditorContextMenuProvider(fn) { _editorContextMenuFn = fn; }
+export function setAnnotationMarkerClickProvider(fn) { _annotationMarkerClickFn = fn; }
 export function clearLspProviders() {
   _lspCompletionFn = null;
   _lspHoverFn = null;
@@ -330,6 +366,69 @@ export function clearLspProviders() {
   _lspFoldFn = null;
   _clearSemanticTokens();
 }
+
+const setAnnotationMarkersEffect = StateEffect.define();
+
+class AnnotationGutterMarker extends GutterMarker {
+  constructor(info) {
+    super();
+    this.info = info;
+  }
+  toDOM() {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = `cm-annotation-marker ${this.info.status || "open"}`;
+    el.title = this.info.title || "Помітка";
+    el.setAttribute("aria-label", this.info.title || "Помітка");
+    el.innerHTML = `
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 3.75h10v6.5H7.25L4 12.75v-2.5H3z"></path>
+      </svg>
+    `;
+    if (this.info.count > 1) {
+      el.dataset.count = String(this.info.count);
+      el.title = `${this.info.count} помітки`;
+    }
+    const info = this.info;
+    el.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (_annotationMarkerClickFn) _annotationMarkerClickFn(info, event);
+    });
+    return el;
+  }
+}
+
+const annotationMarkerField = StateField.define({
+  create() {
+    return new Map();
+  },
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setAnnotationMarkersEffect)) {
+        const next = new Map();
+        for (const item of effect.value || []) {
+          next.set(Number(item.line), item);
+        }
+        return next;
+      }
+    }
+    return value;
+  },
+});
+
+const annotationGutter = gutter({
+  class: "cm-annotation-gutter",
+  lineMarker(view, line) {
+    const markers = view.state.field(annotationMarkerField, false);
+    const lineNumber = view.state.doc.lineAt(line.from).number;
+    const info = markers?.get(lineNumber);
+    return info ? new AnnotationGutterMarker(info) : null;
+  },
+  lineMarkerChange(update) {
+    return update.transactions.some(t => t.effects.some(e => e.is(setAnnotationMarkersEffect)));
+  },
+});
 
 // ── Semantic tokens ──────────────────────────────────────────────────────────
 
@@ -468,6 +567,8 @@ let _lineWrappingEnabled = true;
 function makeExtensions(filename) {
   const isTypst = String(filename || "").toLowerCase().endsWith(".typ");
   return [
+    annotationMarkerField,
+    annotationGutter,
     basicSetup,
     darkTheme,
     syntaxHighlighting(vscodeHighlight),
@@ -527,6 +628,10 @@ function makeExtensions(filename) {
           }
           if (!jumpToTypstDefinition(pos)) return typstClickHandler(event);
           return true;
+        },
+        contextmenu(event) {
+          if (!_editorContextMenuFn) return false;
+          return _editorContextMenuFn(event, view) === true;
         },
       }),
     ] : []),
@@ -611,6 +716,67 @@ export function getSelectionSnapshot(fromState = null) {
     })),
     mainIndex: source.selection.mainIndex,
   };
+}
+
+export function getActiveSelectionDetails() {
+  if (!view?.state) return null;
+  const doc = view.state.doc;
+  const range = view.state.selection.main;
+  const from = Math.min(range.anchor, range.head);
+  const to = Math.max(range.anchor, range.head);
+  const startLine = doc.lineAt(from).number;
+  const endPos = Math.max(from, to > from ? to - 1 : to);
+  const endLine = doc.lineAt(endPos).number;
+  return {
+    from,
+    to,
+    empty: from === to,
+    selectedText: doc.sliceString(from, to),
+    lineStart: startLine,
+    lineEnd: endLine,
+  };
+}
+
+export function getSelectionScreenRect() {
+  if (!view?.state) return null;
+  const range = view.state.selection.main;
+  const from = Math.min(range.anchor, range.head);
+  const to = Math.max(range.anchor, range.head);
+  const start = view.coordsAtPos(from);
+  const endPos = Math.max(from, to > from ? to - 1 : to);
+  const end = view.coordsAtPos(endPos);
+  if (!start && !end) return null;
+  const first = start || end;
+  const last = end || start;
+  return {
+    left: Math.min(first.left, last.left),
+    right: Math.max(first.right, last.right),
+    top: Math.min(first.top, last.top),
+    bottom: Math.max(first.bottom, last.bottom),
+  };
+}
+
+export function setCursorFromClientPoint(x, y) {
+  if (!view?.state) return false;
+  const pos = view.posAtCoords({ x: Number(x), y: Number(y) });
+  if (typeof pos !== "number") return false;
+  view.dispatch({
+    selection: { anchor: pos, head: pos },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+export function setAnnotationMarkers(items = []) {
+  if (!view) return;
+  const effects = [];
+  if (!view.state.field(annotationMarkerField, false)) {
+    effects.push(StateEffect.appendConfig.of([annotationMarkerField, annotationGutter]));
+  }
+  effects.push(setAnnotationMarkersEffect.of(items));
+  view.dispatch({
+    effects,
+  });
 }
 
 export function setSelectionSnapshot(snapshot) {
@@ -747,3 +913,13 @@ export function focusEditor() { view?.focus(); }
 export function refreshLayout() { view?.requestMeasure(); }
 export function runUndo() { return view ? undo(view) : false; }
 export function runRedo() { return view ? redo(view) : false; }
+
+export function insertAtCursor(text) {
+  if (!view) return;
+  const sel = view.state.selection.main;
+  view.dispatch({
+    changes: { from: sel.from, to: sel.to, insert: text },
+    selection: { anchor: sel.from + text.length },
+  });
+  view.focus();
+}

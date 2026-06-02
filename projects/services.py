@@ -30,7 +30,7 @@ TEXT_EXTENSIONS = {".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
 ALLOWED_UPLOAD_EXTENSIONS = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
 MAX_PROJECT_FILES_TOTAL_SIZE = int(getattr(settings, "MAX_PROJECT_TOTAL_SIZE", 64 * 1024 * 1024))
-PROTECTED_FILENAMES = {"main.tex", "main.typ", "main.pdf", "main.log"}
+PROTECTED_FILENAMES = {"main.tex", "main.typ"}
 LATEX_ARTIFACT_EXTENSIONS = {
     ".aux",
     ".log",
@@ -118,7 +118,7 @@ def source_file_path(project: Project) -> Path:
 
 
 def pdf_file_path(project: Project) -> Path:
-    return project_dir(project) / "main.pdf"
+    return project_dir(project) / ".smarttex" / "main.pdf"
 
 
 def project_pdf_download_name(project: Project) -> str:
@@ -133,7 +133,7 @@ def project_pdf_download_name(project: Project) -> str:
 
 
 def log_file_path(project: Project) -> Path:
-    return project_dir(project) / "main.log"
+    return project_dir(project) / ".smarttex" / "main.log"
 
 
 def ensure_project_dir(project: Project) -> Path:
@@ -226,7 +226,7 @@ def ensure_project_git_repo(project: Project) -> None:
     _run_project_git(project, ["config", "commit.gpgsign", "false"])
     gitignore = project_dir(project) / ".gitignore"
     if not gitignore.exists():
-        gitignore.write_text(".smarttex/sessions/\n.smarttex-git/\nmain.pdf\nmain.log\n*.aux\n*.out\n*.toc\n*.fls\n*.fdb_latexmk\n*.synctex.gz\n*.xdv\n*.bbl\n*.blg\n*.nav\n*.snm\n*.vrb\n", encoding="utf-8")
+        gitignore.write_text(".smarttex/sessions/\n.smarttex/main.pdf\n.smarttex/main.log\n.smarttex/cache/\n.smarttex-git/\n*.aux\n*.out\n*.toc\n*.fls\n*.fdb_latexmk\n*.synctex.gz\n*.xdv\n*.bbl\n*.blg\n*.nav\n*.snm\n*.vrb\n", encoding="utf-8")
 
 
 def _is_smarttex_trackable(parts: tuple) -> bool:
@@ -236,7 +236,7 @@ def _is_smarttex_trackable(parts: tuple) -> bool:
     # Exclude internal-only subdirs: sessions, and the bare .smarttex root dir entry
     if len(parts) < 2:
         return False
-    if parts[1] == "sessions":
+    if parts[1] in {"sessions", "cache", "auto_generated"}:
         return False
     return True
 
@@ -1930,7 +1930,7 @@ def build_compiler_cmd(
         cmd: list[str] = [typst_bin, "compile", "--root", "."]
         if fonts_dir:
             cmd += ["--font-path", fonts_dir]
-        cmd += [src_filename, "main.pdf"]
+        cmd += [src_filename, ".smarttex/main.pdf"]
         env = os.environ.copy()
         if packages_dir:
             env["XDG_DATA_HOME"] = packages_dir
@@ -1949,7 +1949,7 @@ def build_compiler_cmd(
                 "-v", f"{packages_dir}:/typst-data:rw",
                 "-e", "XDG_DATA_HOME=/typst-data",
             ]
-        compiler_args += [src_filename, "main.pdf"]
+        compiler_args += [src_filename, ".smarttex/main.pdf"]
         cmd = [
             "docker", "run", "--rm",
             *_compiler_network_args(markup_type),
@@ -1971,6 +1971,7 @@ def build_compiler_cmd(
             "-interaction=nonstopmode",
             "-synctex=1",
             "-jobname=main",
+            "-output-directory=.smarttex",
         ]
         if strict_errors:
             compiler_args.append("-halt-on-error")
@@ -2060,6 +2061,7 @@ def compile_project(project: Project) -> CompileResult:
 
     from projects.pre_compile import run_pre_compile_jobs, PreCompileResult
     import projects.plantuml_job  # noqa: F401 — registers PlantUmlJob
+    import projects.pdf_embed_job  # noqa: F401 — registers PdfEmbedJob
     pre_compile_results = run_pre_compile_jobs(project)
 
     def _pre_compile_diagnostics(results: list[PreCompileResult]) -> list[dict]:
@@ -2087,6 +2089,18 @@ def compile_project(project: Project) -> CompileResult:
     if host_project_root:
         docker_mount_source = Path(host_project_root) / "media" / "projects" / str(project.owner_id) / str(project.id)
         docker_mount_source.mkdir(parents=True, exist_ok=True)
+
+    # Ensure .smarttex/ exists so compilers can write output there
+    (workdir / ".smarttex").mkdir(parents=True, exist_ok=True)
+
+    # Remove legacy root-level PDF/log left by older builds
+    for _legacy in ("main.pdf", "main.log"):
+        _legacy_path = workdir / _legacy
+        if _legacy_path.exists():
+            try:
+                _legacy_path.unlink()
+            except OSError:
+                pass
 
     src_filename = main_source_filename(project)
     use_native_typst = project.markup_type == MarkupType.TYPST and bool(
@@ -2358,7 +2372,7 @@ def synctex_line_to_pdf(
         "-i",
         query,
         "-o",
-        "main.pdf",
+        ".smarttex/main.pdf",
     ]
     proc = subprocess.run(
         cmd,
@@ -2408,6 +2422,26 @@ def synctex_line_to_pdf(
     }
 
 
+def get_pdf_embed_manifest(project: Project) -> dict:
+    workdir = ensure_project_dir(project)
+    from projects.pdf_embed_job import load_manifest
+    return load_manifest(workdir)
+
+
+def set_pdf_embed_enabled(project: Project, pdf_path: str, enabled: bool) -> dict:
+    workdir = ensure_project_dir(project)
+    from projects.pdf_embed_job import load_manifest, save_manifest
+    manifest = load_manifest(workdir)
+    if pdf_path not in manifest:
+        manifest[pdf_path] = {}
+    manifest[pdf_path]["enabled"] = enabled
+    if not enabled:
+        manifest[pdf_path].pop("last_hash", None)
+        manifest[pdf_path].pop("page_count", None)
+    save_manifest(workdir, manifest)
+    return manifest[pdf_path]
+
+
 def synctex_pdf_to_line(
     project: Project,
     *,
@@ -2427,7 +2461,7 @@ def synctex_pdf_to_line(
 
     mount_source = _docker_mount_source(project)
     image = getattr(settings, "LATEX_DOCKER_IMAGE", "latex-ua:latest")
-    query = f"{page}:{x:.6f}:{y:.6f}:main.pdf"
+    query = f"{page}:{x:.6f}:{y:.6f}:.smarttex/main.pdf"
     cmd = [
         "docker",
         "run",

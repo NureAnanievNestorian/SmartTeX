@@ -437,6 +437,7 @@ def _project_payload(project: Project, user=None) -> dict:
             "context_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.context_enabled),
             "outline_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.outline_enabled),
             "tasks_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.tasks_enabled),
+            "annotations_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.annotations_enabled),
             "notes_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.notes_enabled),
             "summaries_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.summaries_enabled),
             "requirements_enabled": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.requirements_enabled),
@@ -1834,6 +1835,45 @@ def api_project_pdf_page_count(request: HttpRequest, project_id: int) -> JsonRes
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
     return JsonResponse(payload)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def api_project_pdf_embed(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    if request.method == "GET":
+        from .services import get_pdf_embed_manifest
+        return JsonResponse({"embeds": get_pdf_embed_manifest(project)})
+
+    try:
+        body = json.loads(request.body or b"{}")
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"detail": "invalid JSON"}, status=400)
+
+    pdf_path = str(body.get("file") or "").strip()
+    if not pdf_path:
+        return JsonResponse({"detail": "file is required"}, status=400)
+    if not pdf_path.lower().endswith(".pdf"):
+        return JsonResponse({"detail": "only PDF files can be embedded"}, status=400)
+
+    enabled = bool(body.get("enabled", True))
+    from .services import set_pdf_embed_enabled
+    entry = set_pdf_embed_enabled(project, pdf_path, enabled)
+
+    action = "enabled" if enabled else "disabled"
+    commit_project_changes(
+        project,
+        summary=f"PDF embed {action}: {pdf_path}",
+        operation="update_pdf_embed",
+        source=ProjectVersion.Source.WEB,
+        target_files=[".smarttex/pdf_includes.json"],
+    )
+
+    return JsonResponse({"file": pdf_path, "enabled": enabled, "entry": entry})
 
 
 @csrf_exempt

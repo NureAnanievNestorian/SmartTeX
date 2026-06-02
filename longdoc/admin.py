@@ -5,6 +5,7 @@ from .models import (
     AIBatchChange,
     AISession,
     AssistantAuditLog,
+    ProjectAnnotation,
     ProjectContextFile,
     ProjectLongDocSettings,
     ProjectNoteSection,
@@ -42,6 +43,13 @@ class ProjectTaskAdmin(admin.ModelAdmin):
     list_display = ("project", "status", "created_by", "completed_at", "updated_at")
     list_filter = ("status", "created_by")
     search_fields = ("project__title", "description")
+
+
+@admin.register(ProjectAnnotation)
+class ProjectAnnotationAdmin(admin.ModelAdmin):
+    list_display = ("project", "file_name", "line_start", "status", "task", "updated_at")
+    list_filter = ("status", "created_by")
+    search_fields = ("project__title", "file_name", "instruction", "selected_text")
 
 
 @admin.register(ProjectNoteSection)

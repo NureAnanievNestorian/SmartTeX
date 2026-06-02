@@ -1,6 +1,8 @@
 from django.urls import path, re_path
 
 from .views import (
+    api_annotation_detail,
+    api_annotations,
     api_change_proposal_accept,
     api_change_proposal_cancel,
     api_change_proposal_diff,
@@ -39,6 +41,8 @@ urlpatterns = [
     path("projects/<int:project_id>/outline-items/<int:item_id>/", api_outline_item_detail),
     path("projects/<int:project_id>/tasks/", api_longdoc_tasks),
     path("projects/<int:project_id>/tasks/<int:task_id>/", api_longdoc_task_detail),
+    path("projects/<int:project_id>/annotations/", api_annotations),
+    path("projects/<int:project_id>/annotations/<int:annotation_id>/", api_annotation_detail),
     path("projects/<int:project_id>/note-sections/", api_note_sections),
     path("projects/<int:project_id>/note-sections/<int:section_id>/", api_note_section_detail),
     path("projects/<int:project_id>/section-summaries/", api_section_summaries),

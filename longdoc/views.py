@@ -20,11 +20,13 @@ from projects.views import _project_with_owner
 from .services import (
     LongdocAccessError,
     assert_longdoc_feature,
+    create_annotation,
     create_context_file,
     create_note_section,
     create_outline_item,
     create_requirement,
     create_task,
+    delete_annotation,
     delete_context_file,
     delete_note_section,
     delete_outline_item,
@@ -32,6 +34,7 @@ from .services import (
     get_context_file,
     get_or_create_longdoc_settings,
     get_section_summary,
+    list_annotations,
     list_context_files,
     list_note_sections,
     list_outline_items,
@@ -41,6 +44,7 @@ from .services import (
     overview_payload,
     serialize_settings,
     sync_context_file_records,
+    update_annotation,
     update_context_file,
     update_longdoc_settings,
     update_note_section,
@@ -142,6 +146,7 @@ def api_longdoc_settings(request: HttpRequest, project_id: int) -> JsonResponse:
         "context_enabled",
         "outline_enabled",
         "tasks_enabled",
+        "annotations_enabled",
         "notes_enabled",
         "summaries_enabled",
         "requirements_enabled",
@@ -495,6 +500,71 @@ def api_note_section_detail(request: HttpRequest, project_id: int, section_id: i
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
+def api_annotations(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    if request.method == "GET":
+        try:
+            assert_longdoc_feature(project, "annotations_enabled")
+        except Exception as exc:
+            return _error_response(exc)
+        status = str(request.GET.get("status") or "").strip() or None
+        file_name = str(request.GET.get("file_name") or "").strip() or None
+        return JsonResponse({"annotations": list_annotations(project, status=status, file_name=file_name)})
+
+    body = _json_body(request)
+    try:
+        meta = _change_meta(request, body)
+        assert_longdoc_feature(project, "annotations_enabled", require_write=True)
+        item = create_annotation(
+            project,
+            file_name=str(body.get("file_name") or "").strip(),
+            instruction=str(body.get("instruction") or ""),
+            line_start=int(body["line_start"]) if body.get("line_start") is not None else None,
+            line_end=int(body["line_end"]) if body.get("line_end") is not None else None,
+            selected_text=str(body.get("selected_text") or ""),
+            task_id=int(body["task_id"]) if body.get("task_id") is not None and str(body.get("task_id")).strip() != "" else None,
+            actor=user,
+            source=meta["source"],
+            summary=meta["summary"],
+        )
+    except Exception as exc:
+        return _error_response(exc)
+    return JsonResponse(item, status=201)
+
+
+@csrf_exempt
+@require_http_methods(["PATCH", "DELETE"])
+def api_annotation_detail(request: HttpRequest, project_id: int, annotation_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    body = _json_body(request)
+    try:
+        meta = _change_meta(request, body)
+        assert_longdoc_feature(project, "annotations_enabled", require_write=True)
+        if request.method == "DELETE":
+            delete_annotation(project, annotation_id=annotation_id, actor=user, source=meta["source"], summary=meta["summary"])
+            return JsonResponse({}, status=204)
+        item = update_annotation(
+            project,
+            annotation_id=annotation_id,
+            actor=user,
+            source=meta["source"],
+            summary=meta["summary"],
+            **_service_changes(body),
+        )
+        return JsonResponse(item)
+    except Exception as exc:
+        return _error_response(exc)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
 def api_section_summaries(request: HttpRequest, project_id: int) -> JsonResponse:
     user = get_api_user(request)
     if not user:
@@ -682,6 +752,7 @@ def api_change_proposals(request: HttpRequest, project_id: int) -> JsonResponse:
             patch_ops=list(raw_patch_ops) if raw_patch_ops else None,
             addresses_task_id=body.get("addresses_task_id"),
             addresses_outline_item_id=body.get("addresses_outline_item_id"),
+            annotation_ids=list(body.get("annotation_ids") or []),
             validation_token=(str(body.get("validation_token")) if body.get("validation_token") else None),
         )
     except Exception as exc:

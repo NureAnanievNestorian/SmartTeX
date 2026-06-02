@@ -38,6 +38,7 @@ from .views import (
     api_project_versions,
     api_projects,
     api_project_typst_import,
+    api_project_pdf_embed,
     github_app_callback,
 )
 
@@ -68,6 +69,7 @@ urlpatterns = [
     path("github/disconnect/", api_github_app_disconnect),
     path("projects/<int:project_id>/pdf/", api_project_pdf),
     path("projects/<int:project_id>/pdf-page-count/", api_project_pdf_page_count),
+    path("projects/<int:project_id>/pdf-embed/", api_project_pdf_embed),
     path("projects/<int:project_id>/pdf-page-image/", api_project_pdf_page_image),
     path("projects/<int:project_id>/synctex/line/", api_project_synctex_line),
     path("projects/<int:project_id>/synctex/pdf/", api_project_synctex_pdf),

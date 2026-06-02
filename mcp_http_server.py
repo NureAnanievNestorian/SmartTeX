@@ -1619,6 +1619,60 @@ async def generate_plantuml_diagram(
 
 
 @mcp.tool
+async def set_pdf_embed(
+        project_id: int,
+        file: str,
+        enabled: bool,
+        ctx: Context,
+) -> dict[str, Any]:
+    """Enable or disable full-PDF embedding for a PDF file in a Typst project.
+
+    When enabled, SmartTeX renders every page of the PDF to high-quality PNG images
+    on the next compile (pre-compile step). It also generates a helper file
+    `.smarttex/auto_generated/pdf_includes.typ` and injects a single
+    `// smarttex:auto-begin` import block at the top of the main `.typ` file
+    automatically — no manual import needed.
+
+    After enabling, insert pages into the document with:
+        #smarttex-include-pdf("path/to/file.pdf")
+    Optional params: `width` (default `100%`), `pages` (list of 1-based page numbers).
+
+    `file` — project-relative path to the PDF, e.g. `"appendix/paper.pdf"`.
+    `enabled` — `true` to enable embedding, `false` to disable.
+
+    Workflow notes:
+    - Pages are rendered on the **next compile**, not immediately.
+    - The config change is committed to git and included in GitHub sync.
+    - In controlled MCP mode this tool is allowed (it writes project config, not
+      source). The `#import` block injected into the main file is auto-generated
+      and will appear as part of any proposal compile that follows.
+    - Only works for Typst projects (`markup_type == "typst"`).
+    """
+    payload = _call(
+        "POST",
+        f"/api/projects/{project_id}/pdf-embed/",
+        {"file": file, "enabled": enabled},
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_project_write_updates(ctx, project_id)
+    result: dict[str, Any] = {
+        "file": file,
+        "enabled": enabled,
+    }
+    if isinstance(payload, dict):
+        entry = payload.get("entry") or {}
+        if isinstance(entry, dict) and entry.get("page_count"):
+            result["page_count"] = entry["page_count"]
+    if enabled:
+        result["next_step"] = (
+            f'Pages will be rendered on next compile. '
+            f'Insert into document with: #smarttex-include-pdf("{file}")'
+        )
+    return result
+
+
+@mcp.tool
 def get_project_file_content(project_id: int, asset_filename: str, include_text: bool = False) -> dict[str, Any]:
     """Read file bytes (base64). Set `include_text=True` for text files."""
     params = urlencode({"include_text": str(bool(include_text)).lower()})
@@ -2980,6 +3034,7 @@ async def propose_document_change(
         validation_token: str | None = None,
         addresses_task_id: int | None = None,
         addresses_outline_item_id: int | None = None,
+        annotation_ids: list[int] | None = None,
         preparation_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit a suggested document change for user review.
@@ -3059,6 +3114,8 @@ async def propose_document_change(
         payload["addresses_task_id"] = int(addresses_task_id)
     if addresses_outline_item_id is not None:
         payload["addresses_outline_item_id"] = int(addresses_outline_item_id)
+    if annotation_ids:
+        payload["annotation_ids"] = [int(item) for item in annotation_ids]
     result = _call_allow_json_errors("POST", f"/api/projects/{project_id}/change-proposals/", payload)
     if isinstance(result, dict) and not result.get("error"):
         await _notify_longdoc_updates(ctx, project_id, "overview", "change-proposal")
@@ -3362,6 +3419,151 @@ async def update_task_status(
         return payload
     await _notify_longdoc_updates(ctx, project_id, "overview", "tasks")
     return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+def list_annotations(
+        project_id: int,
+        status: str | None = None,
+        file_name: str | None = None,
+) -> dict[str, Any]:
+    """List Writing Assistant annotations, optionally filtered by status or file."""
+    query: dict[str, str] = {}
+    if status:
+        query["status"] = status
+    if file_name:
+        query["file_name"] = file_name
+    suffix = f"?{urlencode(query)}" if query else ""
+    payload = _call_allow_json_errors("GET", f"/api/projects/{project_id}/annotations/{suffix}")
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    items = payload.get("annotations") if isinstance(payload, dict) else []
+    return {"annotations": items if isinstance(items, list) else []}
+
+
+@mcp.tool
+async def add_annotation(
+        project_id: int,
+        file_name: str,
+        instruction: str,
+        change_summary: str,
+        ctx: Context,
+        line_start: int | None = None,
+        line_end: int | None = None,
+        selected_text: str = "",
+        task_id: int | None = None,
+) -> dict[str, Any]:
+    """Add one Writing Assistant annotation tied to a file and optional line range."""
+    payload = _call_allow_json_errors(
+        "POST",
+        f"/api/projects/{project_id}/annotations/",
+        {
+            "file_name": file_name,
+            "instruction": instruction,
+            **({"line_start": int(line_start)} if line_start is not None else {}),
+            **({"line_end": int(line_end)} if line_end is not None else {}),
+            **({"selected_text": selected_text} if selected_text else {}),
+            **({"task_id": int(task_id)} if task_id is not None else {}),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "annotations")
+    return payload if isinstance(payload, dict) else {"detail": "created"}
+
+
+@mcp.tool
+async def update_annotation(
+        project_id: int,
+        annotation_id: int,
+        change_summary: str,
+        ctx: Context,
+        instruction: str | None = None,
+        status: str | None = None,
+        file_name: str | None = None,
+        line_start: int | None = None,
+        line_end: int | None = None,
+        selected_text: str | None = None,
+        task_id: int | None = None,
+) -> dict[str, Any]:
+    """Update one Writing Assistant annotation."""
+    payload = _call_allow_json_errors(
+        "PATCH",
+        f"/api/projects/{project_id}/annotations/{int(annotation_id)}/",
+        {
+            **({"instruction": instruction} if instruction is not None else {}),
+            **({"status": status} if status is not None else {}),
+            **({"file_name": file_name} if file_name is not None else {}),
+            **({"line_start": int(line_start)} if line_start is not None else {}),
+            **({"line_end": int(line_end)} if line_end is not None else {}),
+            **({"selected_text": selected_text} if selected_text is not None else {}),
+            **({"task_id": int(task_id)} if task_id is not None else {}),
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "annotations")
+    return payload if isinstance(payload, dict) else {"detail": "updated"}
+
+
+@mcp.tool
+async def complete_annotation(
+        project_id: int,
+        annotation_id: int,
+        change_summary: str,
+        ctx: Context,
+) -> dict[str, Any]:
+    """Mark one Writing Assistant annotation as done."""
+    return await update_annotation(
+        project_id=project_id,
+        annotation_id=annotation_id,
+        status="done",
+        change_summary=change_summary,
+        ctx=ctx,
+    )
+
+
+@mcp.tool
+async def dismiss_annotation(
+        project_id: int,
+        annotation_id: int,
+        change_summary: str,
+        ctx: Context,
+) -> dict[str, Any]:
+    """Mark one Writing Assistant annotation as dismissed."""
+    return await update_annotation(
+        project_id=project_id,
+        annotation_id=annotation_id,
+        status="dismissed",
+        change_summary=change_summary,
+        ctx=ctx,
+    )
+
+
+@mcp.tool
+async def delete_annotation(
+        project_id: int,
+        annotation_id: int,
+        change_summary: str,
+        ctx: Context,
+) -> dict[str, Any]:
+    """Delete one Writing Assistant annotation."""
+    payload = _call_allow_json_errors(
+        "DELETE",
+        f"/api/projects/{project_id}/annotations/{int(annotation_id)}/",
+        {
+            "change_summary": _require_summary(change_summary),
+            "change_source": "mcp",
+        },
+    )
+    if isinstance(payload, dict) and payload.get("error"):
+        return payload
+    await _notify_longdoc_updates(ctx, project_id, "overview", "annotations")
+    return payload if isinstance(payload, dict) else {"detail": "deleted"}
 
 
 @mcp.tool

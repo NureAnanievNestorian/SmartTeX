@@ -1,14 +1,17 @@
 import * as state from "./state.js";
 import * as apiMod from "./api.js";
+import * as cm from "./cm.js";
 import * as ui from "./ui.js";
 
 const { cfg, s } = state;
 const { api } = apiMod;
 const { escHtml, showConfirm } = ui;
+const { getActiveSelectionDetails } = cm;
 
 const contextPanelEl = document.getElementById("longdoc-context-panel");
 const outlinePanelEl = document.getElementById("longdoc-outline-panel");
 const tasksPanelEl = document.getElementById("longdoc-tasks-panel");
+const annotationsPanelEl = document.getElementById("longdoc-annotations-panel");
 const notesPanelEl = document.getElementById("longdoc-notes-panel");
 const requirementsPanelEl = document.getElementById("longdoc-requirements-panel");
 const settingsPanelEl = document.getElementById("longdoc-settings-panel");
@@ -18,6 +21,7 @@ const centerEl = document.getElementById("drop-zone");
 const waTabBtnEl = document.getElementById("wa-tab-btn");
 
 let _reloadProjectMeta = null;
+let _refreshAnnotationMarkers = null;
 const uiState = {
   creating: new Set(),
   editing: new Set(),
@@ -25,6 +29,10 @@ const uiState = {
 
 export function setLongdocProjectMetaRef(fn) {
   _reloadProjectMeta = fn;
+}
+
+export function setLongdocAnnotationMarkersRef(fn) {
+  _refreshAnnotationMarkers = fn;
 }
 
 function longdocEnabled() {
@@ -66,6 +74,7 @@ function statusLabel(value) {
     stub: "Чернетка-скелет",
     draft: "Чернетка",
     done: "Готово",
+    dismissed: "Відхилено",
     open: "Відкрита",
     in_progress: "У роботі",
     covered: "Покрито",
@@ -133,6 +142,40 @@ function switchAssistantTab(tabName) {
 
 export function openAssistantSettings() {
   switchAssistantTab("settings");
+}
+
+export function openAnnotationsPanel(annotationId = null) {
+  switchAssistantTab("annotations");
+  if (!annotationId) return;
+  requestAnimationFrame(() => {
+    const card = document.querySelector(`[data-annotation-id="${String(annotationId)}"]`);
+    card?.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+}
+
+export async function createAnnotationFromEditorSelection(instruction, { taskId = null, openPanel = false } = {}) {
+  const draft = activeAnnotationDraft();
+  if (!draft) throw new Error("Відкрийте текстовий файл, щоб створити помітку.");
+  if (!longdocEnabled() || !featureEnabled("annotations_enabled")) {
+    throw new Error("Помітки вимкнені для цього проєкту.");
+  }
+  const normalizedInstruction = String(instruction || "").trim();
+  if (!normalizedInstruction) {
+    throw new Error("Інструкція для помітки порожня.");
+  }
+  await api(`/api/projects/${cfg.projectId}/annotations/`, {
+    method: "POST",
+    body: JSON.stringify({
+      file_name: draft.fileName,
+      line_start: draft.lineStart,
+      line_end: draft.lineEnd,
+      selected_text: draft.selectedText,
+      instruction: normalizedInstruction,
+      task_id: taskId,
+    }),
+  });
+  await loadLongdocData();
+  if (openPanel) switchAssistantTab("annotations");
 }
 
 function aiTaskLabel(value) {
@@ -392,6 +435,15 @@ async function loadTasks() {
   s.longdoc.tasks = payload.tasks || [];
 }
 
+async function loadAnnotations() {
+  if (!featureEnabled("annotations_enabled")) {
+    s.longdoc.annotations = [];
+    return;
+  }
+  const payload = await api(`/api/projects/${cfg.projectId}/annotations/`, { method: "GET" });
+  s.longdoc.annotations = payload.annotations || [];
+}
+
 async function loadNotes() {
   if (!featureEnabled("notes_enabled")) {
     s.longdoc.noteSections = [];
@@ -432,6 +484,7 @@ function _showPanelsLoading() {
   _showPanelLoading(contextPanelEl);
   _showPanelLoading(outlinePanelEl);
   _showPanelLoading(tasksPanelEl);
+  _showPanelLoading(annotationsPanelEl);
   _showPanelLoading(notesPanelEl);
   _showPanelLoading(requirementsPanelEl);
 }
@@ -450,11 +503,13 @@ export async function loadLongdocData() {
     loadContextFiles(),
     loadOutlineItems(),
     loadTasks(),
+    loadAnnotations(),
     loadNotes(),
     loadRequirements(),
   ]);
   s.longdoc.overview = overview;
   renderLongdocPanels();
+  _refreshAnnotationMarkers?.();
 }
 
 function renderDisabledPanel(root, featureLabel) {
@@ -511,6 +566,7 @@ function renderSettingsPanel() {
       ["summaries_enabled", "Підсумки секцій", "Стан підсумків і відстеження застарілості."],
       ["requirements_enabled", "Вимоги", "Покриття вимог документом."],
       ["tasks_enabled", "Завдання", "Короткі дії для написання."],
+      ["annotations_enabled", "Помітки", "Прив’язані до місця інструкції для точкових правок."],
       ["notes_enabled", "Нотатки", "Структурований блокнот проєкту."],
     ]],
     ["Автоматизація", [
@@ -678,8 +734,10 @@ function renderOverviewPanel() {
 
   const overview = s.longdoc.overview || {};
   const taskCounts = overview.task_counts || {};
+  const annotationCounts = overview.annotation_counts || {};
   const coverageCounts = overview.requirement_coverage_counts || {};
   const openTasks = Number(taskCounts.open || 0) + Number(taskCounts.in_progress || 0);
+  const openAnnotations = Number(annotationCounts.open || 0) + Number(annotationCounts.in_progress || 0);
   const issueReqs = Number(coverageCounts.unchecked || 0) + Number(coverageCounts.partial || 0) + Number(coverageCounts.missing || 0);
   const session = overview.active_proposal || s.longdoc.activeSession;
 
@@ -704,6 +762,10 @@ function renderOverviewPanel() {
         <button class="e-overview-tile ${openTasks ? "attention" : ""}" type="button" data-action="go-tasks">
           <strong>${openTasks}</strong>
           <span>активних завдань</span>
+        </button>
+        <button class="e-overview-tile ${openAnnotations ? "attention" : ""}" type="button" data-action="go-annotations">
+          <strong>${openAnnotations}</strong>
+          <span>активних поміток</span>
         </button>
         <button class="e-overview-tile ${issueReqs ? "attention" : ""}" type="button" data-action="go-requirements">
           <strong>${issueReqs}</strong>
@@ -741,6 +803,7 @@ function renderOverviewPanel() {
         <div class="e-quick-actions">
           ${button("План", "go-outline")}
           ${button("Контекст", "go-context")}
+          ${button("Помітки", "go-annotations")}
           ${button("Вимоги", "go-requirements")}
           ${button("Нотатки", "go-notes")}
           ${button("Налаштування", "go-settings")}
@@ -752,6 +815,7 @@ function renderOverviewPanel() {
     "go-outline": async () => switchAssistantTab("outline"),
     "go-context": async () => switchAssistantTab("context"),
     "go-tasks": async () => switchAssistantTab("tasks"),
+    "go-annotations": async () => switchAssistantTab("annotations"),
     "go-requirements": async () => switchAssistantTab("requirements"),
     "go-notes": async () => switchAssistantTab("notes"),
     "go-settings": async () => switchAssistantTab("settings"),
@@ -1176,6 +1240,192 @@ function renderTasksPanel() {
   });
 }
 
+function annotationTaskOptions(selectedTaskId = null) {
+  const tasks = s.longdoc.tasks || [];
+  const normalized = selectedTaskId == null ? "" : String(selectedTaskId);
+  return `
+    <option value="">Без завдання</option>
+    ${tasks.map(task => `<option value="${task.id}" ${String(task.id) === normalized ? "selected" : ""}>${escHtml(task.description || `Task #${task.id}`)}</option>`).join("")}
+  `;
+}
+
+function activeAnnotationDraft() {
+  const fileName = String(s.activeTabName || s.selectedFile?.name || "");
+  if (!fileName || !s.selectedFile?.is_text || s.selectedFile?.is_dir) return null;
+  const selection = getActiveSelectionDetails?.();
+  return {
+    fileName,
+    lineStart: selection?.lineStart || 1,
+    lineEnd: selection?.lineEnd || selection?.lineStart || 1,
+    selectedText: selection?.selectedText || "",
+  };
+}
+
+function renderAnnotationsPanel() {
+  if (!annotationsPanelEl) return;
+  if (!longdocEnabled()) return renderDisabledPanel(annotationsPanelEl, "помітки");
+  if (!featureEnabled("annotations_enabled")) return renderFeatureOffPanel(annotationsPanelEl, "Помітки");
+
+  const items = s.longdoc.annotations || [];
+  const draft = activeAnnotationDraft();
+  const columns = [
+    ["open", "Відкриті"],
+    ["in_progress", "У роботі"],
+    ["done", "Готові"],
+    ["dismissed", "Відхилені"],
+  ];
+  const annotationCard = item => `
+    <article class="e-task-card" data-annotation-id="${item.id}">
+      ${isEditing("annotation", item.id) ? `
+      <input class="e-longdoc-input" data-field="file_name" value="${escHtml(item.file_name || "")}" placeholder="main.typ">
+      <div class="e-longdoc-grid">
+        <input class="e-longdoc-input" data-field="line_start" type="number" min="1" value="${item.line_start || ""}" placeholder="Від рядка">
+        <input class="e-longdoc-input" data-field="line_end" type="number" min="1" value="${item.line_end || ""}" placeholder="До рядка">
+      </div>
+      <select class="e-longdoc-input" data-field="task_id">${annotationTaskOptions(item.task_id)}</select>
+      <select class="e-longdoc-input" data-field="status">
+        <option value="open" ${item.status === "open" ? "selected" : ""}>Відкрита</option>
+        <option value="in_progress" ${item.status === "in_progress" ? "selected" : ""}>У роботі</option>
+        <option value="done" ${item.status === "done" ? "selected" : ""}>Готово</option>
+        <option value="dismissed" ${item.status === "dismissed" ? "selected" : ""}>Відхилено</option>
+      </select>
+      <textarea class="e-longdoc-textarea small" data-field="instruction" placeholder="Що треба змінити">${escHtml(item.instruction || "")}</textarea>
+      <textarea class="e-longdoc-textarea small" data-field="selected_text" placeholder="Фрагмент тексту">${escHtml(item.selected_text || "")}</textarea>
+      <div class="e-longdoc-actions">
+        ${button("Зберегти", "save-annotation", "primary")}
+        ${button("Скасувати", "cancel-annotation-edit")}
+      </div>
+      ` : `
+        <div class="e-task-line">
+          <span class="e-check-dot ${item.status === "done" ? "done" : ""}"></span>
+          <span>${escHtml(item.instruction || "")}</span>
+        </div>
+        <div class="e-longdoc-meta">${escHtml(item.file_name || "")}${item.line_start ? `:${escHtml(String(item.line_start))}${item.line_end && item.line_end !== item.line_start ? `-${escHtml(String(item.line_end))}` : ""}` : ""}${item.task_id ? ` · task #${escHtml(String(item.task_id))}` : ""}</div>
+        ${item.selected_text ? renderTextBlock(item.selected_text, "") : ""}
+        <div class="e-longdoc-actions">
+          ${item.status !== "done" ? button("Готово", "complete-annotation") : ""}
+          ${item.status !== "dismissed" ? button("Відхилити", "dismiss-annotation") : ""}
+          ${button("Редагувати", "edit-annotation")}
+          ${button("Видалити", "delete-annotation", "danger")}
+        </div>
+      `}
+    </article>
+  `;
+  const createBody = draft
+    ? `
+      <div class="e-longdoc-meta">Файл: ${escHtml(draft.fileName)} · Рядки ${escHtml(String(draft.lineStart))}${draft.lineEnd && draft.lineEnd !== draft.lineStart ? `-${escHtml(String(draft.lineEnd))}` : ""}</div>
+      ${draft.selectedText ? renderTextBlock(draft.selectedText, "") : `<div class="e-longdoc-muted">Текст не виділено. Помітка буде прив’язана до поточного рядка.</div>`}
+      <textarea id="new-annotation-instruction" class="e-longdoc-textarea small" placeholder="Що треба змінити в цьому місці"></textarea>
+      <select id="new-annotation-task-id" class="e-longdoc-input">${annotationTaskOptions()}</select>
+      <div class="e-longdoc-actions">${button("Додати", "create-annotation", "primary")}</div>
+    `
+    : `<div class="e-longdoc-muted">Відкрийте текстовий файл у редакторі, щоб створити помітку з поточного місця.</div>`;
+  annotationsPanelEl.innerHTML = `
+    <div class="e-workspace-head">
+      <div>
+        <h2>Помітки</h2>
+        <p>Локальні інструкції, прив’язані до файла та рядків.</p>
+      </div>
+      <span class="e-longdoc-meta">${items.length} поміток</span>
+    </div>
+    <div class="e-longdoc-scroll">
+      ${renderCreatePanel("annotation", "помітку", createBody)}
+      <div class="e-task-board">
+        ${columns.map(([status, label]) => {
+          const columnItems = items.filter(item => (item.status || "open") === status);
+          return `
+            <section class="e-task-column">
+              <div class="e-task-column-head">${escHtml(label)} · ${columnItems.length}</div>
+              ${columnItems.map(annotationCard).join("") || emptyCard("Порожньо", "У цій колонці немає поміток.")}
+            </section>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+
+  bindActions(annotationsPanelEl, {
+    "show-create-annotation": async () => { setCreating("annotation", true); renderAnnotationsPanel(); },
+    "hide-create-annotation": async () => { setCreating("annotation", false); renderAnnotationsPanel(); },
+    "create-annotation": async () => {
+      const currentDraft = activeAnnotationDraft();
+      if (!currentDraft) throw new Error("Відкрийте текстовий файл, щоб створити помітку.");
+      await api(`/api/projects/${cfg.projectId}/annotations/`, {
+        method: "POST",
+        body: JSON.stringify({
+          file_name: currentDraft.fileName,
+          line_start: currentDraft.lineStart,
+          line_end: currentDraft.lineEnd,
+          selected_text: currentDraft.selectedText,
+          instruction: document.getElementById("new-annotation-instruction")?.value || "",
+          task_id: document.getElementById("new-annotation-task-id")?.value || null,
+        }),
+      });
+      setCreating("annotation", false);
+      await loadLongdocData();
+    },
+    "edit-annotation": async (buttonEl) => {
+      const annotationId = buttonEl.closest("[data-annotation-id]")?.dataset.annotationId;
+      if (annotationId) setEditing("annotation", annotationId, true);
+      renderAnnotationsPanel();
+    },
+    "cancel-annotation-edit": async (buttonEl) => {
+      const annotationId = buttonEl.closest("[data-annotation-id]")?.dataset.annotationId;
+      if (annotationId) setEditing("annotation", annotationId, false);
+      renderAnnotationsPanel();
+    },
+    "save-annotation": async (buttonEl) => {
+      const card = buttonEl.closest("[data-annotation-id]");
+      const annotationId = card?.dataset.annotationId;
+      if (!annotationId) return;
+      await api(`/api/projects/${cfg.projectId}/annotations/${annotationId}/`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          file_name: card.querySelector('[data-field="file_name"]')?.value || "",
+          line_start: card.querySelector('[data-field="line_start"]')?.value || null,
+          line_end: card.querySelector('[data-field="line_end"]')?.value || null,
+          selected_text: card.querySelector('[data-field="selected_text"]')?.value || "",
+          instruction: card.querySelector('[data-field="instruction"]')?.value || "",
+          status: card.querySelector('[data-field="status"]')?.value || "open",
+          task_id: card.querySelector('[data-field="task_id"]')?.value || null,
+        }),
+      });
+      setEditing("annotation", annotationId, false);
+      await loadLongdocData();
+    },
+    "complete-annotation": async (buttonEl) => {
+      const card = buttonEl.closest("[data-annotation-id]");
+      const annotationId = card?.dataset.annotationId;
+      if (!annotationId) return;
+      await api(`/api/projects/${cfg.projectId}/annotations/${annotationId}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "done" }),
+      });
+      await loadLongdocData();
+    },
+    "dismiss-annotation": async (buttonEl) => {
+      const card = buttonEl.closest("[data-annotation-id]");
+      const annotationId = card?.dataset.annotationId;
+      if (!annotationId) return;
+      await api(`/api/projects/${cfg.projectId}/annotations/${annotationId}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "dismissed" }),
+      });
+      await loadLongdocData();
+    },
+    "delete-annotation": async (buttonEl) => {
+      const card = buttonEl.closest("[data-annotation-id]");
+      const annotationId = card?.dataset.annotationId;
+      if (!annotationId || !(await showConfirm("Видалити помітку?"))) return;
+      await api(`/api/projects/${cfg.projectId}/annotations/${annotationId}/`, {
+        method: "DELETE",
+        body: JSON.stringify({}),
+      });
+      await loadLongdocData();
+    },
+  });
+}
+
 function renderNotesPanel() {
   if (!notesPanelEl) return;
   if (!longdocEnabled()) return renderDisabledPanel(notesPanelEl, "нотатки");
@@ -1410,6 +1660,7 @@ export function renderLongdocPanels() {
   renderContextPanel();
   renderOutlinePanel();
   renderTasksPanel();
+  renderAnnotationsPanel();
   renderNotesPanel();
   renderRequirementsPanel();
 }

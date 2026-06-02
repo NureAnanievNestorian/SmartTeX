@@ -844,6 +844,7 @@
         #longdoc-context-panel,
         #longdoc-outline-panel,
         #longdoc-tasks-panel,
+        #longdoc-annotations-panel,
         #longdoc-notes-panel,
         #longdoc-requirements-panel {
             min-height: 0;
@@ -1142,6 +1143,15 @@
             margin-left: 3px;
             flex-shrink: 0;
             opacity: .8;
+        }
+
+        .e-pdf-embed-badge {
+            font-size: 10px;
+            color: #60a5fa;
+            margin-left: 3px;
+            flex-shrink: 0;
+            opacity: .85;
+            cursor: default;
         }
 
         /* File type colored dot */
@@ -4004,6 +4014,127 @@
             padding: 14px 20px 18px;
         }
 
+        .annotation-popover {
+            position: fixed;
+            z-index: 220;
+            display: none;
+            width: min(440px, calc(100vw - 24px));
+        }
+
+        .annotation-popover.open { display: block; }
+
+        .annotation-popover-card {
+            position: relative;
+            background: var(--e-raised);
+            border: 1px solid var(--e-border);
+            border-radius: 10px;
+            box-shadow: 0 18px 60px rgba(0, 0, 0, .5);
+            overflow: hidden;
+        }
+
+        .annotation-popover-card::before {
+            content: "";
+            position: absolute;
+            top: -7px;
+            left: var(--annotation-arrow-left, 28px);
+            width: 14px;
+            height: 14px;
+            background: var(--e-raised);
+            border-top: 1px solid var(--e-border);
+            border-left: 1px solid var(--e-border);
+            transform: rotate(45deg);
+        }
+
+        .annotation-popover[data-placement="top"] .annotation-popover-card::before {
+            top: auto;
+            bottom: -7px;
+            border-top: 0;
+            border-left: 0;
+            border-right: 1px solid var(--e-border);
+            border-bottom: 1px solid var(--e-border);
+        }
+
+        .annotation-popover .e-dialog-head,
+        .annotation-popover .e-dialog-body,
+        .annotation-popover .e-dialog-footer {
+            padding-left: 18px;
+            padding-right: 18px;
+        }
+
+        .annotation-popover .e-dialog-head {
+            padding-top: 15px;
+            padding-bottom: 12px;
+        }
+
+        .annotation-popover .e-dialog-body {
+            padding-top: 16px;
+            padding-bottom: 6px;
+        }
+
+        .annotation-popover .e-dialog-footer {
+            padding-top: 14px;
+            padding-bottom: 16px;
+        }
+
+        .annotation-popover-fragment {
+            margin-bottom: 14px;
+            max-height: 140px;
+            overflow: auto;
+        }
+
+        .annotation-info-popover {
+            position: fixed;
+            z-index: 221;
+            display: none;
+            width: min(420px, calc(100vw - 24px));
+        }
+
+        .annotation-info-popover.open { display: block; }
+
+        .annotation-info-popover .annotation-popover-card {
+            overflow: visible;
+        }
+
+        .annotation-info-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .annotation-info-item {
+            border: 1px solid var(--e-border);
+            border-radius: 10px;
+            background: rgba(255,255,255,.025);
+            padding: 12px;
+        }
+
+        .annotation-info-item.done,
+        .annotation-info-item.dismissed {
+            opacity: .8;
+        }
+
+        .annotation-info-item-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .annotation-info-item-text {
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            margin-bottom: 10px;
+        }
+
+        .annotation-info-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
         .command-palette-overlay {
             position: fixed;
             inset: 0;
@@ -4345,6 +4476,44 @@
             <div class="confirm-btns">
                 <button class="e-btn" id="create-entry-cancel" type="button">Скасувати</button>
                 <button class="e-btn" id="create-entry-ok" type="button">Створити</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="annotation-popover" id="annotation-popover" role="dialog" aria-labelledby="annotation-title">
+        <div class="annotation-popover-card">
+            <div class="e-dialog-head">
+                <strong id="annotation-title">Нова помітка</strong>
+                <button class="e-dialog-close" id="annotation-cancel-x" type="button" aria-label="Закрити">×</button>
+            </div>
+            <div class="e-dialog-body">
+                <p id="annotation-hint" class="confirm-msg" style="margin:0 0 12px"></p>
+                <div class="e-field-label">Місце</div>
+                <div id="annotation-target" class="e-longdoc-meta" style="margin-bottom:12px"></div>
+                <div class="e-field-label">Фрагмент</div>
+                <div id="annotation-selected-text" class="e-rendered-text annotation-popover-fragment"></div>
+                <label class="e-field-label" for="annotation-input">Що треба змінити</label>
+                <textarea id="annotation-input" class="e-longdoc-textarea small" placeholder="Опишіть потрібну правку" style="min-height:110px"></textarea>
+            </div>
+            <div class="e-dialog-footer">
+                <button class="e-btn" id="annotation-cancel" type="button">Скасувати</button>
+                <button class="e-btn primary" id="annotation-ok" type="button">Додати помітку</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="annotation-info-popover annotation-popover" id="annotation-info-popover" role="dialog" aria-labelledby="annotation-info-title">
+        <div class="annotation-popover-card">
+            <div class="e-dialog-head">
+                <strong id="annotation-info-title">Помітки</strong>
+                <button class="e-dialog-close" id="annotation-info-close-x" type="button" aria-label="Закрити">×</button>
+            </div>
+            <div class="e-dialog-body">
+                <div id="annotation-info-target" class="e-longdoc-meta" style="margin-bottom:12px"></div>
+                <div id="annotation-info-list" class="annotation-info-list"></div>
+            </div>
+            <div class="e-dialog-footer">
+                <button class="e-btn" id="annotation-info-close" type="button">Закрити</button>
             </div>
         </div>
     </div>
@@ -4737,6 +4906,7 @@
                         <button class="e-wa-tab" type="button" data-wa-tab="outline">План</button>
                         <button class="e-wa-tab" type="button" data-wa-tab="context">Контекст</button>
                         <button class="e-wa-tab" type="button" data-wa-tab="tasks">Завдання</button>
+                        <button class="e-wa-tab" type="button" data-wa-tab="annotations">Помітки</button>
                         <button class="e-wa-tab" type="button" data-wa-tab="requirements">Вимоги</button>
                         <button class="e-wa-tab" type="button" data-wa-tab="notes">Нотатки</button>
                         <button class="e-wa-tab" type="button" data-wa-tab="settings">Налаштування</button>
@@ -4752,6 +4922,9 @@
                     </div>
                     <div id="wa-panel-tasks" class="e-wa-panel">
                         <div id="longdoc-tasks-panel"></div>
+                    </div>
+                    <div id="wa-panel-annotations" class="e-wa-panel">
+                        <div id="longdoc-annotations-panel"></div>
                     </div>
                     <div id="wa-panel-requirements" class="e-wa-panel">
                         <div id="longdoc-requirements-panel"></div>

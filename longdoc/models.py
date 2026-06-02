@@ -21,6 +21,7 @@ class ProjectLongDocSettings(models.Model):
     context_enabled = models.BooleanField(default=True)
     outline_enabled = models.BooleanField(default=True)
     tasks_enabled = models.BooleanField(default=True)
+    annotations_enabled = models.BooleanField(default=True)
     notes_enabled = models.BooleanField(default=True)
     summaries_enabled = models.BooleanField(default=True)
     requirements_enabled = models.BooleanField(default=False)
@@ -110,6 +111,58 @@ class ProjectTask(models.Model):
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.status}:{self.description[:40]}"
+
+
+class ProjectAnnotation(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        IN_PROGRESS = "in_progress", "In Progress"
+        DONE = "done", "Done"
+        DISMISSED = "dismissed", "Dismissed"
+
+    class CreatedBy(models.TextChoices):
+        USER = "user", "User"
+        MCP = "mcp", "MCP"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="annotations")
+    task = models.ForeignKey(ProjectTask, null=True, blank=True, on_delete=models.SET_NULL, related_name="annotations")
+    file_name = models.CharField(max_length=500)
+    line_start = models.PositiveIntegerField(null=True, blank=True)
+    line_end = models.PositiveIntegerField(null=True, blank=True)
+    selected_text = models.TextField(blank=True)
+    instruction = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    created_by = models.CharField(max_length=20, choices=CreatedBy.choices, default=CreatedBy.USER)
+    resolved_by_session = models.ForeignKey(
+        "AISession",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="resolved_annotations",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project_id", "status", "file_name", "line_start", "-updated_at", "-id"]
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "file_name"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(line_start__isnull=True)
+                    | Q(line_end__isnull=True)
+                    | Q(line_end__gte=models.F("line_start"))
+                ),
+                name="longdoc_annotation_line_range_valid",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.file_name}:{self.instruction[:40]}"
 
 
 class ProjectNoteSection(models.Model):
@@ -344,6 +397,7 @@ class AIBatch(models.Model):
     session = models.OneToOneField(AISession, on_delete=models.CASCADE, related_name="batch")
     summary = models.TextField()
     tasks_completed = models.ManyToManyField(ProjectTask, blank=True, related_name="completed_in_batches")
+    annotations_completed = models.ManyToManyField("ProjectAnnotation", blank=True, related_name="completed_in_batches")
     notes_updated = models.BooleanField(default=False)
     requirements_updated = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

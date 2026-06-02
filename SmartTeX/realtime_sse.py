@@ -107,6 +107,23 @@ def _compile_event_for_owner(project_id: int, owner_id: int) -> dict[str, Any] |
     }
 
 
+def _annotation_signature_for_owner(project_id: int, owner_id: int) -> str | None:
+    from longdoc.models import ProjectAnnotation
+    from projects.models import Project
+
+    if not Project.objects.filter(id=project_id, owner_id=owner_id).exists():
+        return None
+    row = (
+        ProjectAnnotation.objects.filter(project_id=project_id)
+        .order_by("-updated_at")
+        .values("updated_at", "id")
+        .first()
+    )
+    if row is None:
+        return "empty"
+    return f"{row['id']}:{row['updated_at'].isoformat()}"
+
+
 def _active_proposal_signature_for_owner(project_id: int, owner_id: int) -> dict[str, Any] | None:
     from longdoc.proposal_service import get_active_change_proposal
     from projects.models import Project
@@ -148,7 +165,8 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
     latest_project = await sync_to_async(_latest_project_version_for_owner)(project_id, user_id)
     proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
     compile_signature = await sync_to_async(_compile_signature_for_owner)(project_id, user_id)
-    if latest_project is None or proposal_signature is None or compile_signature is None:
+    annotation_signature = await sync_to_async(_annotation_signature_for_owner)(project_id, user_id)
+    if latest_project is None or proposal_signature is None or compile_signature is None or annotation_signature is None:
         await send({"type": "http.response.start", "status": 403, "headers": []})
         await send({"type": "http.response.body", "body": b"Forbidden"})
         return
@@ -182,6 +200,7 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
     last_seen_project = int(latest_project["id"])
     last_seen_proposal = dict(proposal_signature)
     last_seen_compile = dict(compile_signature)
+    last_seen_annotation = annotation_signature
     while True:
         try:
             event = await asyncio.wait_for(receive(), timeout=1.5)
@@ -193,7 +212,8 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
         latest_project = await sync_to_async(_latest_project_version_for_owner)(project_id, user_id)
         proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
         compile_signature = await sync_to_async(_compile_signature_for_owner)(project_id, user_id)
-        if latest_project is None or proposal_signature is None or compile_signature is None:
+        annotation_signature = await sync_to_async(_annotation_signature_for_owner)(project_id, user_id)
+        if latest_project is None or proposal_signature is None or compile_signature is None or annotation_signature is None:
             break
         if compile_signature != last_seen_compile:
             last_seen_compile = dict(compile_signature)
@@ -214,6 +234,12 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
                 "type": "proposal_updated",
                 "project_id": project_id,
                 "proposal": proposal_signature,
+            })
+        if annotation_signature != last_seen_annotation:
+            last_seen_annotation = annotation_signature
+            await send_event({
+                "type": "longdoc_updated",
+                "project_id": project_id,
             })
 
     await send({"type": "http.response.body", "body": b"", "more_body": False})

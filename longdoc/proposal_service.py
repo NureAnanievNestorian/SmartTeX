@@ -66,7 +66,7 @@ from SmartTeX.markup import MarkupType
 
 from .document_graph import inspect_document_graph, introduced_graph_errors
 from .locks import ProjectLockedError, get_locking_change_proposal, get_locking_session
-from .models import AISession, ChangeProposal, ProjectOutlineItem, ProjectTask
+from .models import AISession, ChangeProposal, ProjectAnnotation, ProjectOutlineItem, ProjectTask
 from .session_service import (
     SessionWriteError,
     _commit_worktree_change,
@@ -626,6 +626,10 @@ def serialize_change_proposal(proposal: ChangeProposal | None) -> dict[str, Any]
         "created_at": proposal.created_at.isoformat(),
         "updated_at": proposal.updated_at.isoformat(),
     }
+    try:
+        payload["annotation_ids"] = list(session.batch.annotations_completed.values_list("id", flat=True)) if session and hasattr(session, "batch") else []
+    except Exception:
+        payload["annotation_ids"] = []
     if auto_discarded_id is not None:
         payload["auto_discarded_previous_failed_proposal_id"] = auto_discarded_id
     return payload
@@ -642,6 +646,7 @@ def propose_document_change(
     patch_ops: list[dict[str, Any]] | None = None,
     addresses_task_id: int | None = None,
     addresses_outline_item_id: int | None = None,
+    annotation_ids: list[int] | None = None,
     created_by: str = ChangeProposal.CreatedBy.MCP,
     validation_token: str | None = None,
 ) -> ChangeProposal:
@@ -740,6 +745,17 @@ def propose_document_change(
         if addresses_outline_item_id
         else None
     )
+    normalized_annotation_ids = [int(value) for value in (annotation_ids or [])]
+    annotations = list(ProjectAnnotation.objects.filter(project=project, id__in=normalized_annotation_ids)) if normalized_annotation_ids else []
+    found_annotation_ids = {item.id for item in annotations}
+    missing_annotation_ids = [item_id for item_id in normalized_annotation_ids if item_id not in found_annotation_ids]
+    if missing_annotation_ids:
+        raise SessionWriteError(
+            "ANNOTATIONS_NOT_FOUND",
+            f"Some annotation ids do not exist in this project: {missing_annotation_ids}",
+            status_code=404,
+            suggestion="Call list_annotations for this project and retry with only valid annotation ids.",
+        )
 
     try:
         proposal = ChangeProposal.objects.create(
@@ -872,6 +888,7 @@ def propose_document_change(
             session,
             summary=proposal.goal,
             task_ids=[proposal.addresses_task_id] if proposal.addresses_task_id else None,
+            annotation_ids=[item.id for item in annotations],
         )
         session.refresh_from_db()
         proposal.status = ChangeProposal.Status.READY_FOR_REVIEW
