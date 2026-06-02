@@ -78,10 +78,42 @@ cfg.sessionReviewUrl = editorConfig.sessionReviewUrl || "";
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
 const editorTabbarEl = document.getElementById("editor-tabbar");
+const editorShellEl = document.querySelector(".editor-shell");
+const centerPanelEl = document.getElementById("drop-zone");
+const waToggleBtnEl = document.getElementById("wa-tab-btn");
+const mobileWorkspaceBtns = [...document.querySelectorAll("[data-mobile-panel]")];
+const mobileWorkspaceMq = window.matchMedia("(max-width: 860px)");
+
+function isMobileWorkspace() {
+  return mobileWorkspaceMq.matches;
+}
+
+function setMobileWorkspacePanel(panel) {
+  const nextPanel = String(panel || "editor");
+  if (editorShellEl) editorShellEl.dataset.mobilePanel = nextPanel;
+  mobileWorkspaceBtns.forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mobilePanel === nextPanel);
+  });
+}
+
+function syncMobileWorkspacePanel() {
+  if (!isMobileWorkspace()) {
+    if (editorShellEl) delete editorShellEl.dataset.mobilePanel;
+    mobileWorkspaceBtns.forEach(btn => btn.classList.remove("active"));
+    return;
+  }
+  const current = editorShellEl?.dataset.mobilePanel;
+  if (centerPanelEl?.classList.contains("wa-active")) {
+    setMobileWorkspacePanel("assistant");
+    return;
+  }
+  setMobileWorkspacePanel(current || "files");
+}
 
 function closeWritingAssistantTab() {
-  document.getElementById("drop-zone")?.classList.remove("wa-active");
-  document.getElementById("wa-tab-btn")?.classList.remove("active");
+  centerPanelEl?.classList.remove("wa-active");
+  waToggleBtnEl?.classList.remove("active");
+  if (isMobileWorkspace()) setMobileWorkspacePanel("editor");
 }
 
 function closeAiLogOverlay() {
@@ -1132,6 +1164,7 @@ export async function refreshLivePdfPreview(pdfUrl = null, pdfVer = null) {
 
 async function selectFile(file) {
   closeWritingAssistantTab();
+  if (isMobileWorkspace()) setMobileWorkspacePanel("editor");
   const prevFile = s.selectedFile;
 
   // Flush unsaved changes before switching
@@ -1565,6 +1598,27 @@ export function initEditorApp() {
   initDialogs();
   initResizeHandles();
   initVersionsPanel();
+  syncMobileWorkspacePanel();
+  mobileWorkspaceMq.addEventListener("change", syncMobileWorkspacePanel);
+  if (centerPanelEl && window.MutationObserver) {
+    new MutationObserver(() => {
+      if (!isMobileWorkspace()) return;
+      if (centerPanelEl.classList.contains("wa-active")) setMobileWorkspacePanel("assistant");
+      else if (editorShellEl?.dataset.mobilePanel === "assistant") setMobileWorkspacePanel("editor");
+    }).observe(centerPanelEl, { attributes: true, attributeFilter: ["class"] });
+  }
+  mobileWorkspaceBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const panel = btn.dataset.mobilePanel || "editor";
+      if (panel === "assistant") {
+        if (!centerPanelEl?.classList.contains("wa-active")) waToggleBtnEl?.click();
+        else setMobileWorkspacePanel("assistant");
+        return;
+      }
+      if (centerPanelEl?.classList.contains("wa-active")) closeWritingAssistantTab();
+      setMobileWorkspacePanel(panel);
+    });
+  });
 
   // Tab switching
   document.querySelectorAll(".e-tab").forEach(tab => {
