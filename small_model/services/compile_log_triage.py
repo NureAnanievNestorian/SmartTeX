@@ -30,7 +30,17 @@ class CompileLogTriageService(SmallModelCallMixin):
         response = self.call_provider(
             user=user,
             project=project,
-            system_instruction="Classify the compile failure and whether retrying is safe.",
+            system_instruction=(
+                "Classify the compile failure, identify the most likely root cause, and decide whether retrying is safe. "
+                "Prefer upstream root causes over the file where the compiler reported the symptom. "
+                "Use changed_files aggressively: if the failing file is not in changed_files but a template, main, prelude, or wrapper file is, "
+                "suspect structural breakage there first. "
+                "If many citation/reference labels fail at once, do not assume the cited section is wrong; instead consider broken bibliography wiring, "
+                "broken document wrapper/show block, removed include/import chain, or a changed main/template file that stopped attaching references to the document. "
+                "Treat mass label failures as a likely upstream configuration/template error unless the changed_files directly modified the cited labels or source file. "
+                "likely_file may be an upstream changed file rather than the diagnostic file when that better explains the failure. "
+                "Return concise fields only; do not suggest speculative fixes that ignore changed_files."
+            ),
             input_payload=payload,
             response_schema=schemas.COMPILE_LOG_TRIAGE_SCHEMA,
         )
