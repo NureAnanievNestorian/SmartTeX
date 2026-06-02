@@ -30,7 +30,8 @@ const {
   setSelectFileRef, setFileContextMenuRef, uploadFile, uploadImageWithRename, uploadZip, normalizeClipboardFile,
   createFolder, createEmptyTextFile, moveFileToFolder, deleteFile,
   isUploadableProjectFile, isImageFile, utf8ByteSize, pathBaseName, getFileTypeClass,
-  setMainFile,
+  setMainFile, getSelectedFolderPath, clearSelectedFolderPath, restoreFileTreeState,
+  normalizeFileTreeState, remapFolderTreeState, removeFolderTreeState,
 } = files;
 const { renderVersions, initVersionsPanel, closeDiffModal } = versions;
 const {
@@ -519,12 +520,12 @@ async function reloadProjectTree({ selectPath = "", preferDir = false } = {}) {
 }
 
 async function handleCreateFolder(parentPath = "") {
-  const created = await createFolder(parentPath);
+  const created = await createFolder(parentPath || getSelectedFolderPath());
   if (created) await reloadProjectTree({ selectPath: created, preferDir: true });
 }
 
 async function handleCreateTextFile(parentPath = "") {
-  const created = await createEmptyTextFile(parentPath);
+  const created = await createEmptyTextFile(parentPath || getSelectedFolderPath());
   if (created) await reloadProjectTree({ selectPath: created });
 }
 
@@ -535,6 +536,7 @@ async function handleRenameFile(file) {
   if (!nextName || nextName === currentName) return;
 
   if (file?.is_dir) {
+    remapFolderTreeState(currentName, nextName);
     s.openTabs = s.openTabs.map(tab => (
       tab.name === currentName || tab.name.startsWith(`${currentName}/`)
         ? { ...tab, name: `${nextName}${tab.name.slice(currentName.length)}` }
@@ -557,6 +559,7 @@ async function handleDeleteFile(file) {
   const removedNames = file?.is_dir
     ? s.openTabs.filter(tab => tab.name === currentName || tab.name.startsWith(`${currentName}/`)).map(tab => tab.name)
     : [currentName];
+  if (file?.is_dir) removeFolderTreeState(currentName);
   removedNames.forEach(name => {
     dropTabState(name);
     _tabScrolls.delete(name);
@@ -1080,6 +1083,7 @@ export async function loadMainFile() {
 export async function loadFiles() {
   const p = await api(`/api/projects/${cfg.projectId}/files/`, { method: "GET" });
   s.projectFiles = p.files || [];
+  normalizeFileTreeState();
   renderFileList();
 }
 
@@ -1643,6 +1647,11 @@ export function initEditorApp() {
     if (e.target instanceof Element && e.target.closest(".e-file-btn")) return;
     openRootFilesContextMenu(e);
   });
+  fileListEl?.addEventListener("click", e => {
+    if (e.target instanceof Element && e.target.closest(".e-file-btn")) return;
+    clearSelectedFolderPath();
+    renderFileList();
+  });
 
   // Project menu
   fileMenuBtn?.addEventListener("click", () => toggleTopMenu(fileMenuEl));
@@ -1736,10 +1745,11 @@ export function initEditorApp() {
   // File uploads
   fileUploadInput?.addEventListener("change", async e => {
     if (cfg.sessionReview) return;
+    const targetFolderPath = getSelectedFolderPath();
     for (const f of [...(e.target.files || [])]) {
       try {
-        if (isImageFile(f)) { await uploadImageWithRename(f); }
-        else { await uploadFile(f); }
+        if (isImageFile(f)) { await uploadImageWithRename(f, targetFolderPath); }
+        else { await uploadFile(f, targetFolderPath); }
       } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
     }
     fileUploadInput.value = "";
@@ -1765,13 +1775,14 @@ export function initEditorApp() {
   dropZone?.addEventListener("drop", async e => {
     if (cfg.sessionReview) return;
     e.preventDefault(); dragCounter = 0; dropZone.classList.remove("drag-active");
+    const targetFolderPath = getSelectedFolderPath();
     for (const f of [...(e.dataTransfer.files || [])]) {
       if (f.name.toLowerCase().endsWith(".zip")) {
         try { await uploadZip(f); } catch (err) { setSaveHint(`Помилка ZIP: ${err.message}`, "error"); }
       } else if (isImageFile(f)) {
-        try { await uploadImageWithRename(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+        try { await uploadImageWithRename(f, targetFolderPath); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
       } else {
-        try { await uploadFile(f); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
+        try { await uploadFile(f, targetFolderPath); } catch (err) { setSaveHint(`Помилка: ${err.message}`, "error"); }
       }
     }
     await Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]);
@@ -1801,11 +1812,12 @@ export function initEditorApp() {
     const files = [...(e.clipboardData?.files || [])].filter(f => f && f.size > 0);
     if (!files.length) return;
     e.preventDefault();
+    const targetFolderPath = getSelectedFolderPath();
     for (let i = 0; i < files.length; i++) {
       const f = normalizeClipboardFile(files[i], i);
       try {
-        if (isImageFile(f)) { await uploadImageWithRename(f); }
-        else { await uploadFile(f); }
+        if (isImageFile(f)) { await uploadImageWithRename(f, targetFolderPath); }
+        else { await uploadFile(f, targetFolderPath); }
       } catch (err) { setSaveHint(`Помилка upload: ${err.message}`, "error"); }
     }
     await Promise.all([loadProjectMeta(), loadFiles(), loadVersions(true)]);
@@ -1861,6 +1873,7 @@ export function initEditorApp() {
   document.getElementById("tab-refs-btn")?.addEventListener("click", () => switchBottomTab("refs"));
 
   // ── Load initial data ──
+  restoreFileTreeState();
   await loadProjectMeta();
   if (s.projectMeta?.markup_type === "typst") {
     await loadMainFile();

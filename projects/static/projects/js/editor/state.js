@@ -45,6 +45,7 @@ export const s = {
   draggedFilePath: null,
   dragCounter: 0,
   collapsedFolders: new Set(),
+  selectedFolderPath: "",
   pdfDoc: null,
   pdfRendering: false,
   pdfCurrentUrl: null,

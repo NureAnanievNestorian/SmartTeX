@@ -1129,8 +1129,15 @@
             color: var(--e-text);
         }
 
+        .e-file-btn.folder-selected {
+            background: rgba(59, 130, 246, .14);
+            color: var(--e-text);
+            box-shadow: inset 2px 0 0 rgba(59, 130, 246, .9);
+        }
+
         .e-file-row:has(.e-file-btn:hover) .e-file-actions,
-        .e-file-row:has(.e-file-btn.active) .e-file-actions {
+        .e-file-row:has(.e-file-btn.active) .e-file-actions,
+        .e-file-row:has(.e-file-btn.folder-selected) .e-file-actions {
             opacity: 1;
         }
 
@@ -3340,6 +3347,12 @@
         html[data-theme="light"] .e-edtab.active {
             background: rgba(9, 105, 218, .10);
             color: var(--e-text);
+        }
+
+        html[data-theme="light"] .e-file-btn.folder-selected {
+            background: rgba(9, 105, 218, .12);
+            color: var(--e-text);
+            box-shadow: inset 2px 0 0 rgba(9, 105, 218, .9);
         }
 
         html[data-theme="light"] .e-main-star {

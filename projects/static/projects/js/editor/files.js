@@ -82,6 +82,106 @@ function joinProjectPath(parentPath, childName) {
   return `${parent}/${child}`;
 }
 
+function fileTreeStorageKey() {
+  return cfg.projectId ? `smarttex.editor.fileTree.${cfg.projectId}` : "";
+}
+
+function projectDirectorySet() {
+  return new Set(
+    s.projectFiles
+      .filter(file => file?.is_dir)
+      .map(file => String(file.name || "").replace(/\/+$/, ""))
+      .filter(Boolean)
+  );
+}
+
+function updateSelectedFolderPath(nextPath) {
+  s.selectedFolderPath = String(nextPath || "").replace(/\/+$/, "");
+}
+
+export function getSelectedFolderPath() {
+  return s.selectedFolderPath || "";
+}
+
+export function setSelectedFolderPath(nextPath) {
+  updateSelectedFolderPath(nextPath);
+  persistFileTreeState();
+}
+
+export function clearSelectedFolderPath() {
+  if (!s.selectedFolderPath) return;
+  s.selectedFolderPath = "";
+  persistFileTreeState();
+}
+
+export function persistFileTreeState() {
+  const key = fileTreeStorageKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify({
+      collapsedFolders: [...s.collapsedFolders],
+      selectedFolderPath: s.selectedFolderPath || "",
+    }));
+  } catch (_) {}
+}
+
+export function restoreFileTreeState() {
+  const key = fileTreeStorageKey();
+  if (!key) return;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    s.collapsedFolders = new Set(
+      Array.isArray(parsed?.collapsedFolders)
+        ? parsed.collapsedFolders.map(item => String(item || "").replace(/\/+$/, "")).filter(Boolean)
+        : []
+    );
+    updateSelectedFolderPath(parsed?.selectedFolderPath || "");
+  } catch (_) {}
+}
+
+export function normalizeFileTreeState() {
+  const dirs = projectDirectorySet();
+  const nextCollapsed = [...s.collapsedFolders].filter(path => dirs.has(path));
+  const changedCollapsed = nextCollapsed.length !== s.collapsedFolders.size;
+  if (changedCollapsed) s.collapsedFolders = new Set(nextCollapsed);
+  const currentSelected = String(s.selectedFolderPath || "");
+  const selectedExists = !currentSelected || dirs.has(currentSelected);
+  if (!selectedExists) s.selectedFolderPath = "";
+  if (changedCollapsed || !selectedExists) persistFileTreeState();
+}
+
+export function remapFolderTreeState(oldPrefix, newPrefix) {
+  const from = String(oldPrefix || "").replace(/\/+$/, "");
+  const to = String(newPrefix || "").replace(/\/+$/, "");
+  if (!from || !to || from === to) return;
+
+  const remapped = new Set();
+  s.collapsedFolders.forEach(path => {
+    if (path === from || path.startsWith(`${from}/`)) remapped.add(`${to}${path.slice(from.length)}`);
+    else remapped.add(path);
+  });
+  s.collapsedFolders = remapped;
+
+  if (s.selectedFolderPath === from || s.selectedFolderPath.startsWith(`${from}/`)) {
+    s.selectedFolderPath = `${to}${s.selectedFolderPath.slice(from.length)}`;
+  }
+  persistFileTreeState();
+}
+
+export function removeFolderTreeState(prefix) {
+  const target = String(prefix || "").replace(/\/+$/, "");
+  if (!target) return;
+  s.collapsedFolders = new Set(
+    [...s.collapsedFolders].filter(path => path !== target && !path.startsWith(`${target}/`))
+  );
+  if (s.selectedFolderPath === target || s.selectedFolderPath.startsWith(`${target}/`)) {
+    s.selectedFolderPath = "";
+  }
+  persistFileTreeState();
+}
+
 export function compareTreeNodes(a, b) {
   if (a.file?.is_dir && !b.file?.is_dir) return -1;
   if (!a.file?.is_dir && b.file?.is_dir) return 1;
@@ -155,6 +255,9 @@ export function renderFileList() {
 
     const btn = document.createElement("button");
     btn.className = `e-file-btn${s.selectedFile.name === file.name ? " active" : ""}`;
+    if (file.is_dir && s.selectedFolderPath === file.name) {
+      btn.classList.add("folder-selected");
+    }
     if (file.name === ".smarttex" || file.name.startsWith(".smarttex/")) {
       btn.classList.add("smarttex-folder");
     }
@@ -186,9 +289,19 @@ export function renderFileList() {
       const toggleFolder = () => {
         if (s.collapsedFolders.has(file.name)) s.collapsedFolders.delete(file.name);
         else s.collapsedFolders.add(file.name);
+        persistFileTreeState();
         renderFileList();
       };
-      btn.addEventListener("click", toggleFolder);
+      btn.addEventListener("click", e => {
+        if (e.target instanceof Element && e.target.closest(".e-folder-toggle")) {
+          toggleFolder();
+          return;
+        }
+        updateSelectedFolderPath(file.name);
+        persistFileTreeState();
+        setSaveHint(`Цільова папка: ${file.name}`, "saved");
+        renderFileList();
+      });
       btn.style.cursor = "pointer";
     } else {
       btn.addEventListener("click", () => _selectFile?.(file));
@@ -403,29 +516,41 @@ export async function createEmptyTextFile(parentPath = "") {
   return targetPath;
 }
 
-export async function uploadFile(file) {
+export async function uploadFile(file, targetFolderPath = "") {
   if (!isUploadableProjectFile(file)) {
     throw new Error("Allowed uploads: images, PDFs, and supported text files");
   }
-  const fd = new FormData(); fd.append("file", file);
+  const uploadName = joinProjectPath(String(targetFolderPath || "").replace(/\/+$/, ""), pathBaseName(file.name));
+  let uploadFileObj = file;
+  if (uploadName && uploadName !== file.name) {
+    try {
+      uploadFileObj = new File([file], uploadName, {
+        type: file.type || "application/octet-stream",
+        lastModified: file.lastModified || Date.now(),
+      });
+    } catch (_) {}
+  }
+  const fd = new FormData(); fd.append("file", uploadFileObj);
   await api(`/api/projects/${cfg.projectId}/files/`, { method: "POST", body: fd });
-  setSaveHint(`Завантажено: ${file.name}`, "saved");
+  setSaveHint(`Завантажено: ${uploadName || file.name}`, "saved");
 }
 
-export async function uploadImageWithRename(file) {
-  await uploadFile(file);
+export async function uploadImageWithRename(file, targetFolderPath = "") {
+  const basePath = String(targetFolderPath || "").replace(/\/+$/, "");
+  await uploadFile(file, basePath);
   const { showRenameDialog } = await import("./ui.js");
-  const uploadedName = file.name;
-  const newName = await showRenameDialog(uploadedName);
+  const uploadedName = joinProjectPath(basePath, pathBaseName(file.name));
+  const newName = await showRenameDialog(pathBaseName(uploadedName));
   if (!newName) return uploadedName;
   const trimmed = newName.trim();
-  if (!trimmed || trimmed === uploadedName) return uploadedName;
+  if (!trimmed || trimmed === pathBaseName(uploadedName)) return uploadedName;
+  const targetName = joinProjectPath(basePath, trimmed);
   await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(uploadedName)}/rename/`, {
     method: "POST",
-    body: JSON.stringify({ new_filename: trimmed }),
+    body: JSON.stringify({ new_filename: targetName }),
   });
-  setSaveHint(`Перейменовано: ${uploadedName} → ${trimmed}`, "saved");
-  return trimmed;
+  setSaveHint(`Перейменовано: ${uploadedName} → ${targetName}`, "saved");
+  return targetName;
 }
 
 export async function uploadZip(file) {
