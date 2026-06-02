@@ -4509,6 +4509,12 @@
             padding: 12px;
         }
 
+        .annotation-info-item.editing {
+            border-color: rgba(34, 197, 94, .45);
+            background: rgba(34, 197, 94, .08);
+            box-shadow: 0 0 0 1px rgba(34, 197, 94, .12) inset;
+        }
+
         .annotation-info-item.done,
         .annotation-info-item.dismissed {
             opacity: .8;
@@ -4527,6 +4533,29 @@
             line-height: 1.5;
             white-space: pre-wrap;
             margin-bottom: 10px;
+        }
+
+        .annotation-info-editor {
+            margin-bottom: 10px;
+        }
+
+        .annotation-info-editor-label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--e-text2);
+        }
+
+        .annotation-info-editor-input {
+            min-height: 104px;
+            resize: vertical;
+        }
+
+        .annotation-info-editor-hint {
+            margin-top: 6px;
+            font-size: 11px;
+            color: var(--e-muted);
         }
 
         .annotation-info-actions {

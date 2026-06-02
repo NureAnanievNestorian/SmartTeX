@@ -304,41 +304,80 @@ export function showAnnotationInfoPopover(opts = {}) {
     const titleEl = document.getElementById("annotation-info-title");
     const targetEl = document.getElementById("annotation-info-target");
     const listEl = document.getElementById("annotation-info-list");
+    const items = Array.isArray(opts.items) ? opts.items : [];
+    s._annotationInfoState = {
+      items,
+      editingId: 0,
+    };
     if (titleEl) titleEl.textContent = opts.title || "Помітки";
     if (targetEl) targetEl.textContent = opts.target || "";
-    if (listEl) {
-      const items = Array.isArray(opts.items) ? opts.items : [];
-      listEl.innerHTML = items.map(item => {
-        const selectedText = String(item.selected_text || "").trim();
-        const status = String(item.status || "open");
-        const statusLabel = {
-          open: "Відкрита",
-          in_progress: "У роботі",
-          done: "Готова",
-          dismissed: "Відхилена",
-        }[status] || status;
-        return `
-          <article class="annotation-info-item ${escHtml(status)}" data-annotation-id="${escHtml(String(item.id))}">
-            <div class="annotation-info-item-head">
-              <span class="e-longdoc-chip ${escHtml(status)}">${escHtml(statusLabel)}</span>
-              <span class="e-longdoc-meta">#${escHtml(String(item.id))}</span>
-            </div>
-            <div class="annotation-info-item-text">${escHtml(item.instruction || "")}</div>
-            ${selectedText ? `<div class="annotation-popover-fragment e-rendered-text">${escHtml(selectedText)}</div>` : ""}
-            <div class="annotation-info-actions">
-              ${status !== "done" ? `<button class="e-btn primary" type="button" data-action="done" data-id="${escHtml(String(item.id))}">Готово</button>` : ""}
-              ${status !== "dismissed" ? `<button class="e-btn" type="button" data-action="dismiss" data-id="${escHtml(String(item.id))}">Відхилити</button>` : ""}
-              <button class="e-btn" type="button" data-action="open" data-id="${escHtml(String(item.id))}">Відкрити</button>
-            </div>
-          </article>
-        `;
-      }).join("") || `<div class="e-longdoc-muted">Поміток тут немає.</div>`;
-    }
+    renderAnnotationInfoList(listEl);
     popover?.classList.add("open");
     requestAnimationFrame(() => {
       placeAnnotationPopover(popover, opts);
     });
   });
+}
+
+function renderAnnotationInfoList(listEl) {
+  if (!listEl) return;
+  const items = Array.isArray(s._annotationInfoState?.items) ? s._annotationInfoState.items : [];
+  const editingId = Number(s._annotationInfoState?.editingId || 0);
+  listEl.innerHTML = items.map(item => {
+    const annotationId = Number(item?.id || 0);
+    const selectedText = String(item.selected_text || "").trim();
+    const status = String(item.status || "open");
+    const statusLabel = {
+      open: "Відкрита",
+      in_progress: "У роботі",
+      done: "Готова",
+      dismissed: "Відхилена",
+    }[status] || status;
+    const isEditing = annotationId === editingId;
+    const instruction = String(item.instruction || "");
+    return `
+      <article class="annotation-info-item ${escHtml(status)}${isEditing ? " editing" : ""}" data-annotation-id="${escHtml(String(annotationId))}">
+        <div class="annotation-info-item-head">
+          <span class="e-longdoc-chip ${escHtml(status)}">${escHtml(statusLabel)}</span>
+          <span class="e-longdoc-meta">#${escHtml(String(annotationId))}</span>
+        </div>
+        ${isEditing ? `
+          <div class="annotation-info-editor">
+            <label class="annotation-info-editor-label" for="annotation-info-input-${escHtml(String(annotationId))}">Що треба змінити</label>
+            <textarea
+              id="annotation-info-input-${escHtml(String(annotationId))}"
+              class="e-longdoc-textarea small annotation-info-editor-input"
+              data-role="annotation-edit-input"
+              data-id="${escHtml(String(annotationId))}"
+              placeholder="Опишіть потрібну правку"
+            >${escHtml(instruction)}</textarea>
+            <div class="annotation-info-editor-hint">Cmd/Ctrl+Enter, щоб зберегти</div>
+          </div>
+        ` : `
+          <div class="annotation-info-item-text">${escHtml(instruction)}</div>
+        `}
+        ${selectedText ? `<div class="annotation-popover-fragment e-rendered-text">${escHtml(selectedText)}</div>` : ""}
+        <div class="annotation-info-actions">
+          ${isEditing ? `
+            <button class="e-btn primary" type="button" data-action="save_edit" data-id="${escHtml(String(annotationId))}">Зберегти</button>
+            <button class="e-btn" type="button" data-action="cancel_edit" data-id="${escHtml(String(annotationId))}">Скасувати</button>
+          ` : `
+            ${status !== "done" ? `<button class="e-btn primary" type="button" data-action="done" data-id="${escHtml(String(annotationId))}">Готово</button>` : ""}
+            ${status !== "dismissed" ? `<button class="e-btn" type="button" data-action="dismiss" data-id="${escHtml(String(annotationId))}">Відхилити</button>` : ""}
+            <button class="e-btn" type="button" data-action="edit" data-id="${escHtml(String(annotationId))}">Редагувати</button>
+            <button class="e-btn" type="button" data-action="open" data-id="${escHtml(String(annotationId))}">Відкрити</button>
+          `}
+        </div>
+      </article>
+    `;
+  }).join("") || `<div class="e-longdoc-muted">Поміток тут немає.</div>`;
+}
+
+function focusAnnotationInfoEditor(annotationId) {
+  const input = document.querySelector(`#annotation-info-input-${CSS.escape(String(annotationId))}`);
+  if (!(input instanceof HTMLTextAreaElement)) return;
+  input.focus({ preventScroll: true });
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 // Wire up dialog buttons (called from main.js after DOM ready)
@@ -440,6 +479,7 @@ export function initDialogs() {
   const annotationInfoPopover = document.getElementById("annotation-info-popover");
   const closeAnnotationInfoPopover = (result = null) => {
     annotationInfoPopover?.classList.remove("open");
+    s._annotationInfoState = null;
     s._annotationInfoResolve?.(result);
     s._annotationInfoResolve = null;
   };
@@ -448,10 +488,61 @@ export function initDialogs() {
   document.getElementById("annotation-info-list")?.addEventListener("click", e => {
     const actionEl = e.target instanceof Element ? e.target.closest("[data-action][data-id]") : null;
     if (!actionEl) return;
+    const action = actionEl.getAttribute("data-action") || "";
+    const id = Number(actionEl.getAttribute("data-id") || 0);
+    const listEl = document.getElementById("annotation-info-list");
+    if (action === "edit") {
+      s._annotationInfoState = {
+        ...(s._annotationInfoState || {}),
+        editingId: id,
+      };
+      renderAnnotationInfoList(listEl);
+      requestAnimationFrame(() => focusAnnotationInfoEditor(id));
+      return;
+    }
+    if (action === "cancel_edit") {
+      s._annotationInfoState = {
+        ...(s._annotationInfoState || {}),
+        editingId: 0,
+      };
+      renderAnnotationInfoList(listEl);
+      return;
+    }
+    if (action === "save_edit") {
+      const article = actionEl.closest("[data-annotation-id]");
+      const input = article?.querySelector("[data-role='annotation-edit-input']");
+      closeAnnotationInfoPopover({
+        action,
+        id,
+        instruction: input instanceof HTMLTextAreaElement ? input.value.trim() : "",
+      });
+      return;
+    }
     closeAnnotationInfoPopover({
-      action: actionEl.getAttribute("data-action") || "",
-      id: Number(actionEl.getAttribute("data-id") || 0),
+      action,
+      id,
     });
+  });
+  document.getElementById("annotation-info-list")?.addEventListener("keydown", e => {
+    const target = e.target;
+    if (!(target instanceof HTMLTextAreaElement) || target.dataset.role !== "annotation-edit-input") return;
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      target.closest("[data-annotation-id]")?.querySelector("[data-action='save_edit']")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      const id = Number(target.dataset.id || 0);
+      s._annotationInfoState = {
+        ...(s._annotationInfoState || {}),
+        editingId: 0,
+      };
+      renderAnnotationInfoList(document.getElementById("annotation-info-list"));
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-action="edit"][data-id="${CSS.escape(String(id))}"]`)?.focus?.();
+      });
+    }
   });
   document.addEventListener("mousedown", e => {
     if (!annotationInfoPopover?.classList.contains("open")) return;

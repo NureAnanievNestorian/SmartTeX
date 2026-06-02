@@ -809,6 +809,24 @@ async function openAnnotationMarkerPopover(info, event) {
     longdoc.openAnnotationsPanel?.(result.id);
     return;
   }
+  if (result.action === "save_edit") {
+    const instruction = String(result.instruction || "").trim();
+    if (!instruction) {
+      setSaveHint("Текст помітки не може бути порожнім", "error");
+      return;
+    }
+    try {
+      await api(`/api/projects/${cfg.projectId}/annotations/${result.id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ instruction }),
+      });
+      await longdoc.loadLongdocData?.();
+      setSaveHint("Помітку оновлено", "saved");
+    } catch (err) {
+      setSaveHint(`Помилка: ${err.message}`, "error");
+    }
+    return;
+  }
   const nextStatus = result.action === "done" ? "done" : result.action === "dismiss" ? "dismissed" : "";
   if (!nextStatus) return;
   try {
