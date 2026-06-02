@@ -620,6 +620,12 @@ VISIBLE_ROOT_DOTFILES = {
     ".editorconfig",
 }
 
+TEMPLATE_ZIP_VISIBLE_SMARTTEX_PARTS = {
+    (".smarttex", "auto_generated"),
+    (".smarttex", "cache"),
+    (".smarttex", "cache", "pdf-pages"),
+}
+
 
 def _is_visible_hidden_project_path(root: Path, path: Path) -> bool:
     parts = path.relative_to(root).parts
@@ -636,6 +642,19 @@ def _is_visible_hidden_project_path(root: Path, path: Path) -> bool:
     if len(parts) == 1 and parts[0] in VISIBLE_ROOT_DOTFILES:
         return True
     return not any(part.startswith(".") for part in parts)
+
+
+def _is_template_zip_support_path(root: Path, path: Path) -> bool:
+    parts = path.relative_to(root).parts
+    if not parts or parts[0] != ".smarttex":
+        return False
+    if path.is_dir():
+        return parts in TEMPLATE_ZIP_VISIBLE_SMARTTEX_PARTS
+    if len(parts) == 2 and parts == (".smarttex", "pdf_includes.json"):
+        return True
+    if len(parts) >= 3 and parts[:2] == (".smarttex", "auto_generated"):
+        return parts[-1] == "pdf_includes.typ"
+    return len(parts) >= 4 and parts[:3] == (".smarttex", "cache", "pdf-pages")
 
 
 def list_project_assets(project: Project) -> list[dict[str, Any]]:
@@ -983,7 +1002,7 @@ def extract_project_zip(project: Project, zip_bytes: bytes, *, allow_main_overri
 _ZIP_EXCLUDED_NAMES = {".gitignore"}
 
 
-def build_project_zip(project: Project) -> io.BytesIO:
+def build_project_zip(project: Project, *, include_template_support_files: bool = False) -> io.BytesIO:
     root = ensure_project_dir(project)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -991,7 +1010,8 @@ def build_project_zip(project: Project) -> io.BytesIO:
             if not path.is_file():
                 continue
             if not _is_visible_hidden_project_path(root, path):
-                continue
+                if not include_template_support_files or not _is_template_zip_support_path(root, path):
+                    continue
             if _is_system_artifact_file(path):
                 continue
             if path.name in _ZIP_EXCLUDED_NAMES:

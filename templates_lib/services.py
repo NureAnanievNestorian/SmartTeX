@@ -6,6 +6,7 @@ import threading
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from django.conf import settings
@@ -24,6 +25,13 @@ MAX_TEMPLATE_ZIP_PREVIEW_BYTES = int(getattr(settings, "MAX_TEMPLATE_ZIP_PREVIEW
 
 SMARTTEX_CONTEXT_PREFIX = ".smarttex/context/"
 _CONTEXT_TEXT_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".tex", ".typ", ".bib", ".csl"}
+_TEMPLATE_PREVIEW_SMARTTEX_PREFIXES = (
+    ".smarttex/auto_generated/",
+    ".smarttex/cache/pdf-pages/",
+)
+_TEMPLATE_PREVIEW_SMARTTEX_FILES = {
+    ".smarttex/pdf_includes.json",
+}
 
 
 
@@ -153,6 +161,11 @@ def _safe_zip_relative_name(raw_name: str, strip_prefix: str = "") -> str | None
     name = name.strip("/")
     if not name:
         return None
+    if name in _TEMPLATE_PREVIEW_SMARTTEX_FILES or any(name.startswith(prefix) for prefix in _TEMPLATE_PREVIEW_SMARTTEX_PREFIXES):
+        parts = Path(name).parts
+        if not parts or any(p in {"", ".", ".."} for p in parts):
+            return None
+        return "/".join(parts)
     parts = Path(name).parts
     if not parts or "__MACOSX" in parts or any(p.startswith(".") for p in parts):
         return None
@@ -357,6 +370,17 @@ def compile_template_preview(template: Template) -> TemplateCompileResult:
                 extra={"template_id": template.id, "main_file": source_name, "workdir": str(workdir)},
             )
 
+    import projects.pdf_embed_job  # noqa: F401 - registers PdfEmbedJob
+    from projects.pre_compile import run_pre_compile_jobs
+
+    template_project = SimpleNamespace(
+        id=f"template:{template.id}",
+        markup_type=template.markup_type,
+        main_file=source_name,
+    )
+    pre_compile_results = run_pre_compile_jobs(template_project, workdir=workdir)
+    pre_compile_failures = [result for result in pre_compile_results if not result.success]
+
     host_project_root = str(getattr(settings, "HOST_PROJECT_ROOT", "")).strip()
     docker_mount_source = workdir
     if host_project_root:
@@ -408,6 +432,20 @@ def compile_template_preview(template: Template) -> TemplateCompileResult:
         cmd=cmd,
         timeout=timeout,
     )
+    if pre_compile_results:
+        debug_header += "\n=== SmartTeX template pre-compile ===\n"
+        for result in pre_compile_results:
+            errors = "; ".join(result.errors) if result.errors else ""
+            debug_header += (
+                f"job={result.job} success={result.success} "
+                f"processed={result.files_processed} skipped={result.files_skipped}"
+                f"{f' errors={errors}' if errors else ''}\n"
+            )
+
+    if pre_compile_failures:
+        log_text = debug_header + "Pre-compile jobs failed\n"
+        _write_template_compile_log(template, log_text)
+        return TemplateCompileResult(status="error", log=log_text)
 
     logger.info(
         "Starting template preview compile",
@@ -508,7 +546,7 @@ def create_template_from_project(
     slug = title.strip()[:80].replace(" ", "_").replace("/", "-") or "template"
     zip_name = f"{slug}.zip"
 
-    zip_buf = build_project_zip(project)
+    zip_buf = build_project_zip(project, include_template_support_files=True)
     zip_bytes = zip_buf.read()
 
     template = Template(

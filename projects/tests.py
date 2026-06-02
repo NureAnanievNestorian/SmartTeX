@@ -1,11 +1,13 @@
 import io
 import json
+import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.files.base import ContentFile
 from django.test import Client, TestCase, override_settings
 
 from SmartTeX.markup import MarkupType
@@ -27,6 +29,7 @@ from projects.services import (
 )
 from projects.typst_auto_generated import inject_auto_import_into_reachable_typst, remove_auto_imports_from_all_typst
 from templates_lib.models import Template
+from templates_lib.services import compile_template_preview, create_template_from_project, template_preview_dir
 
 
 class ProjectTypstSupportTests(TestCase):
@@ -363,6 +366,64 @@ class ProjectTypstSupportTests(TestCase):
         self.assertNotIn(".hidden.txt", names)
         self.assertNotIn("main.log", names)
         self.assertFalse(any(name.startswith(".smarttex-git/") for name in names))
+
+    def test_create_template_zip_includes_pdf_embed_support_files(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Template Export", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+        helper = root / ".smarttex" / "auto_generated" / "pdf_includes.typ"
+        manifest = root / ".smarttex" / "pdf_includes.json"
+        cache_page = root / ".smarttex" / "cache" / "pdf-pages" / "thesis" / "page-001.jpg"
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        cache_page.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_text("#let smarttex-include-pdf = none\n", encoding="utf-8")
+        manifest.write_text('{"appendix.pdf": {"enabled": true}}', encoding="utf-8")
+        cache_page.write_bytes(b"jpg")
+
+        template = create_template_from_project(project, title="With PDF Embed")
+
+        self.assertTrue(template.zip_file)
+        template.zip_file.open("rb")
+        with zipfile.ZipFile(template.zip_file) as zf:
+            names = set(zf.namelist())
+
+        self.assertIn(".smarttex/auto_generated/pdf_includes.typ", names)
+        self.assertIn(".smarttex/pdf_includes.json", names)
+        self.assertIn(".smarttex/cache/pdf-pages/thesis/page-001.jpg", names)
+
+    def test_template_preview_runs_pre_compile_jobs(self) -> None:
+        template = Template.objects.create(
+            title="Template Preview",
+            markup_type=MarkupType.TYPST,
+            main_file="main.typ",
+        )
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("main.typ", '#smarttex-include-pdf("docs/sample.pdf")\n')
+            zf.writestr(".smarttex/pdf_includes.json", '{"docs/sample.pdf":{"enabled":true}}')
+            zf.writestr(".smarttex/auto_generated/pdf_includes.typ", "#let smarttex-include-pdf = none\n")
+        template.zip_file.save("template.zip", ContentFile(buf.getvalue()))
+
+        def fake_pre_compile(project, *, workdir):
+            helper = workdir / ".smarttex" / "auto_generated" / "pdf_includes.typ"
+            self.assertEqual(project.markup_type, MarkupType.TYPST)
+            self.assertEqual(project.main_file, "main.typ")
+            self.assertTrue(helper.exists())
+            helper.write_text("#let smarttex-include-pdf(path) = path\n", encoding="utf-8")
+            return []
+
+        def fake_run(cmd, **kwargs):
+            preview_dir = template_preview_dir(template)
+            helper = preview_dir / ".smarttex" / "auto_generated" / "pdf_includes.typ"
+            self.assertTrue(helper.exists())
+            (preview_dir / "preview.pdf").write_bytes(b"%PDF-1.4 fake")
+            return subprocess.CompletedProcess(cmd, 0, stdout="Success\n", stderr="")
+
+        with patch("projects.pre_compile.run_pre_compile_jobs", side_effect=fake_pre_compile), patch(
+            "subprocess.run", side_effect=fake_run
+        ):
+            result = compile_template_preview(template)
+
+        self.assertEqual(result.status, "success")
 
     def test_parse_compile_diagnostics_extracts_typst_and_latex_locations(self) -> None:
         typst_project = Project.objects.create(owner=self.user, title="Typst Parse", markup_type=MarkupType.TYPST)
