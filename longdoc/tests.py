@@ -958,6 +958,31 @@ class AISessionServiceTests(TestCase):
         self.assertEqual(session.compile_status, AISession.CompileStatus.ERROR)
         self.assertEqual(session.status, AISession.Status.ACTIVE)
 
+    def test_compile_session_runs_pre_compile_jobs_in_session_worktree(self) -> None:
+        from longdoc.session_service import compile_session, create_session
+
+        session = create_session(self.project, goal="Compile")
+        worktree = Path(session.worktree_path)
+        helper = worktree / ".smarttex" / "auto_generated" / "pdf_includes.typ"
+
+        def fake_pre_compile(project, *, workdir):
+            self.assertEqual(workdir, worktree)
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.write_text("#let smarttex-include-pdf = none\n", encoding="utf-8")
+            return []
+
+        def fake_run(cmd, **kwargs):
+            self.assertTrue(helper.exists())
+            (worktree / ".smarttex" / "main.pdf").write_bytes(b"%PDF-1.4 fake")
+            return subprocess.CompletedProcess(cmd, 0, stdout="Success\n", stderr="")
+
+        with mock.patch("projects.pre_compile.run_pre_compile_jobs", side_effect=fake_pre_compile), mock.patch(
+            "subprocess.run", side_effect=fake_run
+        ):
+            result = compile_session(session)
+
+        self.assertEqual(result["status"], "success")
+
     def test_compile_session_missing_source_returns_error(self) -> None:
         from longdoc.session_service import compile_session, create_session
 

@@ -479,12 +479,35 @@ def compile_session(session: AISession) -> dict[str, Any]:
     src_filename = main_source_filename(project)
     input_file = worktree / src_filename
 
+    from projects.pre_compile import PreCompileResult, run_pre_compile_jobs
+    import projects.plantuml_job  # noqa: F401 - registers PlantUmlJob
+    import projects.pdf_embed_job  # noqa: F401 - registers PdfEmbedJob
+
     if not input_file.exists():
         msg = f"{src_filename} not found in session worktree"
         session.compile_status = AISession.CompileStatus.ERROR
         session.compile_log = msg
         session.save(update_fields=["compile_status", "compile_log", "updated_at"])
         return {"status": "error", "log": msg, "diagnostics": []}
+
+    pre_compile_results = run_pre_compile_jobs(project, workdir=worktree)
+
+    def _pre_compile_diagnostics(results: list[PreCompileResult]) -> list[dict]:
+        diags: list[dict] = []
+        for result in results:
+            for error in result.errors:
+                if ": " in error:
+                    file_part, _, msg = error.partition(": ")
+                else:
+                    file_part, msg = "", error
+                diags.append({
+                    "file": file_part.strip(),
+                    "line": 1,
+                    "column": 1,
+                    "severity": "error",
+                    "message": f"[{result.job}] {msg.strip()}",
+                })
+        return diags
 
     sess_dir = session_dir(project, session.id)
     sess_dir.mkdir(parents=True, exist_ok=True)
@@ -552,7 +575,7 @@ def compile_session(session: AISession) -> dict[str, Any]:
             return {
                 "status": "success",
                 "log": log_text,
-                "diagnostics": parse_compile_diagnostics(project, log_text),
+                "diagnostics": _pre_compile_diagnostics(pre_compile_results) + parse_compile_diagnostics(project, log_text),
                 "staging_pdf_path": session.staging_pdf_path,
             }
 
@@ -562,7 +585,7 @@ def compile_session(session: AISession) -> dict[str, Any]:
         return {
             "status": "error",
             "log": log_text,
-            "diagnostics": parse_compile_diagnostics(project, log_text),
+            "diagnostics": _pre_compile_diagnostics(pre_compile_results) + parse_compile_diagnostics(project, log_text),
         }
 
     except subprocess.TimeoutExpired:

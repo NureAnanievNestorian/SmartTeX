@@ -34,9 +34,10 @@ def register(cls: type[PreCompileJob]) -> type[PreCompileJob]:
     return cls
 
 
-def run_pre_compile_jobs(project: Any) -> list[PreCompileResult]:
-    from projects.services import ensure_project_dir
-    workdir = ensure_project_dir(project)
+def run_pre_compile_jobs(project: Any, *, workdir: Path | None = None) -> list[PreCompileResult]:
+    if workdir is None:
+        from projects.services import ensure_project_dir
+        workdir = ensure_project_dir(project)
     results: list[PreCompileResult] = []
     for job_cls in _REGISTRY:
         job = job_cls()

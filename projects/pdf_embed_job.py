@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from projects.pre_compile import PreCompileJob, PreCompileResult, register
+from projects.typst_auto_generated import (
+    inject_auto_import_into_reachable_typst,
+    remove_auto_imports_from_all_typst,
+)
 
 _MANIFEST_PATH = ".smarttex/pdf_includes.json"
 _CACHE_DIR = ".smarttex/cache/pdf-pages"
 _HELPER_PATH = ".smarttex/auto_generated/pdf_includes.typ"
-_AUTO_BEGIN = "// smarttex:auto-begin"
-_AUTO_END = "// smarttex:auto-end"
 # Use /-prefixed path so Typst resolves it from --root regardless of where main.typ lives
 _IMPORT_LINE = '#import "/.smarttex/auto_generated/pdf_includes.typ": smarttex-include-pdf'
 
@@ -97,32 +99,6 @@ def _generate_helper(workdir: Path, page_map: dict[str, list[str]]) -> None:
     helper_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-_AUTO_BLOCK_RE = re.compile(
-    r"^// smarttex:auto-begin\n.*?^// smarttex:auto-end\n?",
-    re.MULTILINE | re.DOTALL,
-)
-
-
-def _inject_import(workdir: Path, main_file: str) -> None:
-    main_path = workdir / main_file
-    if not main_path.exists():
-        return
-    content = main_path.read_text(encoding="utf-8")
-    clean = _AUTO_BLOCK_RE.sub("", content)
-    block = f"{_AUTO_BEGIN}\n{_IMPORT_LINE}\n{_AUTO_END}\n"
-    main_path.write_text(block + clean, encoding="utf-8")
-
-
-def _remove_import(workdir: Path, main_file: str) -> None:
-    main_path = workdir / main_file
-    if not main_path.exists():
-        return
-    content = main_path.read_text(encoding="utf-8")
-    new_content = _AUTO_BLOCK_RE.sub("", content)
-    if new_content != content:
-        main_path.write_text(new_content, encoding="utf-8")
-
-
 @register
 class PdfEmbedJob(PreCompileJob):
     name = "pdf_embed"
@@ -136,8 +112,7 @@ class PdfEmbedJob(PreCompileJob):
         enabled = {k: v for k, v in manifest.items() if v.get("enabled")}
 
         if not enabled:
-            from projects.services import main_source_filename
-            _remove_import(workdir, main_source_filename(project))
+            remove_auto_imports_from_all_typst(workdir)
             return PreCompileResult(job=self.name, success=True)
 
         try:
@@ -183,8 +158,7 @@ class PdfEmbedJob(PreCompileJob):
 
         if page_map:
             _generate_helper(workdir, page_map)
-            from projects.services import main_source_filename
-            _inject_import(workdir, main_source_filename(project))
+            inject_auto_import_into_reachable_typst(project, workdir, _IMPORT_LINE)
 
         if manifest_dirty:
             save_manifest(workdir, manifest)
