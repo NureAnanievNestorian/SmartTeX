@@ -17,7 +17,7 @@ from projects.models import Project, ProjectVersion
 from projects.services import write_source_content
 from small_model.models import SmallModelUsageLog
 from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
-from templates_lib.models import Template, TemplateContextFile, TemplateLongDocDefaults, TemplateNoteSection, TemplateOutlineItem, TemplateRequirement, TemplateTask
+from templates_lib.models import Template, TemplateContextFile, TemplateNoteSection, TemplateOutlineItem, TemplateRequirement, TemplateTask
 
 from .audit import audit_assistant_change
 from .locks import ProjectLockedError, assert_not_locked, get_locking_session, is_project_locked
@@ -1262,6 +1262,48 @@ class ChangeProposalServiceTests(TestCase):
         self.assertIn("TOO_MANY_FILES", {item["code"] for item in proposal.smcl_warnings})
         self.assertIn("DETERMINISTIC_BUDGET_MISMATCH", {item["code"] for item in proposal.smcl_warnings})
 
+    def test_propose_document_change_warns_on_unplanned_heading_deletion(self) -> None:
+        from longdoc.proposal_service import propose_document_change
+
+        write_source_content(
+            self.project,
+            "main.tex",
+            (
+                "\\documentclass{article}\n"
+                "\\begin{document}\n"
+                "\\section{Important Background}\n"
+                "This paragraph explains context that should not disappear during a small wording edit.\n"
+                "Another sentence keeps enough prose here to look like real document content.\n"
+                "Hello World\n"
+                "\\end{document}\n"
+            ),
+        )
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_success):
+            proposal = propose_document_change(
+                self.project,
+                goal="Revise greeting",
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": (
+                            "\\section{Important Background}\n"
+                            "This paragraph explains context that should not disappear during a small wording edit.\n"
+                            "Another sentence keeps enough prose here to look like real document content.\n"
+                            "Hello World"
+                        ),
+                        "new_text": "Hello Proposal",
+                        "change_summary": "Revise greeting",
+                    }
+                ],
+            )
+
+        warning_codes = {item["code"] for item in proposal.smcl_warnings}
+        self.assertEqual(proposal.status, ChangeProposal.Status.READY_FOR_REVIEW)
+        self.assertIn("DELETED_HEADING", warning_codes)
+        self.assertIn("SUSPICIOUS_TEXT_DELETION", warning_codes)
+
     def test_propose_document_change_failed_compile_does_not_become_ready(self) -> None:
         from longdoc.proposal_service import propose_document_change
 
@@ -2024,12 +2066,14 @@ class TemplateInitializationTests(TestCase):
         self.settings_override.disable()
         super().tearDown()
 
+    def _set_template_longdoc_defaults(self, *, enabled=True, requirements_enabled=True):
+        self.template.longdoc_enabled = enabled
+        self.template.longdoc_requirements_enabled = requirements_enabled
+        self.template.save(update_fields=["longdoc_enabled", "longdoc_requirements_enabled", "updated_at"])
+        return self.template
+
     def _create_longdoc_template(self):
-        defaults = TemplateLongDocDefaults.objects.create(
-            template=self.template,
-            enabled=True,
-            requirements_enabled=True,
-        )
+        defaults = self._set_template_longdoc_defaults(enabled=True, requirements_enabled=True)
         TemplateOutlineItem.objects.create(template=self.template, order=1, title="Introduction", level=1)
         TemplateOutlineItem.objects.create(template=self.template, order=2, title="Related Work", level=1)
         TemplateRequirement.objects.create(template=self.template, req_id="R-01", description="Cover intro")
@@ -2095,7 +2139,7 @@ class TemplateInitializationTests(TestCase):
         self.assertEqual(notes[0].heading, "Writing Decisions")
 
     def test_default_note_sections_created_when_template_has_none(self) -> None:
-        TemplateLongDocDefaults.objects.create(template=self.template, enabled=True)
+        self._set_template_longdoc_defaults(enabled=True)
         project = Project.objects.create(owner=self.user, title="Default Notes", template=self.template)
         initialize_longdoc_from_template(project, self.template)
         headings = set(ProjectNoteSection.objects.filter(project=project).values_list("heading", flat=True))
@@ -2113,7 +2157,7 @@ class TemplateInitializationTests(TestCase):
         self.assertIn("# Brief", disk_path.read_text(encoding="utf-8"))
 
     def test_template_with_no_context_files_skips_context_setup(self) -> None:
-        TemplateLongDocDefaults.objects.create(template=self.template, enabled=True)
+        self._set_template_longdoc_defaults(enabled=True)
         project = Project.objects.create(owner=self.user, title="No Context", template=self.template)
         initialize_longdoc_from_template(project, self.template)
         self.assertFalse(ProjectContextFile.objects.filter(project=project).exists())
@@ -2182,7 +2226,8 @@ class EdgeCaseTests(TestCase):
         self.assertFalse(ProjectContextFile.objects.filter(project=self.project, filename="missing.md").exists())
 
     def test_context_file_with_invalid_path_skipped_during_template_init(self) -> None:
-        TemplateLongDocDefaults.objects.create(template=self.template, enabled=True)
+        self.template.longdoc_enabled = True
+        self.template.save(update_fields=["longdoc_enabled", "updated_at"])
         # Inject a context file with a path-traversal filename — should be silently skipped
         TemplateContextFile.objects.create(
             template=self.template,
@@ -2221,7 +2266,9 @@ class EdgeCaseTests(TestCase):
             create_task(self.project, description="", source="web")
 
     def test_template_with_only_defaults_no_items_creates_settings_only(self) -> None:
-        TemplateLongDocDefaults.objects.create(template=self.template, enabled=True, requirements_enabled=False)
+        self.template.longdoc_enabled = True
+        self.template.longdoc_requirements_enabled = False
+        self.template.save(update_fields=["longdoc_enabled", "longdoc_requirements_enabled", "updated_at"])
         project = Project.objects.create(owner=self.user, title="DefaultsOnly", template=self.template)
         result = initialize_longdoc_from_template(project, self.template)
         self.assertIsNotNone(result)

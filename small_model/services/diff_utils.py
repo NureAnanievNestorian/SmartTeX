@@ -16,6 +16,8 @@ class DiffReviewInput:
     changed_files: list[str]
     unified_diff: str
     touched_headings: list[str]
+    deleted_headings: list[str]
+    deleted_text_samples: list[str]
     deleted_labels_or_refs: list[str]
     changed_imports_or_includes: list[str]
 
@@ -23,6 +25,8 @@ class DiffReviewInput:
 def build_diff_review_input(diff_text: str, *, soft_limit: int = 8192, hard_cap: int = 12288) -> DiffReviewInput:
     files: list[str] = []
     touched_headings: list[str] = []
+    deleted_headings: list[str] = []
+    deleted_text_samples: list[str] = []
     deleted_labels_or_refs: list[str] = []
     changed_imports_or_includes: list[str] = []
     lines_added = 0
@@ -44,6 +48,9 @@ def build_diff_review_input(diff_text: str, *, soft_limit: int = 8192, hard_cap:
             changed_imports_or_includes.extend(match.group(0) for match in IMPORT_RE.finditer(line))
         elif line.startswith("-") and not line.startswith("---"):
             lines_removed += 1
+            removed_text = line[1:].strip()
+            if _looks_like_content_line(removed_text) and len(deleted_text_samples) < 20:
+                deleted_text_samples.append(_truncate_sample(removed_text))
             deleted_labels_or_refs.extend(match.group(0) for match in LABEL_REF_RE.finditer(line))
             changed_imports_or_includes.extend(match.group(0) for match in IMPORT_RE.finditer(line))
 
@@ -53,6 +60,8 @@ def build_diff_review_input(diff_text: str, *, soft_limit: int = 8192, hard_cap:
             title = (heading.group(1) or heading.group(2) or "").strip()
             if title and title not in touched_headings:
                 touched_headings.append(title)
+            if line.startswith("-") and not line.startswith("---") and title and title not in deleted_headings:
+                deleted_headings.append(title)
 
         relevant = (
             line.startswith(("diff --git", "--- ", "+++ ", "@@", "+", "-"))
@@ -89,9 +98,27 @@ def build_diff_review_input(diff_text: str, *, soft_limit: int = 8192, hard_cap:
         changed_files=files,
         unified_diff=body,
         touched_headings=touched_headings[:20],
+        deleted_headings=deleted_headings[:20],
+        deleted_text_samples=deleted_text_samples[:20],
         deleted_labels_or_refs=deleted_labels_or_refs[:50],
         changed_imports_or_includes=changed_imports_or_includes[:50],
     )
+
+
+def _looks_like_content_line(text: str) -> bool:
+    value = str(text or "").strip()
+    if len(value) < 24:
+        return False
+    if value.startswith(("\\", "#", "//", "%")):
+        return False
+    if re.fullmatch(r"[\W_]+", value):
+        return False
+    return bool(re.search(r"[A-Za-zА-Яа-яІіЇїЄєҐґ]", value))
+
+
+def _truncate_sample(text: str, max_len: int = 180) -> str:
+    value = re.sub(r"\s+", " ", str(text or "").strip())
+    return value if len(value) <= max_len else f"{value[: max_len - 1]}…"
 
 
 def warning(severity: str, code: str, message: str, source: str) -> dict[str, str]:

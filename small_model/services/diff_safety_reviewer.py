@@ -18,6 +18,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             "diff_stats": stats,
             "changed_files": review_input.changed_files,
             "touched_headings": review_input.touched_headings,
+            "deleted_headings": review_input.deleted_headings,
+            "deleted_text_samples": review_input.deleted_text_samples,
             "deleted_labels_or_refs": review_input.deleted_labels_or_refs,
             "changed_imports_or_includes": review_input.changed_imports_or_includes,
             "unified_diff": review_input.unified_diff,
@@ -105,6 +107,27 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                     "deterministic_diff_stats",
                 )
             )
+        if review_input.deleted_headings:
+            deterministic_warnings.append(
+                warning(
+                    "high",
+                    "DELETED_HEADING",
+                    (
+                        "The diff deletes document heading(s): "
+                        f"{', '.join(review_input.deleted_headings[:3])}. Verify this was explicitly requested."
+                    ),
+                    "deterministic_diff_stats",
+                )
+            )
+        if review_input.deleted_text_samples and stats.get("lines_removed", 0) > stats.get("lines_added", 0) + 2:
+            deterministic_warnings.append(
+                warning(
+                    "medium",
+                    "SUSPICIOUS_TEXT_DELETION",
+                    "The diff removes more prose than it adds; verify no unrelated paragraph or content was accidentally deleted.",
+                    "deterministic_diff_stats",
+                )
+            )
         if review_input.deleted_labels_or_refs:
             deterministic_warnings.append(
                 warning(
@@ -179,6 +202,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             project=project,
             system_instruction=(
                 "Review the diff for over-editing, drift, accidental deletions, and unrelated changes. "
+                "Pay special attention to deleted headings and prose: if a heading or meaningful paragraph disappears "
+                "without being clearly requested by the proposal goal, warn the user even when the document still compiles. "
                 "Patch-budget mismatches are advisory signals, not standalone rejection grounds. "
                 "If scope_confidence is 'low' or 'medium', the patch budget is advisory — judge whether "
                 "the diff is legitimate for the user's request rather than rejecting on size alone. "
@@ -202,6 +227,15 @@ class DiffSafetyReviewService(SmallModelCallMixin):
                     "medium",
                     "SMCL_DIFF_WARNING",
                     "The AI safety reviewer found risks in this suggested change.",
+                    "diff_safety_reviewer",
+                )
+            )
+        if result.get("suspicious_deletions"):
+            warnings.append(
+                warning(
+                    "high",
+                    "SMCL_SUSPICIOUS_DELETION",
+                    "The AI safety reviewer found deletion(s) that may be unrelated to the requested change.",
                     "diff_safety_reviewer",
                 )
             )
@@ -235,6 +269,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             return True
         if len(review_input.touched_headings) > 2:
             return True
+        if review_input.deleted_headings or review_input.deleted_text_samples:
+            return True
         return False
 
     def _is_tiny_low_risk_diff(self, stats, review_input):
@@ -244,6 +280,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             and int(stats.get("hunks") or 0) == 1
             and not review_input.deleted_labels_or_refs
             and not review_input.changed_imports_or_includes
+            and not review_input.deleted_headings
+            and not review_input.deleted_text_samples
             and len(review_input.touched_headings) <= 1
         )
 
@@ -264,6 +302,8 @@ class DiffSafetyReviewService(SmallModelCallMixin):
             "diff_stats": review_input.diff_stats,
             "changed_files": review_input.changed_files,
             "touched_headings": review_input.touched_headings,
+            "deleted_headings": review_input.deleted_headings,
+            "deleted_text_samples": review_input.deleted_text_samples,
             "deleted_labels_or_refs": review_input.deleted_labels_or_refs,
             "changed_imports_or_includes": review_input.changed_imports_or_includes,
             "unified_diff": review_input.unified_diff,

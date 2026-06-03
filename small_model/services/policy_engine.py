@@ -53,8 +53,6 @@ class ProposalPolicyEngine:
         edit_intent = metadata.get("edit_intent") or CONSERVATIVE_PARAGRAPH
         reviewer = DiffSafetyReviewService()
         enabled, _, _ = reviewer.is_enabled(user, project)
-        if not enabled:
-            return PolicyResult(action="allow", smcl_used=False, fallback_used=True)
         edit_mode = str(edit_intent.get("edit_mode") or "paragraph_edit")
         patch_budget = {
             "max_changed_lines": int(edit_intent.get("max_changed_lines") or 15),
@@ -77,8 +75,8 @@ class ProposalPolicyEngine:
         return PolicyResult(
             action=action,
             reason=review.get("reason"),
-            smcl_used=bool(review.get("review_payload")),
-            fallback_used=action in {"warn", "reject"} and not bool(review.get("review_payload")),
+            smcl_used=enabled and bool(review.get("review_payload")),
+            fallback_used=(not enabled) or (action in {"warn", "reject"} and not bool(review.get("review_payload"))),
             warnings=review.get("warnings") or [],
             risk_level=review.get("risk_level") or "low",
             metadata={"diff_review": review.get("review_payload") or {}},
