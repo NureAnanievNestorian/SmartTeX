@@ -624,6 +624,85 @@ def generate_diff(session: AISession) -> str:
     return diff
 
 
+def manually_edit_session_line(
+    session: AISession,
+    filename: str,
+    *,
+    line_number: int,
+    new_text: str,
+    expected_text: str | None = None,
+) -> dict[str, Any]:
+    """Replace one line in a reviewable session branch and commit it."""
+    if session.status not in (
+        AISession.Status.ACTIVE,
+        AISession.Status.COMPILED,
+        AISession.Status.READY_FOR_REVIEW,
+    ):
+        raise SessionWriteError(
+            error="SESSION_NOT_EDITABLE",
+            message=f"Session {session.id} cannot be manually edited (status={session.status}).",
+            status_code=409,
+        )
+
+    rel = _safe_session_rel_path(filename)
+    target_path = Path(session.worktree_path) / rel
+    if target_path.suffix.lower() not in _TEXT_EXTENSIONS_FOR_DIFF:
+        raise SessionWriteError(
+            error="UNSUPPORTED_FILE_TYPE",
+            message=f"{filename} is not a supported text file for manual proposal edits.",
+            status_code=415,
+        )
+    if not target_path.exists():
+        raise SessionWriteError(error="FILE_NOT_FOUND", message=f"{filename} not found in the proposal worktree.")
+
+    content = target_path.read_text(encoding="utf-8", errors="ignore")
+    lines = content.splitlines(keepends=True)
+    line_no = int(line_number)
+    if line_no < 1 or line_no > len(lines):
+        raise SessionWriteError(
+            error="LINE_OUT_OF_RANGE",
+            message=f"Line {line_no} is out of range (file has {len(lines)} lines).",
+            status_code=409,
+            suggestion="Reload the proposal diff and retry the manual edit.",
+        )
+
+    current = lines[line_no - 1].rstrip("\n\r")
+    if expected_text is not None and current != str(expected_text):
+        raise SessionWriteError(
+            error="LINE_CHANGED",
+            message="This proposal line changed before the manual edit was applied.",
+            status_code=409,
+            suggestion="Reload the proposal diff, then apply the manual edit again.",
+            details={"current_text": current},
+        )
+
+    newline = "\n"
+    if lines[line_no - 1].endswith("\r\n"):
+        newline = "\r\n"
+    elif not lines[line_no - 1].endswith(("\n", "\r")) and line_no == len(lines):
+        newline = ""
+
+    replacement = str(new_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" in replacement:
+        raise SessionWriteError(
+            error="MULTILINE_EDIT_NOT_SUPPORTED",
+            message="Inline proposal editing supports one line at a time.",
+            status_code=400,
+            suggestion="Use a new AI proposal update for multi-line edits.",
+        )
+    if replacement == current:
+        return {"filename": str(rel), "line_number": line_no, "changed": False}
+
+    lines[line_no - 1] = replacement + newline
+    target_path.write_text("".join(lines), encoding="utf-8")
+    _commit_worktree_change(
+        session,
+        str(rel),
+        f"manual proposal edit: {rel}:{line_no}",
+    )
+    return {"filename": str(rel), "line_number": line_no, "changed": True}
+
+
 def _render_puml_files(project: Project, proj_dir: Path, changed_files: list[str]) -> None:
     """After a session merge, render any .puml files to .svg and commit the result."""
     puml_files = [f for f in changed_files if Path(f).suffix.lower() == ".puml"]

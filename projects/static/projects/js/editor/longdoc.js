@@ -1961,6 +1961,10 @@ function closeDiffContextMenu() {
   diffContextMenuEl.style.top = "";
 }
 
+function closeManualDiffEditors() {
+  sessionDiffContentEl?.querySelectorAll(".diff-manual-edit").forEach(el => el.remove());
+}
+
 function getDiffSelectionForRow(rowEl) {
   const selection = window.getSelection?.();
   const selectedText = String(selection?.toString?.() || "").trim();
@@ -1997,6 +2001,62 @@ function getDiffRowAnnotationTarget(rowEl) {
   };
 }
 
+function openManualDiffEditor(rowEl, target) {
+  if (!rowEl || !target?.fileName || !target?.lineNumber || target.side !== "new") return;
+  closeManualDiffEditors();
+  const wrap = rowEl.closest(".diff-row-wrap");
+  const currentText = decodeURIComponent(String(rowEl.querySelector(".diff-code")?.dataset?.rawTextEncoded || ""));
+  const editor = document.createElement("div");
+  editor.className = "diff-manual-edit";
+  editor.innerHTML = `
+    <div class="diff-manual-edit-card">
+      <div class="diff-manual-edit-head">
+        <span>Ручна правка пропозала</span>
+        <span class="diff-manual-edit-target">${escHtml(target.fileName)}:${escHtml(String(target.lineNumber))}</span>
+      </div>
+      ${target.hasSelection ? `<div class="diff-manual-edit-selection">Виділено: ${escHtml(truncateDiffFragment(target.selectedText, 180))}</div>` : ""}
+      <textarea spellcheck="false" data-manual-diff-editor>${escHtml(currentText)}</textarea>
+      <div class="diff-manual-edit-actions">
+        <button type="button" data-action="cancel-manual-diff-edit">Скасувати</button>
+        <button type="button" data-action="save-manual-diff-edit">Зберегти рядок</button>
+      </div>
+    </div>
+  `;
+  wrap?.insertBefore(editor, wrap.querySelector(".diff-row-annotations") || wrap.querySelector(".diff-row-resolved-annotations") || null);
+  const textarea = editor.querySelector("textarea");
+  textarea?.focus();
+  textarea?.setSelectionRange?.(0, textarea.value.length);
+  editor.querySelector('[data-action="cancel-manual-diff-edit"]')?.addEventListener("click", () => editor.remove());
+  editor.querySelector('[data-action="save-manual-diff-edit"]')?.addEventListener("click", async e => {
+    const btn = e.currentTarget;
+    const newText = String(textarea?.value || "");
+    if (newText.includes("\n")) {
+      window.alert("Швидке ручне редагування підтримує один рядок. Для багаторядкової зміни краще оновити proposal.");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Зберігаю...";
+    try {
+      await api(`/api/projects/${cfg.projectId}/change-proposals/manual-edit/`, {
+        method: "POST",
+        body: JSON.stringify({
+          file_name: target.fileName,
+          line_number: target.lineNumber,
+          expected_text: currentText,
+          new_text: newText,
+        }),
+      });
+      s.longdoc.proposalModalDiffSignature = "";
+      await loadLongdocData();
+      await openSessionDiffModal({ forceReload: true });
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Зберегти рядок";
+      window.alert(`Не вдалося зберегти ручну правку: ${err.message}`);
+    }
+  });
+}
+
 function openDiffContextMenu(rowEl, event) {
   const target = getDiffRowAnnotationTarget(rowEl);
   if (!target.fileName || !target.lineNumber) return;
@@ -2004,21 +2064,38 @@ function openDiffContextMenu(rowEl, event) {
   event.stopPropagation();
   const menu = ensureDiffContextMenu();
   menu.innerHTML = "";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "e-menu-item";
-  btn.innerHTML = `
+  const annotationBtn = document.createElement("button");
+  annotationBtn.type = "button";
+  annotationBtn.className = "e-menu-item";
+  annotationBtn.innerHTML = `
     <span class="e-menu-item-icon" aria-hidden="true">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.5h10v7H7l-3 2z"/><path d="M5.5 6.2h5"/><path d="M5.5 8.4h3.5"/></svg>
     </span>
     <span class="e-menu-item-label">${target.hasSelection ? "Додати помітку до виділення" : "Додати помітку до рядка"}</span>
     <span class="e-menu-item-shortcut"></span>
   `;
-  btn.addEventListener("click", async () => {
+  annotationBtn.addEventListener("click", async () => {
     closeDiffContextMenu();
     await createDiffAnnotationFromTarget(target, event);
   });
-  menu.appendChild(btn);
+  menu.appendChild(annotationBtn);
+  if (target.side === "new") {
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "e-menu-item";
+    editBtn.innerHTML = `
+      <span class="e-menu-item-icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.8 3.2l3 3L6 13H3v-3z"/><path d="M8.5 4.5l3 3"/></svg>
+      </span>
+      <span class="e-menu-item-label">${target.hasSelection ? "Редагувати рядок з виділенням" : "Редагувати рядок"}</span>
+      <span class="e-menu-item-shortcut"></span>
+    `;
+    editBtn.addEventListener("click", () => {
+      closeDiffContextMenu();
+      openManualDiffEditor(rowEl, target);
+    });
+    menu.appendChild(editBtn);
+  }
   menu.classList.add("open");
   const margin = 8;
   const rect = menu.getBoundingClientRect();
@@ -2157,7 +2234,7 @@ function renderDiffContent(diffText, diffAnnotations = [], resolvedAnnotations =
     <div class="diff-summary">
       <span class="diff-chip add">+${totalAdded}</span>
       <span class="diff-chip del">-${totalRemoved}</span>
-      <span class="session-diff-summary-text">Темнішим підсвічено точкові зміни всередині рядків. Правий клік додає тимчасову помітку до diff.</span>
+      <span class="session-diff-summary-text">Темнішим підсвічено точкові зміни всередині рядків. Правий клік додає помітку або редагує зелений рядок.</span>
     </div>
     <div class="diff-table">${rows.join("")}</div>
     ${renderDetachedResolvedAnnotations(detachedResolved)}`;
@@ -2258,6 +2335,7 @@ async function updateDiffAnnotationStatus(annotationId, status) {
 function closeSessionDiffModal() {
   const overlay = sessionDiffOverlayEl;
   if (overlay) overlay.classList.remove("open");
+  closeManualDiffEditors();
 }
 
 let _stagingPdfMode = false;

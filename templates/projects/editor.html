@@ -1779,6 +1779,100 @@
             z-index: 10020;
         }
 
+        .diff-manual-edit {
+            display: grid;
+            gap: 9px;
+            padding: 10px 12px 12px 122px;
+            border-top: 1px solid rgba(34, 197, 94, .18);
+            background:
+                linear-gradient(90deg, rgba(34, 197, 94, .12), transparent 58%),
+                rgba(11, 18, 24, .68);
+        }
+
+        .diff-manual-edit-card {
+            display: grid;
+            gap: 8px;
+            max-width: 980px;
+            padding: 10px;
+            border: 1px solid rgba(74, 222, 128, .24);
+            border-radius: 12px;
+            background: rgba(12, 22, 18, .86);
+            box-shadow: 0 14px 32px rgba(0, 0, 0, .18), inset 0 1px 0 rgba(255, 255, 255, .045);
+        }
+
+        .diff-manual-edit-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            color: #b8f7cf;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+        }
+
+        .diff-manual-edit-target {
+            color: var(--e-text2);
+            font: 11px/1.4 "JetBrains Mono", monospace;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .diff-manual-edit-selection {
+            color: #9ca3af;
+            font: 12px/1.45 "JetBrains Mono", monospace;
+            padding: 7px 8px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, .045);
+        }
+
+        .diff-manual-edit textarea {
+            min-height: 78px;
+            resize: vertical;
+            color: #e8fff0;
+            background: rgba(0, 0, 0, .28);
+            border: 1px solid rgba(148, 163, 184, .24);
+            border-radius: 10px;
+            padding: 9px 10px;
+            font: 13px/1.55 "JetBrains Mono", monospace;
+            outline: none;
+        }
+
+        .diff-manual-edit textarea:focus {
+            border-color: rgba(74, 222, 128, .55);
+            box-shadow: 0 0 0 3px rgba(34, 197, 94, .12);
+        }
+
+        .diff-manual-edit-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .diff-manual-edit-actions button {
+            border-radius: 9px;
+            border: 1px solid rgba(148, 163, 184, .22);
+            color: var(--e-text);
+            background: rgba(255, 255, 255, .055);
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .diff-manual-edit-actions button[data-action="save-manual-diff-edit"] {
+            color: #04130a;
+            border-color: rgba(34, 197, 94, .75);
+            background: linear-gradient(180deg, #34d773, #20bd5d);
+        }
+
+        .diff-manual-edit-actions button:disabled {
+            opacity: .55;
+            cursor: wait;
+        }
+
         .diff-row-annotations {
             display: grid;
             gap: 7px;

@@ -853,6 +853,106 @@ def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonRespo
 
 
 @csrf_exempt
+@require_POST
+def api_change_proposal_manual_edit(request: HttpRequest, project_id: int) -> JsonResponse:
+    from longdoc.models import AISession, ChangeProposal
+    from longdoc.proposal_service import _serialize_compile_failure, serialize_change_proposal
+    from longdoc.session_service import (
+        SessionWriteError,
+        compile_session,
+        finalize_batch,
+        generate_diff,
+        manually_edit_session_line,
+    )
+
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    try:
+        proposal = _active_proposal_for_api(project)
+    except Exception as exc:
+        return _proposal_error_response(exc)
+    session = proposal.internal_session
+    if session is None:
+        return JsonResponse({"error": "NO_SESSION", "message": "This proposal has no editable session."}, status=404)
+    if proposal.status not in (ChangeProposal.Status.READY_FOR_REVIEW, ChangeProposal.Status.FAILED_COMPILE):
+        return JsonResponse(
+            {"error": "PROPOSAL_NOT_EDITABLE", "message": "Only reviewable proposal diffs can be manually edited."},
+            status=409,
+        )
+
+    body = _json_body(request)
+    try:
+        result = manually_edit_session_line(
+            session,
+            str(body.get("file_name") or ""),
+            line_number=int(body.get("line_number") or 0),
+            new_text=str(body.get("new_text") or ""),
+            expected_text=str(body["expected_text"]) if "expected_text" in body else None,
+        )
+        if result.get("changed"):
+            session.refresh_from_db()
+            session.status = AISession.Status.ACTIVE
+            session.save(update_fields=["status", "updated_at"])
+            compile_result = compile_session(session)
+            session.refresh_from_db()
+            proposal.compile_status = session.compile_status
+            proposal.diff_summary = generate_diff(session)
+            if compile_result.get("status") == "success" and session.compile_status == AISession.CompileStatus.SUCCESS:
+                previous_annotation_ids = []
+                if hasattr(session, "batch"):
+                    previous_annotation_ids = list(session.batch.annotations_completed.values_list("id", flat=True))
+                batch = finalize_batch(
+                    session,
+                    summary=proposal.goal,
+                    task_ids=[proposal.addresses_task_id] if proposal.addresses_task_id else None,
+                    annotation_ids=previous_annotation_ids,
+                )
+                proposal.status = ChangeProposal.Status.READY_FOR_REVIEW
+                proposal.compile_error_summary = ""
+                proposal.changed_files = [
+                    {
+                        "filename": change.filename,
+                        "change_type": change.change_type,
+                        "lines_added": change.lines_added,
+                        "lines_removed": change.lines_removed,
+                    }
+                    for change in batch.changes.order_by("filename", "id")
+                ]
+                proposal.user_visible_message = "Ready for review with manual edits"
+            else:
+                proposal.status = ChangeProposal.Status.FAILED_COMPILE
+                proposal.compile_error_summary = _serialize_compile_failure(compile_result)
+                proposal.changed_files = []
+                proposal.user_visible_message = "Manual edit applied, but the proposal no longer compiles."
+            proposal.save(
+                update_fields=[
+                    "status",
+                    "compile_status",
+                    "compile_error_summary",
+                    "diff_summary",
+                    "changed_files",
+                    "user_visible_message",
+                    "updated_at",
+                ]
+            )
+    except SessionWriteError as exc:
+        return JsonResponse(exc.payload(), status=exc.status_code)
+    except Exception as exc:
+        logger.exception("manual proposal edit failed for project %s", project_id)
+        return JsonResponse({"error": "MANUAL_EDIT_FAILED", "message": str(exc)}, status=500)
+
+    proposal.refresh_from_db()
+    return JsonResponse(
+        {
+            "proposal": serialize_change_proposal(proposal),
+            "result": result,
+        }
+    )
+
+
+@csrf_exempt
 @require_http_methods(["GET", "POST"])
 def api_change_proposal_diff_annotations(request: HttpRequest, project_id: int) -> JsonResponse:
     user = get_api_user(request)
