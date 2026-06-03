@@ -1732,6 +1732,7 @@
             color: #7b93af;
             background: var(--e-surface);
             border-bottom: 1px solid rgba(40, 60, 90, 0.35);
+            user-select: none;
         }
 
         .diff-hunk {
@@ -1772,6 +1773,10 @@
 
         .diff-row[data-file]:hover .diff-code {
             box-shadow: inset 3px 0 0 rgba(245, 158, 11, .18);
+        }
+
+        .session-diff-context-menu {
+            z-index: 10020;
         }
 
         .diff-row-annotations {

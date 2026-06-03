@@ -1966,11 +1966,16 @@ function getDiffSelectionForRow(rowEl) {
   const selectedText = String(selection?.toString?.() || "").trim();
   if (!selection || selection.rangeCount === 0 || !selectedText) return null;
   const range = selection.getRangeAt(0);
-  const common = range.commonAncestorContainer;
-  const commonEl = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement;
-  if (!commonEl || !rowEl.contains(commonEl)) return null;
   const codeEl = rowEl.querySelector(".diff-code");
-  if (!codeEl || !codeEl.contains(commonEl)) return null;
+  if (!codeEl) return null;
+  const startEl = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
+  const endEl = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer : range.endContainer.parentElement;
+  const startRow = startEl?.closest?.(".diff-row[data-file][data-line]");
+  const endRow = endEl?.closest?.(".diff-row[data-file][data-line]");
+  const startCode = startEl?.closest?.(".diff-code");
+  const endCode = endEl?.closest?.(".diff-code");
+  if (startRow !== rowEl || endRow !== rowEl || startCode !== codeEl || endCode !== codeEl) return null;
+  if (selectedText.includes("\n")) return null;
   return {
     selectedText,
     rect: range.getBoundingClientRect(),
@@ -2343,9 +2348,9 @@ export function initSessionUI() {
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();
   });
-  sessionDiffContentEl?.addEventListener("contextmenu", e => {
+  sessionDiffOverlayEl?.addEventListener("contextmenu", e => {
     const row = e.target instanceof Element ? e.target.closest(".diff-row[data-file][data-line]") : null;
-    if (!row || !sessionDiffContentEl.contains(row)) return;
+    if (!row || !sessionDiffOverlayEl.contains(row)) return;
     openDiffContextMenu(row, e);
   });
   sessionDiffContentEl?.addEventListener("click", e => {
