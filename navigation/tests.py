@@ -19,6 +19,7 @@ from navigation.models import (
     FileCard,
     FileRole,
     IndexStatus,
+    NAV_SCHEMA_VERSION,
     ProjectNavigationIndex,
     Reachability,
     RegionCard,
@@ -77,6 +78,21 @@ class NewProjectPendingIndexTests(TestCase):
         # Must not raise; must return a usable dict with a mode.
         self.assertIn("mode", result)
         self.assertIn(result["mode"], {"indexed_keyword", "indexed_reranked", "minimal", "fallback_structural"})
+
+    def test_first_prepare_rebuilds_outdated_schema_index(self) -> None:
+        project = _make_project(self.user, "Outdated Index Test")
+        index = ProjectNavigationIndex.objects.get(project=project)
+        index.status = IndexStatus.READY
+        index.schema_version = max(0, NAV_SCHEMA_VERSION - 1)
+        index.last_built_version_number = 1
+        index.save(update_fields=["status", "schema_version", "last_built_version_number", "updated_at"])
+
+        with patch("navigation.services.preparation.build_navigation_index") as build_mock:
+            from navigation.services.preparation import prepare_document_work
+
+            prepare_document_work(project, user_request="write something", include_context=False)
+
+        build_mock.assert_called_once()
 
 
 class NavSettingsStalenessTests(TestCase):
@@ -221,7 +237,7 @@ class ContextBundleEditTargetPolicyTests(TestCase):
         project = _make_project(user, "Annotation Prep Test")
         index, _ = ProjectNavigationIndex.objects.get_or_create(project=project, defaults={"status": IndexStatus.READY})
         index.status = IndexStatus.READY
-        index.schema_version = 1
+        index.schema_version = NAV_SCHEMA_VERSION
         index.last_built_version_number = 1
         index.save()
         FileCard.objects.create(
@@ -268,7 +284,7 @@ class ContextBundleEditTargetPolicyTests(TestCase):
         project = _make_project(user, "Target Filename Prep Test")
         index, _ = ProjectNavigationIndex.objects.get_or_create(project=project, defaults={"status": IndexStatus.READY})
         index.status = IndexStatus.READY
-        index.schema_version = 1
+        index.schema_version = NAV_SCHEMA_VERSION
         index.last_built_version_number = 1
         index.save()
         FileCard.objects.create(

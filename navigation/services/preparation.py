@@ -960,10 +960,11 @@ def prepare_document_work(
         # --- evaluate freshness --------------------------------------------------
         freshness = fr.evaluate_index(project)
 
-        # If index is absent or build was never attempted, trigger a build
-        # synchronously so first-call works. Bounded by builder itself.
+        # If index is absent or structurally invalid, rebuild synchronously so
+        # old projects lazily migrate to the latest navigation schema on first
+        # prepare. Partial staleness remains usable and is refreshed elsewhere.
         index_obj: Optional[ProjectNavigationIndex] = None
-        if freshness.status == "absent":
+        if freshness.status in {"absent", "whole_invalid"}:
             try:
                 _sm = getattr(getattr(project, "small_model_settings", None), "nav_index_enrich_enabled", False)
                 build_navigation_index(project, use_small_model=bool(_sm))

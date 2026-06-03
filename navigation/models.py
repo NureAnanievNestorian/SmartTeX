@@ -5,7 +5,7 @@ from django.db import models
 from projects.models import Project
 
 
-NAV_SCHEMA_VERSION = 1
+NAV_SCHEMA_VERSION = 2
 
 
 class IndexStatus(models.TextChoices):

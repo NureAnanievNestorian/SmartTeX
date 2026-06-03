@@ -615,11 +615,12 @@ def smart_search(
             "latency_ms": 0.0,
         }
 
-    # Index lifecycle: build if absent.
+    # Index lifecycle: build if absent or structurally invalid. This keeps old
+    # project indexes aligned with the current schema without a global backfill.
     freshness = evaluate_index(project)
     index: Optional[ProjectNavigationIndex] = None
 
-    if freshness.status == "absent":
+    if freshness.status in {"absent", "whole_invalid"}:
         try:
             _sm = getattr(
                 getattr(project, "small_model_settings", None),
