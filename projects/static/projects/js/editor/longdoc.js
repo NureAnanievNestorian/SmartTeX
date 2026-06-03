@@ -233,15 +233,37 @@ function positionAnnotationRailCards() {
   const head = annotationRailEl.querySelector(".annotation-rail-head");
   if (!list) return;
   const headHeight = head?.getBoundingClientRect?.().height || 0;
+  const listHeight = list.clientHeight || 0;
+  const cards = [];
   for (const card of list.querySelectorAll(".annotation-rail-card[data-line-start]")) {
     const line = Number(card.getAttribute("data-line-start") || 1);
-    const top = cm.getLineTop?.(line);
-    if (top === null || top === undefined) {
+    const anchorTop = cm.getLineTop?.(line);
+    if (anchorTop === null || anchorTop === undefined) {
       card.style.display = "none";
       continue;
     }
     card.style.display = "";
-    card.style.top = `${Math.max(10, Math.round(top - headHeight + 8))}px`;
+    card.style.visibility = "hidden";
+    card.style.top = "0px";
+    const height = card.offsetHeight || 0;
+    const desiredTop = Math.round(anchorTop - headHeight + 8);
+    if (listHeight && (desiredTop + height < -24 || desiredTop > listHeight + 24)) {
+      card.style.display = "none";
+      continue;
+    }
+    cards.push({ card, height, desiredTop });
+  }
+  cards.sort((a, b) => a.desiredTop - b.desiredTop);
+  let nextTop = Number.NEGATIVE_INFINITY;
+  for (const item of cards) {
+    const top = Math.max(item.desiredTop, nextTop);
+    if (listHeight && (top + item.height < -24 || top > listHeight + 24)) {
+      item.card.style.display = "none";
+      continue;
+    }
+    item.card.style.top = `${top}px`;
+    item.card.style.visibility = "";
+    nextTop = top + item.height + 10;
   }
 }
 
@@ -275,7 +297,7 @@ export function renderAnnotationRail() {
       ${items.length ? items.map(item => `
         <article class="annotation-rail-card ${isAiDraftAnnotation(item) ? "ai-draft" : ""}" data-annotation-rail-id="${escHtml(String(item.id))}" data-annotation-id="${escHtml(String(item.id))}" data-line-start="${escHtml(String(item.line_start || 1))}">
           <div class="annotation-rail-meta">
-            <span>${escHtml(String(item.status || "open"))}</span>
+            ${chip(item.status || "open")}
             ${isAiDraftAnnotation(item) ? `
               <span class="annotation-rail-actions" aria-label="Дії з AI-поміткою">
                 <span class="annotation-rail-line">${escHtml(String(item.line_start || 1))}${item.line_end && item.line_end !== item.line_start ? `-${escHtml(String(item.line_end))}` : ""}</span>
@@ -309,14 +331,19 @@ export function renderAnnotationRail() {
       event.preventDefault();
       event.stopPropagation();
       const action = button.getAttribute("data-action");
+      const actions = button.closest(".annotation-rail-actions");
       const annotationId = button.closest("[data-annotation-id]")?.getAttribute("data-annotation-id");
       if (!annotationId) return;
-      button.disabled = true;
+      actions?.classList.add("loading");
+      actions?.querySelectorAll("button").forEach(actionButton => { actionButton.disabled = true; });
+      button.classList.add("loading");
       try {
         await updateAnnotationStatus(annotationId, action === "keep-ai-annotation" ? "open" : "dismissed");
       } catch (err) {
         window.alert(err.message || String(err));
-        button.disabled = false;
+        button.classList.remove("loading");
+        actions?.classList.remove("loading");
+        actions?.querySelectorAll("button").forEach(actionButton => { actionButton.disabled = false; });
       }
     });
   });

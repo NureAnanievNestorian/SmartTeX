@@ -433,9 +433,11 @@ const annotationLineHighlightField = StateField.define({
     for (const effect of tr.effects) {
       if (effect.is(setAnnotationLineHighlightsEffect)) {
         const builder = new RangeSetBuilder();
-        for (const lineNumber of effect.value || []) {
-          const line = Number(lineNumber);
-          if (!Number.isFinite(line) || line < 1 || line > tr.state.doc.lines) continue;
+        const lines = [...new Set((effect.value || [])
+          .map(lineNumber => Number(lineNumber))
+          .filter(line => Number.isFinite(line) && line >= 1 && line <= tr.state.doc.lines))]
+          .sort((a, b) => a - b);
+        for (const line of lines) {
           const docLine = tr.state.doc.line(line);
           builder.add(docLine.from, docLine.from, Decoration.line({ class: "cm-annotation-line" }));
         }
@@ -839,8 +841,11 @@ export function setAnnotationMarkers(items = [], highlightedLines = []) {
   if (!view.state.field(annotationMarkerField, false)) {
     effects.push(StateEffect.appendConfig.of([annotationMarkerField, annotationLineHighlightField, annotationGutter]));
   }
-  effects.push(setAnnotationMarkersEffect.of(items));
-  effects.push(setAnnotationLineHighlightsEffect.of(highlightedLines));
+  const sortedItems = [...(items || [])].sort((a, b) => Number(a?.line || 0) - Number(b?.line || 0));
+  const sortedLines = [...new Set((highlightedLines || []).map(line => Number(line)).filter(Number.isFinite))]
+    .sort((a, b) => a - b);
+  effects.push(setAnnotationMarkersEffect.of(sortedItems));
+  effects.push(setAnnotationLineHighlightsEffect.of(sortedLines));
   view.dispatch({
     effects,
   });

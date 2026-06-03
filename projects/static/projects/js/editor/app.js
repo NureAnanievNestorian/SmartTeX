@@ -805,13 +805,14 @@ function renderAnnotationMarkers() {
     existing.titles.push(String(item.instruction || "").trim());
     groups.set(line, existing);
   }
-  cm.setAnnotationMarkers?.([...groups.values()].map(item => ({
+  const markerGroups = [...groups.values()].sort((a, b) => Number(a.line || 0) - Number(b.line || 0));
+  cm.setAnnotationMarkers?.(markerGroups.map(item => ({
     line: item.line,
     count: item.count,
     ids: item.ids,
     status: item.status,
     title: item.titles.filter(Boolean).slice(0, 3).join("\n"),
-  })), s.longdoc.annotationRailOpen ? [...groups.keys()] : []);
+  })), s.longdoc.annotationRailOpen ? markerGroups.map(item => item.line) : []);
   longdoc.renderAnnotationRail?.();
 }
 
