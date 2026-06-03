@@ -182,6 +182,8 @@ def api_longdoc_settings(request: HttpRequest, project_id: int) -> JsonResponse:
     ):
         if key in body:
             changes[key] = bool(body[key])
+    if "quick_annotation_templates" in body:
+        changes["quick_annotation_templates"] = body.get("quick_annotation_templates")
     smcl_changes = {}
     for key in (
         "small_model_control_enabled",

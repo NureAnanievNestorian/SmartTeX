@@ -21,6 +21,8 @@ const centerEl = document.getElementById("drop-zone");
 const waTabBtnEl = document.getElementById("wa-tab-btn");
 const readonlyOverlayEl = document.getElementById("readonly-overlay");
 const readonlyDiscardSessionBtn = document.getElementById("readonly-discard-session-btn");
+const annotationRailToggleBtn = document.getElementById("annotation-rail-toggle");
+const annotationRailEl = document.getElementById("annotation-rail");
 
 let _reloadProjectMeta = null;
 let _refreshAnnotationMarkers = null;
@@ -156,6 +158,102 @@ function switchAssistantTab(tabName) {
   setAssistantOpen(true);
 }
 
+function currentEditorFileName() {
+  return String(s.activeTabName || s.selectedFile?.name || "").trim();
+}
+
+function activeAnnotationStatuses() {
+  return new Set(["ai_draft", "open", "in_progress"]);
+}
+
+function quickAnnotationTemplates() {
+  return Array.isArray(s.longdoc.settings?.quick_annotation_templates)
+    ? s.longdoc.settings.quick_annotation_templates.filter(item => item && item.enabled !== false)
+    : [];
+}
+
+export function getQuickAnnotationTemplates() {
+  return quickAnnotationTemplates();
+}
+
+export function matchingQuickAnnotationTemplate(event) {
+  return quickAnnotationTemplates().find(template => shortcutMatches(event, template.shortcut)) || null;
+}
+
+function shortcutMatches(event, shortcut) {
+  const parts = String(shortcut || "").split("+").map(part => part.trim().toLowerCase()).filter(Boolean);
+  if (!parts.length) return false;
+  const key = parts[parts.length - 1];
+  const wantsMod = parts.includes("mod");
+  const wantsAlt = parts.includes("alt");
+  const wantsShift = parts.includes("shift");
+  if (wantsMod !== Boolean(event.metaKey || event.ctrlKey)) return false;
+  if (wantsAlt !== Boolean(event.altKey)) return false;
+  if (wantsShift !== Boolean(event.shiftKey)) return false;
+  const eventKey = String(event.key || "").toLowerCase();
+  const eventCode = String(event.code || "").toLowerCase();
+  const normalizedKey = key.toLowerCase();
+  return eventKey === normalizedKey || eventCode === `digit${normalizedKey}` || eventCode === `key${normalizedKey}`;
+}
+
+function visibleAnnotationsForCurrentFile() {
+  const fileName = currentEditorFileName();
+  const activeStatuses = activeAnnotationStatuses();
+  return (s.longdoc.annotations || [])
+    .filter(item => item?.file_name === fileName && activeStatuses.has(String(item.status || "")))
+    .sort((a, b) => (Number(a.line_start || 0) - Number(b.line_start || 0)) || Number(a.id || 0) - Number(b.id || 0));
+}
+
+export function toggleAnnotationRail(force = null) {
+  const next = force === null ? !s.longdoc.annotationRailOpen : Boolean(force);
+  s.longdoc.annotationRailOpen = next;
+  renderAnnotationRail();
+  _refreshAnnotationMarkers?.();
+}
+
+export function renderAnnotationRail() {
+  const open = Boolean(s.longdoc.annotationRailOpen);
+  editorWrapEl?.classList.toggle("annotation-rail-open", open);
+  annotationRailToggleBtn?.classList.toggle("active", open);
+  if (!annotationRailEl) return;
+  if (!open) {
+    annotationRailEl.innerHTML = "";
+    return;
+  }
+  const fileName = currentEditorFileName();
+  const items = visibleAnnotationsForCurrentFile();
+  annotationRailEl.innerHTML = `
+    <div class="annotation-rail-head">
+      <div>
+        <strong>Помітки в тексті</strong>
+        <span>${escHtml(fileName || "Файл не відкрито")} · Ctrl/Cmd+Shift+A</span>
+      </div>
+      <span>${items.length}</span>
+    </div>
+    <div class="annotation-rail-list">
+      ${items.length ? items.map(item => `
+        <article class="annotation-rail-card" data-annotation-rail-id="${escHtml(String(item.id))}">
+          <div class="annotation-rail-meta">
+            <span>${escHtml(String(item.status || "open"))}</span>
+            <span>${escHtml(String(item.line_start || 1))}${item.line_end && item.line_end !== item.line_start ? `-${escHtml(String(item.line_end))}` : ""}</span>
+          </div>
+          <div class="annotation-rail-text">${escHtml(item.instruction || "")}</div>
+          ${item.selected_text ? `<div class="annotation-rail-fragment">${escHtml(String(item.selected_text).slice(0, 220))}${String(item.selected_text).length > 220 ? "..." : ""}</div>` : ""}
+        </article>
+      `).join("") : `<div class="annotation-rail-empty">У цьому файлі немає відкритих поміток. Виділіть текст або натисніть ПКМ, щоб додати.</div>`}
+    </div>
+  `;
+  annotationRailEl.querySelectorAll("[data-annotation-rail-id]").forEach(card => {
+    card.addEventListener("click", () => {
+      const id = Number(card.getAttribute("data-annotation-rail-id") || 0);
+      const item = (s.longdoc.annotations || []).find(row => Number(row.id) === id);
+      if (item?.line_start) cm.jumpToLine?.(Number(item.line_start) || 1);
+      annotationRailEl.querySelectorAll(".annotation-rail-card").forEach(el => el.classList.remove("active"));
+      card.classList.add("active");
+    });
+  });
+}
+
 export function openAssistantSettings() {
   switchAssistantTab("settings");
 }
@@ -192,6 +290,23 @@ export async function createAnnotationFromEditorSelection(instruction, { taskId 
   });
   await loadLongdocData();
   if (openPanel) switchAssistantTab("annotations");
+  renderAnnotationRail();
+}
+
+export async function createQuickAnnotation(template, { openRail = true } = {}) {
+  if (!template?.instruction) return false;
+  await createAnnotationFromEditorSelection(template.instruction, { openPanel: false });
+  if (openRail) toggleAnnotationRail(true);
+  return true;
+}
+
+export async function handleQuickAnnotationShortcut(event) {
+  if (!longdocEnabled() || !featureEnabled("annotations_enabled")) return false;
+  const template = matchingQuickAnnotationTemplate(event);
+  if (!template) return false;
+  event.preventDefault();
+  await createQuickAnnotation(template);
+  return true;
 }
 
 function aiTaskLabel(value) {
@@ -565,6 +680,16 @@ function renderFeatureOffPanel(root, featureLabel) {
   });
 }
 
+function readQuickAnnotationTemplateSettings() {
+  return [...(settingsPanelEl?.querySelectorAll("[data-quick-template-row]") || [])].map((row, index) => ({
+    id: `quick-${index + 1}`,
+    label: row.querySelector('[data-field="label"]')?.value || "",
+    shortcut: row.querySelector('[data-field="shortcut"]')?.value || "",
+    instruction: row.querySelector('[data-field="instruction"]')?.value || "",
+    enabled: Boolean(row.querySelector('[data-field="enabled"]')?.checked),
+  })).filter(item => item.label.trim() && item.instruction.trim());
+}
+
 function renderSettingsPanel() {
   if (!settingsPanelEl) return;
   const settings = s.longdoc.settings || {};
@@ -612,6 +737,7 @@ function renderSettingsPanel() {
   const ghRepoUrl = String(gh.repo_url || "");
   const ghAppConnected = Boolean(gh.app_connected);
   const ghIntervalMinutes = Number(gh.sync_interval_minutes) || 30;
+  const quickTemplates = Array.isArray(settings.quick_annotation_templates) ? settings.quick_annotation_templates : [];
 
   settingsPanelEl.innerHTML = `
     <div class="e-workspace-head">
@@ -642,6 +768,29 @@ function renderSettingsPanel() {
         </section>
       `).join("")}
       <div class="e-longdoc-actions">${button("Зберегти налаштування", "save-settings", "primary")}</div>
+
+      <section class="e-settings-section" style="margin-top:10px">
+        <h3>Швидкі помітки</h3>
+        <div class="e-longdoc-meta" style="margin-bottom:8px">Режим карток поряд з текстом: <kbd>Ctrl/Cmd+Shift+A</kbd>. Шаблони нижче працюють у ПКМ меню та через задані shortcuts.</div>
+        <div class="e-settings-list quick-annotation-settings">
+          ${quickTemplates.map((item, index) => `
+            <div class="quick-annotation-row" data-quick-template-row>
+              <label class="e-setting-row compact">
+                <span>
+                  <strong>Увімкнено</strong>
+                  <small>${escHtml(item.shortcut || "Без shortcut")}</small>
+                </span>
+                <input type="checkbox" data-field="enabled" ${item.enabled !== false ? "checked" : ""}>
+              </label>
+              <input class="e-longdoc-input" data-field="label" value="${escHtml(item.label || "")}" placeholder="Назва">
+              <input class="e-longdoc-input" data-field="shortcut" value="${escHtml(item.shortcut || "")}" placeholder="Alt+1">
+              <textarea class="e-longdoc-textarea small" data-field="instruction" placeholder="Текст помітки">${escHtml(item.instruction || "")}</textarea>
+              <button class="e-sec-btn danger" type="button" data-action="remove-quick-template" data-index="${index}">Видалити</button>
+            </div>
+          `).join("")}
+        </div>
+        <div class="e-longdoc-actions" style="margin-top:8px">${button("Додати шаблон", "add-quick-template")}</div>
+      </section>
 
       <section class="e-settings-section" style="margin-top:10px">
         <h3>GitHub Sync</h3>
@@ -685,12 +834,31 @@ function renderSettingsPanel() {
       settingsPanelEl.querySelectorAll("[data-setting]").forEach(input => {
         body[input.dataset.setting] = Boolean(input.checked);
       });
+      body.quick_annotation_templates = readQuickAnnotationTemplateSettings();
       await api(`/api/projects/${cfg.projectId}/longdoc/settings/`, {
         method: "PATCH",
         body: JSON.stringify(body),
       });
       await refreshProjectMeta();
       await loadLongdocData();
+    },
+    "add-quick-template": async () => {
+      const next = readQuickAnnotationTemplateSettings();
+      next.push({
+        id: `custom-${Date.now()}`,
+        label: "Нова помітка",
+        instruction: "Опиши, що треба виправити в цьому фрагменті.",
+        shortcut: "",
+        enabled: true,
+      });
+      s.longdoc.settings.quick_annotation_templates = next;
+      renderSettingsPanel();
+    },
+    "remove-quick-template": async (buttonEl) => {
+      const index = Number(buttonEl?.dataset?.index || -1);
+      const next = readQuickAnnotationTemplateSettings().filter((_, idx) => idx !== index);
+      s.longdoc.settings.quick_annotation_templates = next;
+      renderSettingsPanel();
     },
     "connect-github": async () => {
       const statusEl = settingsPanelEl.querySelector("#gh-status");
@@ -2441,6 +2609,7 @@ export function initSessionUI() {
   document.getElementById("session-diff-footer-accept-btn")?.addEventListener("click", acceptSession);
   document.getElementById("session-diff-footer-discard-btn")?.addEventListener("click", discardSession);
   readonlyDiscardSessionBtn?.addEventListener("click", discardSession);
+  annotationRailToggleBtn?.addEventListener("click", () => toggleAnnotationRail());
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();
   });

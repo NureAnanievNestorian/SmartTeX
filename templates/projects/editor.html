@@ -653,7 +653,8 @@
             border-bottom: 0;
         }
 
-        #wa-tab-btn {
+        #wa-tab-btn,
+        #annotation-rail-toggle {
             display: inline-flex;
             align-items: center;
             gap: 6px;
@@ -670,12 +671,14 @@
             transition: background .08s, color .08s;
         }
 
-        #wa-tab-btn:hover {
+        #wa-tab-btn:hover,
+        #annotation-rail-toggle:hover {
             background: var(--e-raised);
             color: var(--e-text2);
         }
 
-        #wa-tab-btn.active {
+        #wa-tab-btn.active,
+        #annotation-rail-toggle.active {
             background: var(--e-bg);
             color: #b7f0c9;
             box-shadow: inset 0 2px 0 var(--e-accent);
@@ -897,6 +900,26 @@
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
             gap: 10px;
+        }
+
+        .quick-annotation-settings {
+            gap: 10px;
+        }
+
+        .quick-annotation-row {
+            display: grid;
+            grid-template-columns: minmax(120px, .8fr) minmax(120px, 1fr) minmax(80px, .65fr) minmax(180px, 2fr) auto;
+            gap: 8px;
+            align-items: start;
+            padding: 10px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, .04);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+        }
+
+        .e-setting-row.compact {
+            min-height: 38px;
+            padding: 8px 10px;
         }
 
         .e-library-card,
@@ -2538,6 +2561,11 @@
             flex: 1;
             min-height: 0;
             overflow: hidden;
+            transition: margin-right .18s ease;
+        }
+
+        .e-editor-wrap.annotation-rail-open #cm-editor {
+            margin-right: min(360px, 34vw);
         }
 
         #cm-editor .cm-editor {
@@ -2546,6 +2574,104 @@
 
         #cm-editor .cm-editor.cm-focused {
             outline: none;
+        }
+
+        .annotation-rail {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 11;
+            width: min(360px, 34vw);
+            display: none;
+            grid-template-rows: auto minmax(0, 1fr);
+            border-left: 1px solid rgba(74, 222, 128, .22);
+            background:
+                radial-gradient(circle at 100% 0, rgba(34, 197, 94, .14), transparent 34%),
+                rgba(27, 31, 35, .96);
+            box-shadow: -18px 0 42px rgba(0, 0, 0, .28);
+            backdrop-filter: blur(12px);
+        }
+
+        .e-editor-wrap.annotation-rail-open .annotation-rail {
+            display: grid;
+        }
+
+        .annotation-rail-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 11px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, .08);
+        }
+
+        .annotation-rail-head strong {
+            color: #d9ffe7;
+            font-size: 13px;
+        }
+
+        .annotation-rail-head span {
+            color: var(--e-text2);
+            font-size: 11px;
+        }
+
+        .annotation-rail-list {
+            min-height: 0;
+            overflow: auto;
+            padding: 10px;
+            display: grid;
+            align-content: start;
+            gap: 9px;
+        }
+
+        .annotation-rail-card {
+            border: 1px solid rgba(148, 163, 184, .16);
+            border-radius: 13px;
+            padding: 10px;
+            background: rgba(255, 255, 255, .045);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+            cursor: pointer;
+        }
+
+        .annotation-rail-card:hover,
+        .annotation-rail-card.active {
+            border-color: rgba(74, 222, 128, .42);
+            background: rgba(34, 197, 94, .075);
+        }
+
+        .annotation-rail-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            color: #9bd5df;
+            font: 700 10px/1.4 var(--e-font-mono);
+            margin-bottom: 6px;
+        }
+
+        .annotation-rail-text {
+            color: var(--e-text);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .annotation-rail-fragment {
+            margin-top: 7px;
+            color: var(--e-text2);
+            font: 11px/1.45 var(--e-font-mono);
+            padding: 6px 7px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, .18);
+        }
+
+        .annotation-rail-empty {
+            color: var(--e-text2);
+            font-size: 12px;
+            line-height: 1.45;
+            padding: 12px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, .04);
         }
 
         /* Drag & drop overlay */
@@ -5933,6 +6059,10 @@
                         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M2 4h12M2 8h8M2 12h6"/></svg>
                         Письмовий асистент
                     </button>
+                    <button id="annotation-rail-toggle" type="button" title="Показати помітки поряд з текстом (Ctrl/Cmd+Shift+A)">
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 3.5h10v7H7l-3 2z"/><path d="M5.5 6.5h5"/><path d="M5.5 8.7h3.5"/></svg>
+                        Помітки
+                    </button>
                 </div>
                 <!-- Breadcrumb bar -->
                 <div class="e-editor-bar">
@@ -5942,6 +6072,7 @@
                 <div class="e-editor-wrap" id="editor-wrap">
                     <div class="e-signature-help" id="signature-help"></div>
                     <div id="cm-editor"></div>
+                    <aside class="annotation-rail" id="annotation-rail" aria-label="Помітки документа"></aside>
                     <div class="e-drop-overlay">Перетягніть файли сюди</div>
                     <div class="e-readonly-overlay" id="readonly-overlay">
                         <span class="e-readonly-card">

@@ -28,6 +28,7 @@ class ProjectLongDocSettings(models.Model):
     ai_sessions_enabled = models.BooleanField(default=True)
     mcp_controlled_access = models.BooleanField(default=True)
     mcp_write_context = models.BooleanField(default=False)
+    quick_annotation_templates = models.JSONField(default=list, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

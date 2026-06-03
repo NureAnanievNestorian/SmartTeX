@@ -719,7 +719,7 @@ function buildEditorSelectionContextMenuItems(event = null) {
   const selection = cm.getActiveSelectionDetails?.();
   const selectionRect = cm.getSelectionScreenRect?.();
   const hasSelection = Boolean(selection && !selection.empty && String(selection.selectedText || "").trim());
-  return [
+  const baseItems = [
     {
       label: hasSelection ? "Додати помітку до виділення" : "Додати помітку тут",
       icon: MENU_ICONS.annotate,
@@ -747,6 +747,27 @@ function buildEditorSelectionContextMenuItems(event = null) {
       },
     },
   ];
+  const quickTemplates = longdoc.getQuickAnnotationTemplates?.() || [];
+  if (quickTemplates.length) {
+    baseItems.push({ type: "separator" });
+    quickTemplates.slice(0, 8).forEach(template => {
+      baseItems.push({
+        label: template.label || "Швидка помітка",
+        icon: MENU_ICONS.annotate,
+        shortcut: template.shortcut || "",
+        disabled: !isTextFile || !annotationsEnabled,
+        onSelect: async () => {
+          try {
+            await longdoc.createQuickAnnotation?.(template);
+            setSaveHint("Швидку помітку додано", "saved");
+          } catch (err) {
+            setSaveHint(`Помилка: ${err.message}`, "error");
+          }
+        },
+      });
+    });
+  }
+  return baseItems;
 }
 
 function openSelectionContextMenu(event) {
@@ -790,7 +811,8 @@ function renderAnnotationMarkers() {
     ids: item.ids,
     status: item.status,
     title: item.titles.filter(Boolean).slice(0, 3).join("\n"),
-  })));
+  })), s.longdoc.annotationRailOpen ? [...groups.keys()] : []);
+  longdoc.renderAnnotationRail?.();
 }
 
 async function openAnnotationMarkerPopover(info, event) {
@@ -1536,6 +1558,22 @@ function isTextInputTarget(target) {
 function handleGlobalEditorShortcuts(event) {
   if (event.defaultPrevented || isTextInputTarget(event.target)) return;
   const isMod = event.metaKey || event.ctrlKey;
+
+  if (isMod && event.shiftKey && !event.altKey && (event.key === "A" || event.key === "a")) {
+    event.preventDefault();
+    longdoc.toggleAnnotationRail?.();
+    return;
+  }
+
+  if (longdoc.matchingQuickAnnotationTemplate?.(event)) {
+    event.preventDefault();
+    longdoc.handleQuickAnnotationShortcut?.(event)
+      .then(result => {
+        if (result) setSaveHint("Швидку помітку додано", "saved");
+      })
+      .catch(err => setSaveHint(`Помилка: ${err.message}`, "error"));
+    return;
+  }
 
   if (event.key === "F2") {
     const isTypstFile = String(s.activeTabName || "").endsWith(".typ");

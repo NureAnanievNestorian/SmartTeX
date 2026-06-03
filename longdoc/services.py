@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import re
+
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Max
@@ -262,6 +264,12 @@ def update_longdoc_settings(project, **changes) -> ProjectLongDocSettings:
     }
     dirty_fields: list[str] = []
     for field_name, value in changes.items():
+        if field_name == "quick_annotation_templates":
+            normalized = normalize_quick_annotation_templates(value)
+            if settings_obj.quick_annotation_templates != normalized:
+                settings_obj.quick_annotation_templates = normalized
+                dirty_fields.append(field_name)
+            continue
         if field_name not in mutable_fields:
             raise AttributeError(f"Unknown longdoc setting: {field_name}")
         normalized = bool(value)
@@ -273,6 +281,90 @@ def update_longdoc_settings(project, **changes) -> ProjectLongDocSettings:
     if settings_obj.enabled:
         ensure_longdoc_seed_data(project)
     return settings_obj
+
+
+DEFAULT_QUICK_ANNOTATION_TEMPLATES = [
+    {
+        "id": "wording",
+        "label": "Формулювання",
+        "instruction": "Не подобається формулювання. Перепиши природніше і точніше.",
+        "shortcut": "Alt+1",
+        "enabled": True,
+    },
+    {
+        "id": "duplicate",
+        "label": "Дублює",
+        "instruction": "Схоже, цей фрагмент дублює вже наявний текст. Перевір і прибери повтор.",
+        "shortcut": "Alt+2",
+        "enabled": True,
+    },
+    {
+        "id": "explain",
+        "label": "Пояснити",
+        "instruction": "Тут бракує пояснення. Додай коротке уточнення або приклад.",
+        "shortcut": "Alt+3",
+        "enabled": True,
+    },
+    {
+        "id": "source",
+        "label": "Джерело",
+        "instruction": "Твердження потребує джерела або посилання.",
+        "shortcut": "Alt+4",
+        "enabled": True,
+    },
+]
+
+
+def normalize_quick_annotation_templates(value) -> list[dict[str, Any]]:
+    raw_items = value if isinstance(value, list) and value else DEFAULT_QUICK_ANNOTATION_TEMPLATES
+    normalized: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for idx, item in enumerate(raw_items[:12], start=1):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()[:80]
+        instruction = str(item.get("instruction") or "").strip()[:1000]
+        if not label or not instruction:
+            continue
+        raw_id = str(item.get("id") or label).strip().lower()
+        template_id = re.sub(r"[^a-z0-9_-]+", "-", raw_id).strip("-")[:48] or f"template-{idx}"
+        base_id = template_id
+        suffix = 2
+        while template_id in used_ids:
+            template_id = f"{base_id}-{suffix}"
+            suffix += 1
+        used_ids.add(template_id)
+        normalized.append(
+            {
+                "id": template_id,
+                "label": label,
+                "instruction": instruction,
+                "shortcut": normalize_quick_annotation_shortcut(item.get("shortcut")),
+                "enabled": bool(item.get("enabled", True)),
+            }
+        )
+    return normalized or [dict(item) for item in DEFAULT_QUICK_ANNOTATION_TEMPLATES]
+
+
+def normalize_quick_annotation_shortcut(value) -> str:
+    text = str(value or "").strip().replace("Option", "Alt").replace("Cmd", "Mod").replace("Ctrl", "Mod")
+    if not text:
+        return ""
+    parts = [part.strip() for part in re.split(r"\s*\+\s*", text) if part.strip()]
+    if not parts:
+        return ""
+    normalized_parts: list[str] = []
+    for part in parts[:3]:
+        lower = part.lower()
+        if lower in {"mod", "meta", "cmd", "ctrl", "control"}:
+            normalized_parts.append("Mod")
+        elif lower in {"alt", "option"}:
+            normalized_parts.append("Alt")
+        elif lower == "shift":
+            normalized_parts.append("Shift")
+        else:
+            normalized_parts.append(part[:1].upper() + part[1:12])
+    return "+".join(normalized_parts)
 
 
 def update_small_model_settings(project, **changes):
@@ -325,6 +417,7 @@ def serialize_settings(
         "ai_sessions_enabled": settings_obj.ai_sessions_enabled,
         "mcp_controlled_access": settings_obj.mcp_controlled_access,
         "mcp_write_context": settings_obj.mcp_write_context,
+        "quick_annotation_templates": normalize_quick_annotation_templates(settings_obj.quick_annotation_templates),
         "locked": bool(locked),
         "locking_session_id": locking_session_id,
         "locking_proposal_id": locking_proposal_id,

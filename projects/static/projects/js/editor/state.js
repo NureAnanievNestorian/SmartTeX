@@ -74,5 +74,6 @@ export const s = {
     activeSession: null,
     proposalModalSeenSignature: "",
     proposalModalDiffSignature: "",
+    annotationRailOpen: false,
   },
 };

@@ -3470,36 +3470,40 @@ def list_annotations(
 
 
 @mcp.tool
-async def add_annotation(
+async def add_annotations(
         project_id: int,
-        file_name: str,
-        instruction: str,
+        annotations: list[dict[str, Any]],
         change_summary: str,
         ctx: Context,
-        line_start: int | None = None,
-        line_end: int | None = None,
-        selected_text: str = "",
-        task_id: int | None = None,
 ) -> dict[str, Any]:
-    """Add one Writing Assistant annotation tied to a file and optional line range."""
-    payload = _call_allow_json_errors(
-        "POST",
-        f"/api/projects/{project_id}/annotations/",
-        {
-            "file_name": file_name,
-            "instruction": instruction,
-            **({"line_start": int(line_start)} if line_start is not None else {}),
-            **({"line_end": int(line_end)} if line_end is not None else {}),
-            **({"selected_text": selected_text} if selected_text else {}),
-            **({"task_id": int(task_id)} if task_id is not None else {}),
-            "change_summary": _require_summary(change_summary),
-            "change_source": "mcp",
-        },
-    )
-    if isinstance(payload, dict) and payload.get("error"):
-        return payload
+    """Add one or more Writing Assistant annotations tied to files and optional line ranges."""
+    summary = _require_summary(change_summary)
+    if not isinstance(annotations, list) or not annotations:
+        return {"error": "INVALID_ANNOTATIONS", "message": "annotations must be a non-empty list."}
+    created: list[dict[str, Any]] = []
+    for idx, item in enumerate(annotations, start=1):
+        if not isinstance(item, dict):
+            return {"error": "INVALID_ANNOTATION", "message": f"annotation #{idx} must be an object."}
+        payload = _call_allow_json_errors(
+            "POST",
+            f"/api/projects/{project_id}/annotations/",
+            {
+                "file_name": item.get("file_name") or "",
+                "instruction": item.get("instruction") or "",
+                **({"line_start": int(item["line_start"])} if item.get("line_start") is not None else {}),
+                **({"line_end": int(item["line_end"])} if item.get("line_end") is not None else {}),
+                **({"selected_text": str(item.get("selected_text") or "")} if item.get("selected_text") else {}),
+                **({"task_id": int(item["task_id"])} if item.get("task_id") is not None else {}),
+                **({"status": str(item.get("status") or "")} if item.get("status") else {}),
+                "change_summary": summary,
+                "change_source": "mcp",
+            },
+        )
+        if isinstance(payload, dict) and payload.get("error"):
+            return {"error": "ANNOTATION_CREATE_FAILED", "failed_index": idx, "failed_annotation": item, "details": payload, "created": created}
+        created.append(payload if isinstance(payload, dict) else {"detail": "created"})
     await _notify_longdoc_updates(ctx, project_id, "overview", "annotations")
-    return payload if isinstance(payload, dict) else {"detail": "created"}
+    return {"annotations": created, "count": len(created)}
 
 
 @mcp.tool

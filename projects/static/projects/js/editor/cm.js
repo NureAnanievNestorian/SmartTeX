@@ -114,6 +114,10 @@ const darkTheme = EditorView.theme({
   },
   ".cm-annotation-marker:hover": { color: "#f2f5f8", background: "rgba(255,255,255,.06)" },
   ".cm-annotation-marker svg": { width: "14px", height: "14px", display: "block" },
+  ".cm-line.cm-annotation-line": {
+    background: "linear-gradient(90deg, rgba(245,158,11,.16), rgba(245,158,11,.055) 54%, transparent)",
+    boxShadow: "inset 3px 0 0 rgba(245,158,11,.65)",
+  },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#d4d4d4 !important" },
   ".cm-selectionBackground": { background: "rgba(38,79,120,.7) !important" },
   "&.cm-focused .cm-selectionBackground": { background: "rgba(38,79,120,.7) !important" },
@@ -373,6 +377,7 @@ export function clearLspProviders() {
 }
 
 const setAnnotationMarkersEffect = StateEffect.define();
+const setAnnotationLineHighlightsEffect = StateEffect.define();
 
 class AnnotationGutterMarker extends GutterMarker {
   constructor(info) {
@@ -420,6 +425,26 @@ const annotationMarkerField = StateField.define({
     }
     return value;
   },
+});
+
+const annotationLineHighlightField = StateField.define({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setAnnotationLineHighlightsEffect)) {
+        const builder = new RangeSetBuilder();
+        for (const lineNumber of effect.value || []) {
+          const line = Number(lineNumber);
+          if (!Number.isFinite(line) || line < 1 || line > tr.state.doc.lines) continue;
+          const docLine = tr.state.doc.line(line);
+          builder.add(docLine.from, docLine.from, Decoration.line({ class: "cm-annotation-line" }));
+        }
+        return builder.finish();
+      }
+    }
+    return value.map(tr.changes);
+  },
+  provide: f => EditorView.decorations.from(f),
 });
 
 const annotationGutter = gutter({
@@ -588,6 +613,7 @@ function makeExtensions(filename) {
   const isTypst = String(filename || "").toLowerCase().endsWith(".typ");
   return [
     annotationMarkerField,
+    annotationLineHighlightField,
     annotationGutter,
     basicSetup,
     darkTheme,
@@ -792,13 +818,14 @@ export function setCursorFromClientPoint(x, y) {
   return true;
 }
 
-export function setAnnotationMarkers(items = []) {
+export function setAnnotationMarkers(items = [], highlightedLines = []) {
   if (!view) return;
   const effects = [];
   if (!view.state.field(annotationMarkerField, false)) {
-    effects.push(StateEffect.appendConfig.of([annotationMarkerField, annotationGutter]));
+    effects.push(StateEffect.appendConfig.of([annotationMarkerField, annotationLineHighlightField, annotationGutter]));
   }
   effects.push(setAnnotationMarkersEffect.of(items));
+  effects.push(setAnnotationLineHighlightsEffect.of(highlightedLines));
   view.dispatch({
     effects,
   });
