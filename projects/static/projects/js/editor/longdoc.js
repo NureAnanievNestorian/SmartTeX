@@ -26,6 +26,9 @@ const annotationRailEl = document.getElementById("annotation-rail");
 
 let _reloadProjectMeta = null;
 let _refreshAnnotationMarkers = null;
+let _annotationRailScrollBound = false;
+let _annotationRailScrollEl = null;
+let _annotationRailFrame = 0;
 const uiState = {
   creating: new Set(),
   editing: new Set(),
@@ -105,6 +108,7 @@ async function updateAnnotationStatus(annotationId, status) {
     body: JSON.stringify({ status }),
   });
   await loadLongdocData();
+  renderAnnotationRail();
 }
 
 function renderSectionRefChips(refs) {
@@ -204,6 +208,43 @@ function visibleAnnotationsForCurrentFile() {
     .sort((a, b) => (Number(a.line_start || 0) - Number(b.line_start || 0)) || Number(a.id || 0) - Number(b.id || 0));
 }
 
+function scheduleAnnotationRailLayout() {
+  if (_annotationRailFrame) return;
+  _annotationRailFrame = requestAnimationFrame(() => {
+    _annotationRailFrame = 0;
+    positionAnnotationRailCards();
+  });
+}
+
+function ensureAnnotationRailScrollBinding() {
+  const scroller = cm.getScrollContainer?.();
+  if (!scroller) return;
+  if (scroller === _annotationRailScrollEl) return;
+  _annotationRailScrollEl?.removeEventListener?.("scroll", scheduleAnnotationRailLayout);
+  scroller.addEventListener("scroll", scheduleAnnotationRailLayout, { passive: true });
+  _annotationRailScrollEl = scroller;
+  if (!_annotationRailScrollBound) window.addEventListener("resize", scheduleAnnotationRailLayout);
+  _annotationRailScrollBound = true;
+}
+
+function positionAnnotationRailCards() {
+  if (!annotationRailEl || !s.longdoc.annotationRailOpen) return;
+  const list = annotationRailEl.querySelector(".annotation-rail-list");
+  const head = annotationRailEl.querySelector(".annotation-rail-head");
+  if (!list) return;
+  const headHeight = head?.getBoundingClientRect?.().height || 0;
+  for (const card of list.querySelectorAll(".annotation-rail-card[data-line-start]")) {
+    const line = Number(card.getAttribute("data-line-start") || 1);
+    const top = cm.getLineTop?.(line);
+    if (top === null || top === undefined) {
+      card.style.display = "none";
+      continue;
+    }
+    card.style.display = "";
+    card.style.top = `${Math.max(10, Math.round(top - headHeight + 8))}px`;
+  }
+}
+
 export function toggleAnnotationRail(force = null) {
   const next = force === null ? !s.longdoc.annotationRailOpen : Boolean(force);
   s.longdoc.annotationRailOpen = next;
@@ -232,17 +273,28 @@ export function renderAnnotationRail() {
     </div>
     <div class="annotation-rail-list">
       ${items.length ? items.map(item => `
-        <article class="annotation-rail-card" data-annotation-rail-id="${escHtml(String(item.id))}">
+        <article class="annotation-rail-card ${isAiDraftAnnotation(item) ? "ai-draft" : ""}" data-annotation-rail-id="${escHtml(String(item.id))}" data-annotation-id="${escHtml(String(item.id))}" data-line-start="${escHtml(String(item.line_start || 1))}">
           <div class="annotation-rail-meta">
             <span>${escHtml(String(item.status || "open"))}</span>
-            <span>${escHtml(String(item.line_start || 1))}${item.line_end && item.line_end !== item.line_start ? `-${escHtml(String(item.line_end))}` : ""}</span>
+            ${isAiDraftAnnotation(item) ? `
+              <span class="annotation-rail-actions" aria-label="Дії з AI-поміткою">
+                <span class="annotation-rail-line">${escHtml(String(item.line_start || 1))}${item.line_end && item.line_end !== item.line_start ? `-${escHtml(String(item.line_end))}` : ""}</span>
+                <button class="annotation-rail-action keep" type="button" data-action="keep-ai-annotation" title="Залишити як звичайну помітку">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.4 6.4 12 13 4"/></svg>
+                </button>
+                <button class="annotation-rail-action dismiss" type="button" data-action="dismiss-annotation" title="Відхилити AI-помітку">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5"/></svg>
+                </button>
+              </span>
+            ` : `<span>${escHtml(String(item.line_start || 1))}${item.line_end && item.line_end !== item.line_start ? `-${escHtml(String(item.line_end))}` : ""}</span>`}
           </div>
           <div class="annotation-rail-text">${escHtml(item.instruction || "")}</div>
-          ${item.selected_text ? `<div class="annotation-rail-fragment">${escHtml(String(item.selected_text).slice(0, 220))}${String(item.selected_text).length > 220 ? "..." : ""}</div>` : ""}
         </article>
       `).join("") : `<div class="annotation-rail-empty">У цьому файлі немає відкритих поміток. Виділіть текст або натисніть ПКМ, щоб додати.</div>`}
     </div>
   `;
+  ensureAnnotationRailScrollBinding();
+  scheduleAnnotationRailLayout();
   annotationRailEl.querySelectorAll("[data-annotation-rail-id]").forEach(card => {
     card.addEventListener("click", () => {
       const id = Number(card.getAttribute("data-annotation-rail-id") || 0);
@@ -250,6 +302,22 @@ export function renderAnnotationRail() {
       if (item?.line_start) cm.jumpToLine?.(Number(item.line_start) || 1);
       annotationRailEl.querySelectorAll(".annotation-rail-card").forEach(el => el.classList.remove("active"));
       card.classList.add("active");
+    });
+  });
+  annotationRailEl.querySelectorAll("[data-action]").forEach(button => {
+    button.addEventListener("click", async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = button.getAttribute("data-action");
+      const annotationId = button.closest("[data-annotation-id]")?.getAttribute("data-annotation-id");
+      if (!annotationId) return;
+      button.disabled = true;
+      try {
+        await updateAnnotationStatus(annotationId, action === "keep-ai-annotation" ? "open" : "dismissed");
+      } catch (err) {
+        window.alert(err.message || String(err));
+        button.disabled = false;
+      }
     });
   });
 }

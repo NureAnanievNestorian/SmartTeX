@@ -671,6 +671,14 @@
             transition: background .08s, color .08s;
         }
 
+        #annotation-rail-toggle {
+            width: 42px;
+            justify-content: center;
+            padding: 0;
+            margin-left: 8px;
+            border-radius: 10px 0 0 10px;
+        }
+
         #wa-tab-btn:hover,
         #annotation-rail-toggle:hover {
             background: var(--e-raised);
@@ -2617,21 +2625,31 @@
         }
 
         .annotation-rail-list {
+            position: relative;
+            height: 100%;
             min-height: 0;
-            overflow: auto;
-            padding: 10px;
-            display: grid;
-            align-content: start;
-            gap: 9px;
+            overflow: hidden;
+            padding: 0 10px;
         }
 
         .annotation-rail-card {
+            position: absolute;
+            left: 10px;
+            right: 10px;
             border: 1px solid rgba(148, 163, 184, .16);
             border-radius: 13px;
             padding: 10px;
             background: rgba(255, 255, 255, .045);
             box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
             cursor: pointer;
+            transition: top .08s linear, transform .12s ease, border-color .12s ease, background .12s ease;
+        }
+
+        .annotation-rail-card.ai-draft {
+            border-color: rgba(251, 191, 36, .22);
+            background:
+                radial-gradient(circle at 100% 0, rgba(251, 191, 36, .10), transparent 42%),
+                rgba(255, 255, 255, .045);
         }
 
         .annotation-rail-card:hover,
@@ -2650,22 +2668,69 @@
             margin-bottom: 6px;
         }
 
+        .annotation-rail-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .annotation-rail-line {
+            color: #9bd5df;
+            margin-right: 3px;
+        }
+
+        .annotation-rail-action {
+            width: 21px;
+            height: 21px;
+            display: inline-grid;
+            place-items: center;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, .22);
+            background: rgba(15, 23, 42, .36);
+            color: var(--e-text2);
+            cursor: pointer;
+            padding: 0;
+            transition: background .12s ease, border-color .12s ease, color .12s ease, transform .12s ease;
+        }
+
+        .annotation-rail-action:hover {
+            transform: translateY(-1px);
+        }
+
+        .annotation-rail-action.keep {
+            color: #86efac;
+            border-color: rgba(34, 197, 94, .34);
+        }
+
+        .annotation-rail-action.keep:hover {
+            background: rgba(34, 197, 94, .16);
+            border-color: rgba(34, 197, 94, .66);
+        }
+
+        .annotation-rail-action.dismiss {
+            color: #fca5a5;
+            border-color: rgba(248, 113, 113, .32);
+        }
+
+        .annotation-rail-action.dismiss:hover {
+            background: rgba(248, 113, 113, .15);
+            border-color: rgba(248, 113, 113, .62);
+        }
+
+        .annotation-rail-action svg {
+            width: 12px;
+            height: 12px;
+            display: block;
+        }
+
         .annotation-rail-text {
             color: var(--e-text);
             font-size: 12px;
             line-height: 1.45;
         }
 
-        .annotation-rail-fragment {
-            margin-top: 7px;
-            color: var(--e-text2);
-            font: 11px/1.45 var(--e-font-mono);
-            padding: 6px 7px;
-            border-radius: 8px;
-            background: rgba(0, 0, 0, .18);
-        }
-
         .annotation-rail-empty {
+            margin: 10px;
             color: var(--e-text2);
             font-size: 12px;
             line-height: 1.45;
@@ -6059,9 +6124,8 @@
                         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M2 4h12M2 8h8M2 12h6"/></svg>
                         Письмовий асистент
                     </button>
-                    <button id="annotation-rail-toggle" type="button" title="Показати помітки поряд з текстом (Ctrl/Cmd+Shift+A)">
+                    <button id="annotation-rail-toggle" type="button" title="Показати помітки поряд з текстом (Ctrl/Cmd+Shift+A)" aria-label="Показати помітки поряд з текстом">
                         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 3.5h10v7H7l-3 2z"/><path d="M5.5 6.5h5"/><path d="M5.5 8.7h3.5"/></svg>
-                        Помітки
                     </button>
                 </div>
                 <!-- Breadcrumb bar -->

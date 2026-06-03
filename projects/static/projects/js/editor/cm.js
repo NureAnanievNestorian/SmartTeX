@@ -807,6 +807,21 @@ export function getSelectionScreenRect() {
   };
 }
 
+export function getLineTop(lineNumber) {
+  if (!view?.state) return null;
+  const doc = view.state.doc;
+  const line = Math.max(1, Math.min(Number(lineNumber) || 1, doc.lines));
+  const pos = doc.line(line).from;
+  const coords = view.coordsAtPos(pos);
+  const editorRect = view.dom.getBoundingClientRect();
+  if (!coords || !editorRect) return null;
+  return coords.top - editorRect.top;
+}
+
+export function getScrollContainer() {
+  return view?.scrollDOM || null;
+}
+
 export function setCursorFromClientPoint(x, y) {
   if (!view?.state) return false;
   const pos = view.posAtCoords({ x: Number(x), y: Number(y) });
