@@ -2680,6 +2680,7 @@
         }
 
         .annotation-rail-action {
+            position: relative;
             width: 21px;
             height: 21px;
             display: inline-grid;
@@ -2695,6 +2696,17 @@
 
         .annotation-rail-action:hover {
             transform: translateY(-1px);
+        }
+
+        .annotation-rail-action:disabled {
+            cursor: wait;
+            opacity: .88;
+            transform: none;
+        }
+
+        .annotation-rail-actions.loading .annotation-rail-action:not(.loading) {
+            opacity: .38;
+            cursor: wait;
         }
 
         .annotation-rail-action.keep {
@@ -2721,6 +2733,25 @@
             width: 12px;
             height: 12px;
             display: block;
+        }
+
+        .annotation-rail-action.loading svg {
+            opacity: 0;
+        }
+
+        .annotation-rail-action.loading::after {
+            content: "";
+            position: absolute;
+            width: 11px;
+            height: 11px;
+            border-radius: 999px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            animation: annotation-rail-spin .72s linear infinite;
+        }
+
+        @keyframes annotation-rail-spin {
+            to { transform: rotate(360deg); }
         }
 
         .annotation-rail-text {

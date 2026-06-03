@@ -233,15 +233,36 @@ function positionAnnotationRailCards() {
   const head = annotationRailEl.querySelector(".annotation-rail-head");
   if (!list) return;
   const headHeight = head?.getBoundingClientRect?.().height || 0;
+  const listHeight = list.clientHeight || 0;
+  const editorHeight = headHeight + listHeight;
+  const cards = [];
   for (const card of list.querySelectorAll(".annotation-rail-card[data-line-start]")) {
     const line = Number(card.getAttribute("data-line-start") || 1);
-    const top = cm.getLineTop?.(line);
-    if (top === null || top === undefined) {
+    const anchorTop = cm.getLineTop?.(line);
+    if (anchorTop === null || anchorTop === undefined || anchorTop < headHeight - 18 || anchorTop > editorHeight + 18) {
       card.style.display = "none";
       continue;
     }
     card.style.display = "";
-    card.style.top = `${Math.max(10, Math.round(top - headHeight + 8))}px`;
+    card.style.visibility = "hidden";
+    card.style.top = "0px";
+    cards.push({
+      card,
+      height: card.offsetHeight || 0,
+      desiredTop: Math.max(10, Math.round(anchorTop - headHeight + 8)),
+    });
+  }
+  cards.sort((a, b) => a.desiredTop - b.desiredTop);
+  let nextTop = 10;
+  for (const item of cards) {
+    const top = Math.max(item.desiredTop, nextTop);
+    if (listHeight && top > listHeight - 24) {
+      item.card.style.display = "none";
+      continue;
+    }
+    item.card.style.top = `${top}px`;
+    item.card.style.visibility = "";
+    nextTop = top + item.height + 10;
   }
 }
 
@@ -309,14 +330,19 @@ export function renderAnnotationRail() {
       event.preventDefault();
       event.stopPropagation();
       const action = button.getAttribute("data-action");
+      const actions = button.closest(".annotation-rail-actions");
       const annotationId = button.closest("[data-annotation-id]")?.getAttribute("data-annotation-id");
       if (!annotationId) return;
-      button.disabled = true;
+      actions?.classList.add("loading");
+      actions?.querySelectorAll("button").forEach(actionButton => { actionButton.disabled = true; });
+      button.classList.add("loading");
       try {
         await updateAnnotationStatus(annotationId, action === "keep-ai-annotation" ? "open" : "dismissed");
       } catch (err) {
         window.alert(err.message || String(err));
-        button.disabled = false;
+        button.classList.remove("loading");
+        actions?.classList.remove("loading");
+        actions?.querySelectorAll("button").forEach(actionButton => { actionButton.disabled = false; });
       }
     });
   });
