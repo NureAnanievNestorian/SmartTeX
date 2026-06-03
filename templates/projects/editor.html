@@ -1716,7 +1716,7 @@
 
         .diff-row {
             display: grid;
-            grid-template-columns: 18px 44px 44px minmax(0, 1fr) 32px;
+            grid-template-columns: 18px 44px 44px minmax(0, 1fr);
             align-items: stretch;
         }
 
@@ -1740,7 +1740,7 @@
             background: var(--e-raised);
         }
 
-        .diff-sign, .diff-ln, .diff-code, .diff-annotate-cell {
+        .diff-sign, .diff-ln, .diff-code {
             display: block;
             padding: 2px 8px;
             white-space: pre;
@@ -1766,37 +1766,12 @@
             color: #b4c7df;
         }
 
-        .diff-annotate-cell {
-            display: grid;
-            place-items: center;
-            padding: 0;
-            border-left: 1px solid rgba(40, 60, 90, 0.22);
+        .diff-row[data-file] {
+            cursor: context-menu;
         }
 
-        .diff-annotate-btn {
-            width: 22px;
-            height: 22px;
-            border: 1px solid rgba(148, 163, 184, .22);
-            border-radius: 999px;
-            color: #9fb3cc;
-            background: rgba(255, 255, 255, .035);
-            cursor: pointer;
-            opacity: .28;
-            transition: opacity .14s ease, transform .14s ease, color .14s ease, border-color .14s ease, background .14s ease;
-        }
-
-        .diff-row:hover .diff-annotate-btn,
-        .diff-annotate-btn:focus-visible {
-            opacity: 1;
-            color: #fde68a;
-            border-color: rgba(245, 158, 11, .42);
-            background: rgba(245, 158, 11, .13);
-            transform: scale(1.03);
-        }
-
-        .diff-annotate-spacer {
-            width: 22px;
-            height: 22px;
+        .diff-row[data-file]:hover .diff-code {
+            box-shadow: inset 3px 0 0 rgba(245, 158, 11, .18);
         }
 
         .diff-row-annotations {

@@ -5,7 +5,7 @@ import * as ui from "./ui.js";
 
 const { cfg, s } = state;
 const { api } = apiMod;
-const { escHtml, showConfirm } = ui;
+const { escHtml, showAnnotationPopover, showConfirm } = ui;
 const { getActiveSelectionDetails } = cm;
 
 const contextPanelEl = document.getElementById("longdoc-context-panel");
@@ -1757,6 +1757,7 @@ const sessionDiffFooterAcceptBtn = document.getElementById("session-diff-footer-
 const sessionDiffFooterDiscardBtn = document.getElementById("session-diff-footer-discard-btn");
 const sessionDiffDetailsBtn = document.getElementById("session-diff-details-btn");
 const sessionDiffFooterDetailsBtn = document.getElementById("session-diff-footer-details-btn");
+let diffContextMenuEl = null;
 
 function activeSessionSignature(session) {
   if (!session || !session.id) return "";
@@ -1942,6 +1943,86 @@ function renderDetachedResolvedAnnotations(items = []) {
   `;
 }
 
+function ensureDiffContextMenu() {
+  if (diffContextMenuEl) return diffContextMenuEl;
+  diffContextMenuEl = document.createElement("div");
+  diffContextMenuEl.id = "session-diff-context-menu";
+  diffContextMenuEl.className = "e-menu e-context-menu session-diff-context-menu";
+  diffContextMenuEl.setAttribute("role", "menu");
+  document.body.appendChild(diffContextMenuEl);
+  return diffContextMenuEl;
+}
+
+function closeDiffContextMenu() {
+  if (!diffContextMenuEl) return;
+  diffContextMenuEl.classList.remove("open");
+  diffContextMenuEl.innerHTML = "";
+  diffContextMenuEl.style.left = "";
+  diffContextMenuEl.style.top = "";
+}
+
+function getDiffSelectionForRow(rowEl) {
+  const selection = window.getSelection?.();
+  const selectedText = String(selection?.toString?.() || "").trim();
+  if (!selection || selection.rangeCount === 0 || !selectedText) return null;
+  const range = selection.getRangeAt(0);
+  const common = range.commonAncestorContainer;
+  const commonEl = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement;
+  if (!commonEl || !rowEl.contains(commonEl)) return null;
+  const codeEl = rowEl.querySelector(".diff-code");
+  if (!codeEl || !codeEl.contains(commonEl)) return null;
+  return {
+    selectedText,
+    rect: range.getBoundingClientRect(),
+  };
+}
+
+function getDiffRowAnnotationTarget(rowEl) {
+  const codeEl = rowEl?.querySelector?.(".diff-code");
+  const selected = rowEl ? getDiffSelectionForRow(rowEl) : null;
+  const rowText = decodeURIComponent(String(codeEl?.dataset?.rawTextEncoded || ""));
+  const selectedText = selected?.selectedText || rowText;
+  return {
+    fileName: String(rowEl?.dataset?.file || "").trim(),
+    side: String(rowEl?.dataset?.side || "new").trim(),
+    lineNumber: Number(rowEl?.dataset?.line || 0),
+    selectedText,
+    hasSelection: Boolean(selected?.selectedText),
+    rect: selected?.rect || rowEl?.getBoundingClientRect?.() || null,
+  };
+}
+
+function openDiffContextMenu(rowEl, event) {
+  const target = getDiffRowAnnotationTarget(rowEl);
+  if (!target.fileName || !target.lineNumber) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = ensureDiffContextMenu();
+  menu.innerHTML = "";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "e-menu-item";
+  btn.innerHTML = `
+    <span class="e-menu-item-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.5h10v7H7l-3 2z"/><path d="M5.5 6.2h5"/><path d="M5.5 8.4h3.5"/></svg>
+    </span>
+    <span class="e-menu-item-label">${target.hasSelection ? "Додати помітку до виділення" : "Додати помітку до рядка"}</span>
+    <span class="e-menu-item-shortcut"></span>
+  `;
+  btn.addEventListener("click", async () => {
+    closeDiffContextMenu();
+    await createDiffAnnotationFromTarget(target, event);
+  });
+  menu.appendChild(btn);
+  menu.classList.add("open");
+  const margin = 8;
+  const rect = menu.getBoundingClientRect();
+  const x = Math.min(event.clientX, window.innerWidth - rect.width - margin);
+  const y = Math.min(event.clientY, window.innerHeight - rect.height - margin);
+  menu.style.left = `${Math.max(margin, x)}px`;
+  menu.style.top = `${Math.max(margin, y)}px`;
+}
+
 function renderDiffContent(diffText, diffAnnotations = [], resolvedAnnotations = []) {
   if (!diffText) return `<span class="diff-empty">Змін не знайдено.</span>`;
 
@@ -1996,22 +2077,6 @@ function renderDiffContent(diffText, diffAnnotations = [], resolvedAnnotations =
     };
   }
 
-  function annotationButton(fileName, side, lineNumber, rawText) {
-    if (!fileName || !lineNumber) return `<span class="diff-annotate-spacer"></span>`;
-    return `
-      <button
-        class="diff-annotate-btn"
-        type="button"
-        title="Додати тимчасову помітку до цього рядка"
-        data-action="add-diff-annotation"
-        data-file-encoded="${encodeURIComponent(fileName)}"
-        data-side-encoded="${encodeURIComponent(side)}"
-        data-line="${escHtml(String(lineNumber))}"
-        data-text-encoded="${encodeURIComponent(rawText || "")}"
-      >＋</button>
-    `;
-  }
-
   function renderDiffRow(kind, left, right, codeHtml, sign, opts = {}) {
     const side = opts.side || (kind === "del" ? "old" : kind === "add" ? "new" : "context");
     const fileName = opts.fileName || (side === "old" ? currentOldFile : currentNewFile);
@@ -2026,8 +2091,7 @@ function renderDiffContent(diffText, diffAnnotations = [], resolvedAnnotations =
           <span class="diff-sign">${sign}</span>
           <span class="diff-ln">${left || ""}</span>
           <span class="diff-ln">${right || ""}</span>
-          <span class="diff-code">${codeHtml}</span>
-          <span class="diff-annotate-cell">${annotationButton(fileName, side, lineNumber, opts.rawText || "")}</span>
+          <span class="diff-code" data-raw-text-encoded="${encodeURIComponent(opts.rawText || "")}">${codeHtml}</span>
         </div>
         ${renderResolvedAnnotationChips(resolvedItems)}
         ${renderDiffAnnotationCards(rowAnnotations)}
@@ -2088,7 +2152,7 @@ function renderDiffContent(diffText, diffAnnotations = [], resolvedAnnotations =
     <div class="diff-summary">
       <span class="diff-chip add">+${totalAdded}</span>
       <span class="diff-chip del">-${totalRemoved}</span>
-      <span class="session-diff-summary-text">Темнішим підсвічено точкові зміни всередині рядків. ＋ додає тимчасову помітку до diff.</span>
+      <span class="session-diff-summary-text">Темнішим підсвічено точкові зміни всередині рядків. Правий клік додає тимчасову помітку до diff.</span>
     </div>
     <div class="diff-table">${rows.join("")}</div>
     ${renderDetachedResolvedAnnotations(detachedResolved)}`;
@@ -2144,13 +2208,23 @@ async function openSessionDiffModal({ forceReload = false } = {}) {
   }
 }
 
-async function createDiffAnnotationFromButton(buttonEl) {
-  const fileName = decodeURIComponent(String(buttonEl?.dataset?.fileEncoded || "")).trim();
-  const lineNumber = Number(buttonEl?.dataset?.line || 0);
-  const side = decodeURIComponent(String(buttonEl?.dataset?.sideEncoded || "new")).trim();
-  const selectedText = decodeURIComponent(String(buttonEl?.dataset?.textEncoded || ""));
+async function createDiffAnnotationFromTarget(target, event = null) {
+  const fileName = String(target?.fileName || "").trim();
+  const lineNumber = Number(target?.lineNumber || 0);
+  const side = String(target?.side || "new").trim();
+  const selectedText = String(target?.selectedText || "");
   if (!fileName || !lineNumber) return;
-  const instruction = window.prompt(`Помітка до ${fileName}:${lineNumber}`, "");
+  const instruction = await showAnnotationPopover({
+    title: target?.hasSelection ? "Помітка до виділення в diff" : "Помітка до рядка diff",
+    hint: target?.hasSelection
+      ? "Опишіть, що треба змінити саме в обраному фрагменті diff."
+      : "Опишіть, що треба змінити в цьому рядку запропонованої зміни.",
+    target: `${fileName}:${lineNumber} · ${side}`,
+    selectedText: selectedText || "Текст рядка порожній.",
+    rect: target?.rect,
+    x: event?.clientX,
+    y: event?.clientY,
+  });
   if (!instruction || !instruction.trim()) return;
   await api(`/api/projects/${cfg.projectId}/change-proposals/diff-annotations/`, {
     method: "POST",
@@ -2269,17 +2343,27 @@ export function initSessionUI() {
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();
   });
+  sessionDiffContentEl?.addEventListener("contextmenu", e => {
+    const row = e.target instanceof Element ? e.target.closest(".diff-row[data-file][data-line]") : null;
+    if (!row || !sessionDiffContentEl.contains(row)) return;
+    openDiffContextMenu(row, e);
+  });
   sessionDiffContentEl?.addEventListener("click", e => {
     const target = e.target instanceof Element ? e.target.closest("[data-action]") : null;
     const action = target?.getAttribute("data-action") || "";
-    if (action === "add-diff-annotation") {
-      createDiffAnnotationFromButton(target).catch(err => window.alert(err.message || String(err)));
-    }
     if (action === "resolve-diff-annotation" || action === "dismiss-diff-annotation") {
       const id = target?.getAttribute("data-id");
       updateDiffAnnotationStatus(id, action === "resolve-diff-annotation" ? "done" : "dismissed")
         .catch(err => window.alert(err.message || String(err)));
     }
+  });
+  document.addEventListener("mousedown", e => {
+    if (!diffContextMenuEl?.classList.contains("open")) return;
+    if (diffContextMenuEl.contains(e.target)) return;
+    closeDiffContextMenu();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeDiffContextMenu();
   });
   document.getElementById("open-project-settings-btn")?.addEventListener("click", openAssistantSettings);
   document.getElementById("open-ai-log-btn")?.addEventListener("click", openAiLogModal);
