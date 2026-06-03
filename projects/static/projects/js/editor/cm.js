@@ -105,6 +105,10 @@ const darkTheme = EditorView.theme({
   ".cm-annotation-marker.in_progress": {
     color: "#7dd3fc",
   },
+  ".cm-annotation-marker.ai_draft": {
+    color: "#fbbf24",
+    filter: "drop-shadow(0 0 8px rgba(251,191,36,.28))",
+  },
   ".cm-annotation-marker.done": {
     color: "#86efac",
   },

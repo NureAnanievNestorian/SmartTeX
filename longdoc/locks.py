@@ -13,6 +13,18 @@ class ProjectLockedError(RuntimeError):
     def __str__(self) -> str:
         return f"Project {self.project.id} is locked by AI session {self.session.id}"
 
+    def suggestion(self) -> str:
+        proposal = getattr(self.session, "change_proposal", None) or get_locking_change_proposal(self.project)
+        if proposal is not None and proposal.created_by == ChangeProposal.CreatedBy.MCP:
+            return (
+                f"Update the active MCP proposal #{proposal.id} instead of starting a direct edit: "
+                "call propose_document_change again with continue_existing=true and the revised patch_ops. "
+                "Do not use direct project file-write tools while this proposal is active."
+            )
+        if proposal is not None:
+            return f"Ask the user to review/discard proposal #{proposal.id} in the UI before starting another edit."
+        return "Wait for the active AI session to finish or ask the user to discard/unlock it before editing the project."
+
 
 def get_locking_session(project: Project) -> AISession | None:
     sessions = (

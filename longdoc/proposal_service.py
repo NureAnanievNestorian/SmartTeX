@@ -66,7 +66,8 @@ from SmartTeX.markup import MarkupType
 
 from .document_graph import inspect_document_graph, introduced_graph_errors
 from .locks import ProjectLockedError, get_locking_change_proposal, get_locking_session
-from .models import AISession, ChangeProposal, ProjectAnnotation, ProjectOutlineItem, ProjectTask
+from .models import AISession, ChangeProposal, ChangeProposalDiffAnnotation, ProjectAnnotation, ProjectOutlineItem, ProjectTask
+from .services import serialize_diff_annotation
 from .session_service import (
     SessionWriteError,
     _commit_worktree_change,
@@ -630,6 +631,15 @@ def serialize_change_proposal(proposal: ChangeProposal | None) -> dict[str, Any]
         payload["annotation_ids"] = list(session.batch.annotations_completed.values_list("id", flat=True)) if session and hasattr(session, "batch") else []
     except Exception:
         payload["annotation_ids"] = []
+    payload["diff_annotations"] = [
+        serialize_diff_annotation(item)
+        for item in proposal.diff_annotations.order_by("status", "file_name", "line_number", "id")
+    ]
+    payload["open_diff_annotation_ids"] = [
+        item["id"]
+        for item in payload["diff_annotations"]
+        if item.get("status") == ChangeProposalDiffAnnotation.Status.OPEN
+    ]
     if auto_discarded_id is not None:
         payload["auto_discarded_previous_failed_proposal_id"] = auto_discarded_id
     return payload
@@ -666,6 +676,7 @@ def _finalize_proposal_execution(
     user,
     normalized_ops: list[dict[str, Any]],
     annotations: list[ProjectAnnotation],
+    diff_annotations: list[ChangeProposalDiffAnnotation] | None = None,
 ) -> ChangeProposal:
     baseline_graph = inspect_document_graph(project)
     session = _prepare_proposal_session_for_iteration(project, proposal)
@@ -777,6 +788,12 @@ def _finalize_proposal_execution(
         task_ids=[proposal.addresses_task_id] if proposal.addresses_task_id else None,
         annotation_ids=[item.id for item in annotations],
     )
+    if diff_annotations:
+        ChangeProposalDiffAnnotation.objects.filter(id__in=[item.id for item in diff_annotations]).update(
+            status=ChangeProposalDiffAnnotation.Status.DONE,
+            resolved_by_session=session,
+            resolved_at=timezone.now(),
+        )
     session.refresh_from_db()
     proposal.status = ChangeProposal.Status.READY_FOR_REVIEW
     proposal.compile_status = AISession.CompileStatus.SUCCESS
@@ -809,6 +826,7 @@ def propose_document_change(
     addresses_task_id: int | None = None,
     addresses_outline_item_id: int | None = None,
     annotation_ids: list[int] | None = None,
+    diff_annotation_ids: list[int] | None = None,
     created_by: str = ChangeProposal.CreatedBy.MCP,
     validation_token: str | None = None,
     continue_existing: bool = False,
@@ -964,6 +982,31 @@ def propose_document_change(
             status_code=404,
             suggestion="Call list_annotations for this project and retry with only valid annotation ids.",
         )
+    normalized_diff_annotation_ids = [int(value) for value in (diff_annotation_ids or [])]
+    diff_annotations: list[ChangeProposalDiffAnnotation] = []
+    if normalized_diff_annotation_ids:
+        if existing_proposal is None:
+            raise SessionWriteError(
+                "DIFF_ANNOTATIONS_REQUIRE_EXISTING_PROPOSAL",
+                "diff_annotation_ids can only be resolved while updating an existing proposal.",
+                status_code=409,
+                suggestion="Call propose_document_change with continue_existing=true for the active proposal, or omit diff_annotation_ids.",
+            )
+        diff_annotations = list(
+            ChangeProposalDiffAnnotation.objects.filter(
+                proposal=existing_proposal,
+                id__in=normalized_diff_annotation_ids,
+            )
+        )
+        found_diff_annotation_ids = {item.id for item in diff_annotations}
+        missing_diff_annotation_ids = [item_id for item_id in normalized_diff_annotation_ids if item_id not in found_diff_annotation_ids]
+        if missing_diff_annotation_ids:
+            raise SessionWriteError(
+                "DIFF_ANNOTATIONS_NOT_FOUND",
+                f"Some diff annotation ids do not exist on the active proposal: {missing_diff_annotation_ids}",
+                status_code=404,
+                suggestion="Call the proposal status/diff endpoint and retry with only valid open diff_annotation ids.",
+            )
 
     if existing_proposal is None:
         try:
@@ -1022,6 +1065,7 @@ def propose_document_change(
             user=user,
             normalized_ops=normalized_ops,
             annotations=annotations,
+            diff_annotations=diff_annotations,
         )
 
     except SessionWriteError as exc:

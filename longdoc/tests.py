@@ -21,7 +21,7 @@ from templates_lib.models import Template, TemplateContextFile, TemplateLongDocD
 
 from .audit import audit_assistant_change
 from .locks import ProjectLockedError, assert_not_locked, get_locking_session, is_project_locked
-from .models import AISession, AssistantAuditLog, ChangeProposal, ProjectAnnotation, ProjectLongDocSettings, ProjectOutlineItem, ProjectRequirement, ProjectTask, SectionSummary
+from .models import AISession, AssistantAuditLog, ChangeProposal, ChangeProposalDiffAnnotation, ProjectAnnotation, ProjectLongDocSettings, ProjectOutlineItem, ProjectRequirement, ProjectTask, SectionSummary
 from .services import (
     DEFAULT_NOTE_SECTION_HEADINGS,
     SAMPLE_CONTEXT_FILENAME,
@@ -395,6 +395,7 @@ class LongdocPackage3Tests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(annotation_response.status_code, 201)
+        self.assertEqual(annotation_response.json()["status"], "open")
         annotation_id = annotation_response.json()["id"]
         patch_annotation = self.client.patch(
             f"/api/projects/{self.project.id}/annotations/{annotation_id}/",
@@ -404,6 +405,27 @@ class LongdocPackage3Tests(TestCase):
         self.assertEqual(patch_annotation.status_code, 200)
         self.assertEqual(patch_annotation.json()["status"], "done")
         self.assertIsNotNone(patch_annotation.json()["resolved_at"])
+
+        ai_annotation = self.client.post(
+            f"/api/projects/{self.project.id}/annotations/",
+            data=json.dumps({
+                "file_name": "main.tex",
+                "line_start": 8,
+                "instruction": "AI thinks this repeats the previous paragraph",
+                "source": "mcp",
+                "change_summary": "AI review annotation",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(ai_annotation.status_code, 201)
+        self.assertEqual(ai_annotation.json()["status"], "ai_draft")
+        keep_ai_annotation = self.client.patch(
+            f"/api/projects/{self.project.id}/annotations/{ai_annotation.json()['id']}/",
+            data=json.dumps({"status": "open"}),
+            content_type="application/json",
+        )
+        self.assertEqual(keep_ai_annotation.status_code, 200)
+        self.assertEqual(keep_ai_annotation.json()["status"], "open")
 
         note_response = self.client.post(
             f"/api/projects/{self.project.id}/note-sections/",
@@ -455,6 +477,39 @@ class LongdocPackage3Tests(TestCase):
 
         self.assertEqual(response.status_code, 423)
         self.assertEqual(response.json()["error"], "PROJECT_LOCKED")
+        self.assertIn("unlock", response.json()["suggestion"])
+
+    def test_locked_project_suggests_updating_active_mcp_proposal(self) -> None:
+        enable_longdoc(self.project)
+        session = AISession.objects.create(
+            project=self.project,
+            goal="Locked proposal run",
+            branch_name="ai/lock-proposal",
+            worktree_path="/tmp/lock-proposal",
+            status=AISession.Status.ACTIVE,
+            expires_at=timezone.now() + timedelta(hours=12),
+        )
+        proposal = ChangeProposal.objects.create(
+            project=self.project,
+            internal_session=session,
+            goal="Existing MCP proposal",
+            status=ChangeProposal.Status.DRAFT,
+            created_by=ChangeProposal.CreatedBy.MCP,
+            expires_at=timezone.now() + timedelta(hours=12),
+        )
+
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/tasks/",
+            data=json.dumps({"description": "Should suggest continuing proposal"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 423)
+        payload = response.json()
+        self.assertEqual(payload["error"], "PROJECT_LOCKED")
+        self.assertIn(f"proposal #{proposal.id}", payload["suggestion"])
+        self.assertIn("continue_existing=true", payload["suggestion"])
+        self.assertIn("propose_document_change", payload["suggestion"])
 
     def test_disabled_feature_returns_structured_error(self) -> None:
         enable_longdoc(self.project, tasks_enabled=False)
@@ -1311,6 +1366,55 @@ class ChangeProposalServiceTests(TestCase):
         self.assertEqual(second.internal_session.batch.summary, "Refine existing proposal")
         self.assertIn("Hello Proposal v2", second.internal_session.batch.changes.get(filename="main.tex").diff_text)
 
+    def test_propose_document_change_can_resolve_diff_annotations_when_continuing(self) -> None:
+        from longdoc.proposal_service import propose_document_change, serialize_change_proposal
+
+        with mock.patch("longdoc.proposal_service.compile_session", side_effect=self._fake_compile_success):
+            proposal = propose_document_change(
+                self.project,
+                goal="Initial proposal",
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello World",
+                        "new_text": "Hello Proposal",
+                        "change_summary": "Initial change",
+                    }
+                ],
+            )
+            diff_annotation = ChangeProposalDiffAnnotation.objects.create(
+                proposal=proposal,
+                file_name="main.tex",
+                side=ChangeProposalDiffAnnotation.Side.NEW,
+                line_number=3,
+                instruction="This line still needs a stronger wording.",
+            )
+            payload_before = serialize_change_proposal(proposal)
+            self.assertIn(diff_annotation.id, payload_before["open_diff_annotation_ids"])
+
+            updated = propose_document_change(
+                self.project,
+                goal="Refine existing proposal",
+                continue_existing=True,
+                diff_annotation_ids=[diff_annotation.id],
+                patch_ops=[
+                    {
+                        "filename": "main.tex",
+                        "op": "replace_text",
+                        "old_text": "Hello Proposal",
+                        "new_text": "Hello Proposal v2",
+                        "change_summary": "Resolve diff note",
+                    }
+                ],
+            )
+
+        diff_annotation.refresh_from_db()
+        self.assertEqual(updated.id, proposal.id)
+        self.assertEqual(diff_annotation.status, ChangeProposalDiffAnnotation.Status.DONE)
+        self.assertEqual(diff_annotation.resolved_by_session_id, updated.internal_session_id)
+        self.assertIsNotNone(diff_annotation.resolved_at)
+
     def test_retry_lock_suggestion_guides_mcp_retry_workflow(self) -> None:
         from longdoc.proposal_service import _retry_lock_suggestion
         from longdoc.session_service import create_session
@@ -1835,6 +1939,13 @@ class AISessionReviewTests(TestCase):
         )
         batch = AIBatch.objects.create(session=session, summary="Diff payload batch")
         batch.annotations_completed.add(annotation)
+        diff_annotation = ChangeProposalDiffAnnotation.objects.create(
+            proposal=proposal,
+            file_name="main.tex",
+            side=ChangeProposalDiffAnnotation.Side.NEW,
+            line_number=1,
+            instruction="Перевірити новий рядок",
+        )
         client = Client()
         client.force_login(self.user)
 
@@ -1846,6 +1957,24 @@ class AISessionReviewTests(TestCase):
         self.assertEqual(len(payload["resolved_annotations"]), 1)
         self.assertEqual(payload["resolved_annotations"][0]["id"], annotation.id)
         self.assertEqual(payload["resolved_annotations"][0]["instruction"], "Переписати абзац")
+        self.assertEqual(len(payload["diff_annotations"]), 1)
+        self.assertEqual(payload["diff_annotations"][0]["id"], diff_annotation.id)
+        self.assertEqual(payload["diff_annotations"][0]["instruction"], "Перевірити новий рядок")
+
+        create_resp = client.post(
+            f"/api/projects/{self.project.id}/change-proposals/diff-annotations/",
+            data=json.dumps({
+                "file_name": "main.tex",
+                "side": "old",
+                "line_number": 1,
+                "instruction": "Чому це видаляється?",
+                "selected_text": "old",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(create_resp.status_code, 201)
+        self.assertEqual(create_resp.json()["proposal_id"], proposal.id)
+        self.assertEqual(create_resp.json()["status"], ChangeProposalDiffAnnotation.Status.OPEN)
 
     # ── Project lock enforcement ─────────────────────────────────────────
 

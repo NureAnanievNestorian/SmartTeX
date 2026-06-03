@@ -76,6 +76,7 @@ function statusLabel(value) {
     draft: "Чернетка",
     done: "Готово",
     dismissed: "Відхилено",
+    ai_draft: "AI на перевірці",
     open: "Відкрита",
     in_progress: "У роботі",
     covered: "Покрито",
@@ -88,6 +89,19 @@ function statusLabel(value) {
 function chip(value, label = null) {
   const safe = String(value || "unchecked");
   return `<span class="e-longdoc-chip ${escHtml(safe)}">${escHtml(label || statusLabel(safe))}</span>`;
+}
+
+function isAiDraftAnnotation(item) {
+  return String(item?.status || "") === "ai_draft";
+}
+
+async function updateAnnotationStatus(annotationId, status) {
+  if (!annotationId) return;
+  await api(`/api/projects/${cfg.projectId}/annotations/${annotationId}/`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  await loadLongdocData();
 }
 
 function renderSectionRefChips(refs) {
@@ -351,12 +365,13 @@ export function closeAiLogModal() {
   document.getElementById("ai-log-overlay")?.classList.remove("open");
 }
 
-async function openSourceFile(filename) {
+async function openSourceFile(filename, line = null) {
   const name = String(filename || "").trim();
   if (!name) return;
   const files = await import("./files.js");
   const existing = s.projectFiles.find(file => file.name === name) || { name, is_text: true, is_dir: false, type: "asset" };
   await files.selectFile(existing);
+  if (line) requestAnimationFrame(() => cm.jumpToLine?.(Number(line) || 1));
 }
 
 function emptyCard(title, body, action = "") {
@@ -739,7 +754,8 @@ function renderOverviewPanel() {
   const annotationCounts = overview.annotation_counts || {};
   const coverageCounts = overview.requirement_coverage_counts || {};
   const openTasks = Number(taskCounts.open || 0) + Number(taskCounts.in_progress || 0);
-  const openAnnotations = Number(annotationCounts.open || 0) + Number(annotationCounts.in_progress || 0);
+  const aiDraftAnnotations = Number(annotationCounts.ai_draft || 0);
+  const openAnnotations = aiDraftAnnotations + Number(annotationCounts.open || 0) + Number(annotationCounts.in_progress || 0);
   const issueReqs = Number(coverageCounts.unchecked || 0) + Number(coverageCounts.partial || 0) + Number(coverageCounts.missing || 0);
   const session = isSessionVisibleInUi(overview.active_proposal)
     ? overview.active_proposal
@@ -771,7 +787,7 @@ function renderOverviewPanel() {
         </button>
         <button class="e-overview-tile ${openAnnotations ? "attention" : ""}" type="button" data-action="go-annotations">
           <strong>${openAnnotations}</strong>
-          <span>активних поміток</span>
+          <span>${aiDraftAnnotations ? `${aiDraftAnnotations} AI на ревʼю` : "активних поміток"}</span>
         </button>
         <button class="e-overview-tile ${issueReqs ? "attention" : ""}" type="button" data-action="go-requirements">
           <strong>${issueReqs}</strong>
@@ -1274,12 +1290,39 @@ function renderAnnotationsPanel() {
 
   const items = s.longdoc.annotations || [];
   const draft = activeAnnotationDraft();
+  const aiDraftItems = items.filter(isAiDraftAnnotation);
   const columns = [
     ["open", "Відкриті"],
     ["in_progress", "У роботі"],
     ["done", "Готові"],
     ["dismissed", "Відхилені"],
   ];
+  const aiReviewCard = item => `
+    <article class="e-task-card ai-review-card" data-annotation-id="${item.id}" tabindex="0">
+      <div class="ai-review-card-top">
+        <span class="e-longdoc-chip ai_draft">AI на перевірці</span>
+        <span class="e-longdoc-meta">#${escHtml(String(item.id))}</span>
+      </div>
+      <div class="e-task-line ai-review-line">
+        <span class="e-check-dot ai_draft"></span>
+        <span>${escHtml(item.instruction || "")}</span>
+      </div>
+      <div class="e-longdoc-meta">${escHtml(item.file_name || "")}${item.line_start ? `:${escHtml(String(item.line_start))}${item.line_end && item.line_end !== item.line_start ? `-${escHtml(String(item.line_end))}` : ""}` : ""}${item.task_id ? ` · task #${escHtml(String(item.task_id))}` : ""}</div>
+      ${item.selected_text ? renderTextBlock(item.selected_text, "") : ""}
+      <div class="ai-review-actions">
+        <button class="e-sec-btn primary" type="button" data-action="keep-ai-annotation" title="K">
+          <span>Залишити</span>
+          <kbd>K</kbd>
+        </button>
+        <button class="e-sec-btn" type="button" data-action="dismiss-annotation" title="D">
+          <span>Відхилити</span>
+          <kbd>D</kbd>
+        </button>
+        ${button("Відкрити", "open-annotation-file")}
+        ${button("Редагувати", "edit-annotation")}
+      </div>
+    </article>
+  `;
   const annotationCard = item => `
     <article class="e-task-card" data-annotation-id="${item.id}">
       ${isEditing("annotation", item.id) ? `
@@ -1290,6 +1333,7 @@ function renderAnnotationsPanel() {
       </div>
       <select class="e-longdoc-input" data-field="task_id">${annotationTaskOptions(item.task_id)}</select>
       <select class="e-longdoc-input" data-field="status">
+        <option value="ai_draft" ${item.status === "ai_draft" ? "selected" : ""}>AI на перевірці</option>
         <option value="open" ${item.status === "open" ? "selected" : ""}>Відкрита</option>
         <option value="in_progress" ${item.status === "in_progress" ? "selected" : ""}>У роботі</option>
         <option value="done" ${item.status === "done" ? "selected" : ""}>Готово</option>
@@ -1330,11 +1374,23 @@ function renderAnnotationsPanel() {
     <div class="e-workspace-head">
       <div>
         <h2>Помітки</h2>
-        <p>Локальні інструкції, прив’язані до файла та рядків.</p>
+        <p>Локальні інструкції, прив’язані до файла та рядків. AI-кандидати спершу проходять коротке ревʼю.</p>
       </div>
-      <span class="e-longdoc-meta">${items.length} поміток</span>
+      <span class="e-longdoc-meta">${items.length} поміток · ${aiDraftItems.length} на ревʼю</span>
     </div>
     <div class="e-longdoc-scroll">
+      ${aiDraftItems.length ? `
+        <section class="ai-review-queue" aria-label="AI анотації на перевірці">
+          <div class="ai-review-head">
+            <div>
+              <strong>AI на перевірці</strong>
+              <span>Натисніть <kbd>K</kbd>, щоб залишити як звичайну помітку, або <kbd>D</kbd>, щоб відхилити.</span>
+            </div>
+            <span class="e-longdoc-meta">${aiDraftItems.length}</span>
+          </div>
+          <div class="ai-review-list">${aiDraftItems.map(aiReviewCard).join("")}</div>
+        </section>
+      ` : ""}
       ${renderCreatePanel("annotation", "помітку", createBody)}
       <div class="e-task-board">
         ${columns.map(([status, label]) => {
@@ -1399,25 +1455,26 @@ function renderAnnotationsPanel() {
       setEditing("annotation", annotationId, false);
       await loadLongdocData();
     },
+    "keep-ai-annotation": async (buttonEl) => {
+      const card = buttonEl.closest("[data-annotation-id]");
+      const annotationId = card?.dataset.annotationId;
+      await updateAnnotationStatus(annotationId, "open");
+    },
     "complete-annotation": async (buttonEl) => {
       const card = buttonEl.closest("[data-annotation-id]");
       const annotationId = card?.dataset.annotationId;
-      if (!annotationId) return;
-      await api(`/api/projects/${cfg.projectId}/annotations/${annotationId}/`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "done" }),
-      });
-      await loadLongdocData();
+      await updateAnnotationStatus(annotationId, "done");
     },
     "dismiss-annotation": async (buttonEl) => {
       const card = buttonEl.closest("[data-annotation-id]");
       const annotationId = card?.dataset.annotationId;
-      if (!annotationId) return;
-      await api(`/api/projects/${cfg.projectId}/annotations/${annotationId}/`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "dismissed" }),
-      });
-      await loadLongdocData();
+      await updateAnnotationStatus(annotationId, "dismissed");
+    },
+    "open-annotation-file": async (buttonEl) => {
+      const card = buttonEl.closest("[data-annotation-id]");
+      const annotationId = Number(card?.dataset.annotationId || 0);
+      const item = (s.longdoc.annotations || []).find(row => Number(row.id) === annotationId);
+      await openSourceFile(item?.file_name || "", item?.line_start || 1);
     },
     "delete-annotation": async (buttonEl) => {
       const card = buttonEl.closest("[data-annotation-id]");
@@ -1430,6 +1487,18 @@ function renderAnnotationsPanel() {
       await loadLongdocData();
     },
   });
+  annotationsPanelEl.onkeydown = event => {
+    if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+    const key = String(event.key || "").toLowerCase();
+    if (key !== "k" && key !== "d") return;
+    const card = event.target instanceof Element ? event.target.closest(".ai-review-card[data-annotation-id]") : null;
+    const annotationId = card?.dataset.annotationId;
+    if (!annotationId) return;
+    event.preventDefault();
+    updateAnnotationStatus(annotationId, key === "k" ? "open" : "dismissed").catch(err => {
+      window.alert(err.message || String(err));
+    });
+  };
 }
 
 function renderNotesPanel() {
@@ -1806,15 +1875,102 @@ export function renderSessionBanner() {
   if (statusEl) statusEl.textContent = sessionStatusLabel(session.status);
 }
 
-function renderDiffContent(diffText) {
+function diffAnnotationKey(fileName, side, lineNumber) {
+  return `${String(fileName || "")}::${String(side || "new")}::${Number(lineNumber || 0)}`;
+}
+
+function renderDiffAnnotationCards(items = []) {
+  const visible = items.filter(item => String(item.status || "open") === "open");
+  if (!visible.length) return "";
+  return `
+    <div class="diff-row-annotations">
+      ${visible.map(item => `
+        <article class="diff-row-annotation" data-diff-annotation-id="${escHtml(String(item.id))}">
+          <div class="diff-row-annotation-head">
+            <span>${escHtml(item.created_by === "mcp" ? "AI" : "Ви")}</span>
+            <span>${escHtml(item.side || "new")}:${escHtml(String(item.line_number || ""))}</span>
+          </div>
+          <div class="diff-row-annotation-text">${escHtml(item.instruction || "")}</div>
+          ${item.selected_text ? `<div class="diff-row-annotation-fragment">${escHtml(truncateDiffFragment(item.selected_text, 160))}</div>` : ""}
+          <div class="diff-row-annotation-actions">
+            <button type="button" data-action="resolve-diff-annotation" data-id="${escHtml(String(item.id))}">Закрити</button>
+            <button type="button" data-action="dismiss-diff-annotation" data-id="${escHtml(String(item.id))}">Відхилити</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function resolvedAnnotationKey(fileName, lineNumber) {
+  return `${String(fileName || "")}::${Number(lineNumber || 0)}`;
+}
+
+function renderResolvedAnnotationChips(items = []) {
+  if (!items.length) return "";
+  return `
+    <div class="diff-row-resolved-annotations">
+      ${items.map(item => `
+        <article class="diff-row-resolved-annotation" data-resolved-annotation-id="${escHtml(String(item.id))}">
+          <div class="diff-row-resolved-annotation-head">
+            <span class="diff-row-resolved-badge">Закриває помітку</span>
+            <span>#${escHtml(String(item.id))}</span>
+          </div>
+          <div class="diff-row-resolved-annotation-text">${escHtml(item.instruction || "")}</div>
+          ${item.selected_text ? `<div class="diff-row-resolved-fragment">${escHtml(truncateDiffFragment(item.selected_text, 170))}</div>` : ""}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderDetachedResolvedAnnotations(items = []) {
+  if (!items.length) return "";
+  return `
+    <div class="diff-detached-resolved">
+      <div class="diff-detached-resolved-head">
+        <strong>Закриті помітки без точного рядка в цьому diff</strong>
+        <span>${items.length}</span>
+      </div>
+      ${items.map(item => `
+        <div class="diff-detached-resolved-item">
+          <span>${escHtml(item.file_name || "")}${item.line_start ? `:${escHtml(String(item.line_start))}` : ""}</span>
+          <strong>${escHtml(item.instruction || "")}</strong>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderDiffContent(diffText, diffAnnotations = [], resolvedAnnotations = []) {
   if (!diffText) return `<span class="diff-empty">Змін не знайдено.</span>`;
 
   const lines = diffText.split("\n");
   let totalAdded = 0, totalRemoved = 0;
   const rows = [];
   let leftLine = 0, rightLine = 0;
+  let currentOldFile = "";
+  let currentNewFile = "";
   const pendingRemoved = [];
   const pendingAdded = [];
+  const annotationsByRow = new Map();
+  const resolvedByRow = new Map();
+  const attachedResolvedIds = new Set();
+  for (const item of diffAnnotations || []) {
+    if (!item || String(item.status || "open") !== "open") continue;
+    const key = diffAnnotationKey(item.file_name, item.side, item.line_number);
+    const bucket = annotationsByRow.get(key) || [];
+    bucket.push(item);
+    annotationsByRow.set(key, bucket);
+  }
+  for (const item of resolvedAnnotations || []) {
+    const lineStart = Number(item?.line_start || 0);
+    if (!item?.file_name || !lineStart) continue;
+    const key = resolvedAnnotationKey(item.file_name, lineStart);
+    const bucket = resolvedByRow.get(key) || [];
+    bucket.push(item);
+    resolvedByRow.set(key, bucket);
+  }
 
   function buildInlineDiffPair(beforeText, afterText) {
     const before = String(beforeText || "");
@@ -1840,8 +1996,43 @@ function renderDiffContent(diffText) {
     };
   }
 
-  function renderDiffRow(kind, left, right, codeHtml, sign) {
-    return `<div class="diff-row ${kind}"><span class="diff-sign">${sign}</span><span class="diff-ln">${left || ""}</span><span class="diff-ln">${right || ""}</span><span class="diff-code">${codeHtml}</span></div>`;
+  function annotationButton(fileName, side, lineNumber, rawText) {
+    if (!fileName || !lineNumber) return `<span class="diff-annotate-spacer"></span>`;
+    return `
+      <button
+        class="diff-annotate-btn"
+        type="button"
+        title="Додати тимчасову помітку до цього рядка"
+        data-action="add-diff-annotation"
+        data-file-encoded="${encodeURIComponent(fileName)}"
+        data-side-encoded="${encodeURIComponent(side)}"
+        data-line="${escHtml(String(lineNumber))}"
+        data-text-encoded="${encodeURIComponent(rawText || "")}"
+      >＋</button>
+    `;
+  }
+
+  function renderDiffRow(kind, left, right, codeHtml, sign, opts = {}) {
+    const side = opts.side || (kind === "del" ? "old" : kind === "add" ? "new" : "context");
+    const fileName = opts.fileName || (side === "old" ? currentOldFile : currentNewFile);
+    const lineNumber = Number(opts.lineNumber || (side === "old" ? left : right) || 0);
+    const rowAnnotations = annotationsByRow.get(diffAnnotationKey(fileName, side, lineNumber)) || [];
+    const resolvedItems = (resolvedByRow.get(resolvedAnnotationKey(fileName, lineNumber)) || [])
+      .filter(item => !attachedResolvedIds.has(Number(item.id)));
+    for (const item of resolvedItems) attachedResolvedIds.add(Number(item.id));
+    return `
+      <div class="diff-row-wrap">
+        <div class="diff-row ${kind}" data-file="${escHtml(fileName)}" data-side="${escHtml(side)}" data-line="${escHtml(String(lineNumber || ""))}">
+          <span class="diff-sign">${sign}</span>
+          <span class="diff-ln">${left || ""}</span>
+          <span class="diff-ln">${right || ""}</span>
+          <span class="diff-code">${codeHtml}</span>
+          <span class="diff-annotate-cell">${annotationButton(fileName, side, lineNumber, opts.rawText || "")}</span>
+        </div>
+        ${renderResolvedAnnotationChips(resolvedItems)}
+        ${renderDiffAnnotationCards(rowAnnotations)}
+      </div>
+    `;
   }
 
   function flushPendingChanges() {
@@ -1852,12 +2043,12 @@ function renderDiffContent(diffText) {
       const added = pendingAdded[i] || null;
       if (removed && added) {
         const inline = buildInlineDiffPair(removed.text, added.text);
-        rows.push(renderDiffRow("del", removed.line, "", inline.beforeHtml, "-"));
-        rows.push(renderDiffRow("add", "", added.line, inline.afterHtml, "+"));
+        rows.push(renderDiffRow("del", removed.line, "", inline.beforeHtml, "-", { side: "old", fileName: currentOldFile, lineNumber: removed.line, rawText: removed.text }));
+        rows.push(renderDiffRow("add", "", added.line, inline.afterHtml, "+", { side: "new", fileName: currentNewFile, lineNumber: added.line, rawText: added.text }));
       } else if (removed) {
-        rows.push(renderDiffRow("del", removed.line, "", escHtml(removed.text), "-"));
+        rows.push(renderDiffRow("del", removed.line, "", escHtml(removed.text), "-", { side: "old", fileName: currentOldFile, lineNumber: removed.line, rawText: removed.text }));
       } else if (added) {
-        rows.push(renderDiffRow("add", "", added.line, escHtml(added.text), "+"));
+        rows.push(renderDiffRow("add", "", added.line, escHtml(added.text), "+", { side: "new", fileName: currentNewFile, lineNumber: added.line, rawText: added.text }));
       }
     }
     pendingRemoved.length = 0;
@@ -1867,6 +2058,8 @@ function renderDiffContent(diffText) {
   for (const raw of lines) {
     if (raw.startsWith("---") || raw.startsWith("+++")) {
       flushPendingChanges();
+      if (raw.startsWith("---")) currentOldFile = raw.replace(/^---\s+[ab]\//, "").trim();
+      if (raw.startsWith("+++")) currentNewFile = raw.replace(/^\+\+\+\s+[ab]\//, "").trim();
       rows.push(`<div class="diff-meta">${escHtml(raw)}</div>`);
     } else if (raw.startsWith("@@")) {
       flushPendingChanges();
@@ -1885,60 +2078,26 @@ function renderDiffContent(diffText) {
       flushPendingChanges();
       leftLine++;
       rightLine++;
-      rows.push(renderDiffRow("ctx-empty", leftLine, rightLine, escHtml(raw.slice(1)), " "));
+      rows.push(renderDiffRow("ctx-empty", leftLine, rightLine, escHtml(raw.slice(1)), " ", { side: "context", fileName: currentNewFile || currentOldFile, lineNumber: rightLine, rawText: raw.slice(1) }));
     }
   }
   flushPendingChanges();
+  const detachedResolved = (resolvedAnnotations || []).filter(item => !attachedResolvedIds.has(Number(item.id)));
 
   return `
     <div class="diff-summary">
       <span class="diff-chip add">+${totalAdded}</span>
       <span class="diff-chip del">-${totalRemoved}</span>
-      <span class="session-diff-summary-text">Темнішим підсвічено точкові зміни всередині рядків.</span>
+      <span class="session-diff-summary-text">Темнішим підсвічено точкові зміни всередині рядків. ＋ додає тимчасову помітку до diff.</span>
     </div>
-    <div class="diff-table">${rows.join("")}</div>`;
+    <div class="diff-table">${rows.join("")}</div>
+    ${renderDetachedResolvedAnnotations(detachedResolved)}`;
 }
 
 function truncateDiffFragment(text, maxLen = 260) {
   const value = String(text || "").trim();
   if (!value) return "";
   return value.length > maxLen ? `${value.slice(0, maxLen - 1)}…` : value;
-}
-
-function renderResolvedAnnotations(items = []) {
-  if (!Array.isArray(items) || !items.length) return "";
-  return `
-    <div class="session-diff-annotation-block">
-      <div class="session-diff-annotation-head">
-        <strong>Помітки, які закриває ця зміна</strong>
-        <span>${items.length}</span>
-      </div>
-      <div class="session-diff-annotation-list">
-        ${items.map(item => {
-          const lineStart = Number(item.line_start || 0);
-          const lineEnd = Number(item.line_end || 0);
-          const lineLabel = lineStart
-            ? `${lineStart}${lineEnd && lineEnd !== lineStart ? `-${lineEnd}` : ""}`
-            : "";
-          return `
-            <article class="session-diff-annotation-card">
-              <div class="session-diff-annotation-meta-row">
-                <div class="session-diff-annotation-meta">${escHtml(item.file_name || "")}${lineLabel ? `:${escHtml(lineLabel)}` : ""}</div>
-                <span class="session-diff-annotation-badge">Буде закрито</span>
-              </div>
-              <div class="session-diff-annotation-text">${escHtml(item.instruction || "")}</div>
-              ${item.selected_text ? `
-                <div class="session-diff-annotation-fragment-wrap">
-                  <div class="session-diff-annotation-fragment-label">Фрагмент</div>
-                  <div class="session-diff-annotation-fragment">${escHtml(truncateDiffFragment(item.selected_text))}</div>
-                </div>
-              ` : ""}
-            </article>
-          `;
-        }).join("")}
-      </div>
-    </div>
-  `;
 }
 
 async function openSessionDiffModal({ forceReload = false } = {}) {
@@ -1972,18 +2131,49 @@ async function openSessionDiffModal({ forceReload = false } = {}) {
         <span>${warnings.map(w => escHtml(w.message || w.code || "")).join(" · ")}</span>
       </div>
     ` : "";
-    const annotationHtml = renderResolvedAnnotations(data.resolved_annotations || []);
     let diffHtml;
     if (!data.diff_text && data.compile_error_summary) {
       diffHtml = `<pre class="diff-empty diff-compile-error">${escHtml(data.compile_error_summary)}</pre>`;
     } else {
-      diffHtml = renderDiffContent(data.diff_text || "");
+      diffHtml = renderDiffContent(data.diff_text || "", data.diff_annotations || [], data.resolved_annotations || []);
     }
-    if (content) content.innerHTML = warningHtml + annotationHtml + diffHtml;
+    if (content) content.innerHTML = warningHtml + diffHtml;
 
   } catch (err) {
     if (content) content.innerHTML = `<span class="diff-empty">Помилка завантаження diff: ${escHtml(err.message)}</span>`;
   }
+}
+
+async function createDiffAnnotationFromButton(buttonEl) {
+  const fileName = decodeURIComponent(String(buttonEl?.dataset?.fileEncoded || "")).trim();
+  const lineNumber = Number(buttonEl?.dataset?.line || 0);
+  const side = decodeURIComponent(String(buttonEl?.dataset?.sideEncoded || "new")).trim();
+  const selectedText = decodeURIComponent(String(buttonEl?.dataset?.textEncoded || ""));
+  if (!fileName || !lineNumber) return;
+  const instruction = window.prompt(`Помітка до ${fileName}:${lineNumber}`, "");
+  if (!instruction || !instruction.trim()) return;
+  await api(`/api/projects/${cfg.projectId}/change-proposals/diff-annotations/`, {
+    method: "POST",
+    body: JSON.stringify({
+      file_name: fileName,
+      line_number: lineNumber,
+      side,
+      selected_text: selectedText,
+      instruction: instruction.trim(),
+    }),
+  });
+  s.longdoc.proposalModalDiffSignature = "";
+  await openSessionDiffModal({ forceReload: true });
+}
+
+async function updateDiffAnnotationStatus(annotationId, status) {
+  if (!annotationId) return;
+  await api(`/api/projects/${cfg.projectId}/change-proposals/diff-annotations/${annotationId}/`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  s.longdoc.proposalModalDiffSignature = "";
+  await openSessionDiffModal({ forceReload: true });
 }
 
 function closeSessionDiffModal() {
@@ -2078,6 +2268,18 @@ export function initSessionUI() {
   document.getElementById("session-diff-footer-discard-btn")?.addEventListener("click", discardSession);
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();
+  });
+  sessionDiffContentEl?.addEventListener("click", e => {
+    const target = e.target instanceof Element ? e.target.closest("[data-action]") : null;
+    const action = target?.getAttribute("data-action") || "";
+    if (action === "add-diff-annotation") {
+      createDiffAnnotationFromButton(target).catch(err => window.alert(err.message || String(err)));
+    }
+    if (action === "resolve-diff-annotation" || action === "dismiss-diff-annotation") {
+      const id = target?.getAttribute("data-id");
+      updateDiffAnnotationStatus(id, action === "resolve-diff-annotation" ? "done" : "dismissed")
+        .catch(err => window.alert(err.message || String(err)));
+    }
   });
   document.getElementById("open-project-settings-btn")?.addEventListener("click", openAssistantSettings);
   document.getElementById("open-ai-log-btn")?.addEventListener("click", openAiLogModal);

@@ -35,6 +35,7 @@ from .services import (
     get_or_create_longdoc_settings,
     get_section_summary,
     list_annotations,
+    list_diff_annotations,
     list_context_files,
     list_note_sections,
     list_outline_items,
@@ -43,6 +44,7 @@ from .services import (
     list_tasks,
     overview_payload,
     serialize_annotation,
+    serialize_diff_annotation,
     serialize_settings,
     sync_context_file_records,
     update_annotation,
@@ -56,6 +58,7 @@ from .services import (
     update_task,
 )
 from .locks import get_locking_change_proposal, get_locking_session
+from .models import ChangeProposalDiffAnnotation
 
 
 def _json_body(request: HttpRequest) -> dict:
@@ -117,7 +120,15 @@ def _proposal_error_response(exc: Exception) -> JsonResponse:
     if isinstance(exc, SessionWriteError):
         return JsonResponse(exc.payload(), status=exc.status_code)
     if isinstance(exc, ProjectLockedError):
-        return JsonResponse({"error": "PROJECT_LOCKED", "message": str(exc)}, status=423)
+        return JsonResponse(
+            {
+                "error": "PROJECT_LOCKED",
+                "message": str(exc),
+                "suggestion": exc.suggestion(),
+                "session_id": exc.session.id,
+            },
+            status=423,
+        )
     return _error_response(exc)
 
 
@@ -127,6 +138,20 @@ def _service_changes(body: dict) -> dict:
         for key, value in body.items()
         if key not in {"change_summary", "change_source"}
     }
+
+
+def _active_proposal_for_api(project):
+    from longdoc.proposal_service import get_active_change_proposal
+
+    proposal = get_active_change_proposal(project)
+    if proposal is None:
+        raise LongdocAccessError(
+            error="NO_ACTIVE_PROPOSAL",
+            message="No active suggested change.",
+            status_code=404,
+            suggestion="Create or open an active proposal before working with diff annotations.",
+        )
+    return proposal
 
 
 @csrf_exempt
@@ -531,6 +556,7 @@ def api_annotations(request: HttpRequest, project_id: int) -> JsonResponse:
             actor=user,
             source=meta["source"],
             summary=meta["summary"],
+            status=str(body.get("status") or "").strip() or None,
         )
     except Exception as exc:
         return _error_response(exc)
@@ -754,6 +780,7 @@ def api_change_proposals(request: HttpRequest, project_id: int) -> JsonResponse:
             addresses_task_id=body.get("addresses_task_id"),
             addresses_outline_item_id=body.get("addresses_outline_item_id"),
             annotation_ids=list(body.get("annotation_ids") or []),
+            diff_annotation_ids=list(body.get("diff_annotation_ids") or []),
             validation_token=(str(body.get("validation_token")) if body.get("validation_token") else None),
             continue_existing=bool(body.get("continue_existing", False)),
         )
@@ -795,15 +822,14 @@ def api_change_proposal_cancel(request: HttpRequest, project_id: int) -> JsonRes
 @csrf_exempt
 @require_http_methods(["GET"])
 def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonResponse:
-    from longdoc.proposal_service import get_active_change_proposal
-
     user = get_api_user(request)
     if not user:
         return _unauthorized()
     project = _project_with_owner(project_id, user)
-    proposal = get_active_change_proposal(project)
-    if proposal is None:
-        return JsonResponse({"error": "NO_ACTIVE_PROPOSAL", "message": "No active suggested change."}, status=404)
+    try:
+        proposal = _active_proposal_for_api(project)
+    except Exception as exc:
+        return _proposal_error_response(exc)
     resolved_annotations = []
     session = proposal.internal_session
     batch = getattr(session, "batch", None) if session is not None else None
@@ -821,8 +847,110 @@ def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonRespo
             "smcl_risk_level": proposal.smcl_risk_level or "low",
             "smcl_warnings": proposal.smcl_warnings or [],
             "resolved_annotations": resolved_annotations,
+            "diff_annotations": list_diff_annotations(proposal),
         }
     )
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def api_change_proposal_diff_annotations(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    try:
+        proposal = _active_proposal_for_api(project)
+    except Exception as exc:
+        return _proposal_error_response(exc)
+
+    if request.method == "GET":
+        status = str(request.GET.get("status") or "").strip() or None
+        return JsonResponse({"diff_annotations": list_diff_annotations(proposal, status=status)})
+
+    body = _json_body(request)
+    try:
+        meta = _change_meta(request, body)
+        instruction = str(body.get("instruction") or "").strip()
+        file_name = str(body.get("file_name") or "").strip()
+        side = str(body.get("side") or ChangeProposalDiffAnnotation.Side.NEW).strip()
+        if side not in {choice[0] for choice in ChangeProposalDiffAnnotation.Side.choices}:
+            side = ChangeProposalDiffAnnotation.Side.NEW
+        if not instruction:
+            raise ValueError("instruction is required")
+        if not file_name:
+            raise ValueError("file_name is required")
+        item = ChangeProposalDiffAnnotation.objects.create(
+            proposal=proposal,
+            file_name=file_name,
+            side=side,
+            line_number=max(1, int(body.get("line_number") or 1)),
+            selected_text=str(body.get("selected_text") or ""),
+            instruction=instruction,
+            created_by=(
+                ChangeProposalDiffAnnotation.CreatedBy.MCP
+                if meta["source"] == "mcp"
+                else ChangeProposalDiffAnnotation.CreatedBy.USER
+            ),
+        )
+    except Exception as exc:
+        return _proposal_error_response(exc)
+    return JsonResponse(serialize_diff_annotation(item), status=201)
+
+
+@csrf_exempt
+@require_http_methods(["PATCH", "DELETE"])
+def api_change_proposal_diff_annotation_detail(request: HttpRequest, project_id: int, annotation_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    try:
+        proposal = _active_proposal_for_api(project)
+        item = ChangeProposalDiffAnnotation.objects.get(proposal=proposal, id=annotation_id)
+        if request.method == "DELETE":
+            item.delete()
+            return JsonResponse({}, status=204)
+        body = _json_body(request)
+        _change_meta(request, body)
+        changes = _service_changes(body)
+        if "instruction" in changes:
+            item.instruction = str(changes.pop("instruction") or "").strip()
+            if not item.instruction:
+                raise ValueError("instruction is required")
+        if "selected_text" in changes:
+            item.selected_text = str(changes.pop("selected_text") or "")
+        if "file_name" in changes:
+            item.file_name = str(changes.pop("file_name") or "").strip()
+            if not item.file_name:
+                raise ValueError("file_name is required")
+        if "line_number" in changes:
+            item.line_number = max(1, int(changes.pop("line_number") or 1))
+        if "side" in changes:
+            side = str(changes.pop("side") or "").strip()
+            if side not in {choice[0] for choice in ChangeProposalDiffAnnotation.Side.choices}:
+                raise ValueError("unsupported diff annotation side")
+            item.side = side
+        if "status" in changes:
+            status = str(changes.pop("status") or "").strip()
+            if status not in {choice[0] for choice in ChangeProposalDiffAnnotation.Status.choices}:
+                raise ValueError("unsupported diff annotation status")
+            item.status = status
+            if status in (ChangeProposalDiffAnnotation.Status.DONE, ChangeProposalDiffAnnotation.Status.DISMISSED):
+                item.resolved_at = timezone.now()
+                if status == ChangeProposalDiffAnnotation.Status.DONE and proposal.internal_session_id:
+                    item.resolved_by_session = proposal.internal_session
+            else:
+                item.resolved_at = None
+                item.resolved_by_session = None
+        if changes:
+            raise ValueError(f"unsupported diff annotation changes: {', '.join(sorted(changes))}")
+        item.save()
+    except ChangeProposalDiffAnnotation.DoesNotExist:
+        return JsonResponse({"error": "DIFF_ANNOTATION_NOT_FOUND", "message": "Diff annotation not found."}, status=404)
+    except Exception as exc:
+        return _proposal_error_response(exc)
+    return JsonResponse(serialize_diff_annotation(item))
 
 
 @csrf_exempt

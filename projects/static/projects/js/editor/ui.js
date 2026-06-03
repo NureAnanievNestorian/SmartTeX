@@ -315,6 +315,7 @@ export function showAnnotationInfoPopover(opts = {}) {
     popover?.classList.add("open");
     requestAnimationFrame(() => {
       placeAnnotationPopover(popover, opts);
+      popover?.focus?.({ preventScroll: true });
     });
   });
 }
@@ -328,11 +329,13 @@ function renderAnnotationInfoList(listEl) {
     const selectedText = String(item.selected_text || "").trim();
     const status = String(item.status || "open");
     const statusLabel = {
+      ai_draft: "AI на перевірці",
       open: "Відкрита",
       in_progress: "У роботі",
       done: "Готова",
       dismissed: "Відхилена",
     }[status] || status;
+    const isAiDraft = status === "ai_draft";
     const isEditing = annotationId === editingId;
     const instruction = String(item.instruction || "");
     return `
@@ -362,8 +365,10 @@ function renderAnnotationInfoList(listEl) {
             <button class="e-btn primary" type="button" data-action="save_edit" data-id="${escHtml(String(annotationId))}">Зберегти</button>
             <button class="e-btn" type="button" data-action="cancel_edit" data-id="${escHtml(String(annotationId))}">Скасувати</button>
           ` : `
-            ${status !== "done" ? `<button class="e-btn primary" type="button" data-action="done" data-id="${escHtml(String(annotationId))}">Готово</button>` : ""}
-            ${status !== "dismissed" ? `<button class="e-btn" type="button" data-action="dismiss" data-id="${escHtml(String(annotationId))}">Відхилити</button>` : ""}
+            ${isAiDraft ? `<button class="e-btn primary" type="button" data-action="keep_ai" data-id="${escHtml(String(annotationId))}" title="K">Залишити</button>` : ""}
+            ${isAiDraft ? `<button class="e-btn" type="button" data-action="dismiss" data-id="${escHtml(String(annotationId))}" title="D">Фігня</button>` : ""}
+            ${!isAiDraft && status !== "done" ? `<button class="e-btn primary" type="button" data-action="done" data-id="${escHtml(String(annotationId))}">Готово</button>` : ""}
+            ${!isAiDraft && status !== "dismissed" ? `<button class="e-btn" type="button" data-action="dismiss" data-id="${escHtml(String(annotationId))}">Відхилити</button>` : ""}
             <button class="e-btn" type="button" data-action="edit" data-id="${escHtml(String(annotationId))}">Редагувати</button>
             <button class="e-btn" type="button" data-action="open" data-id="${escHtml(String(annotationId))}">Відкрити</button>
           `}
@@ -543,6 +548,17 @@ export function initDialogs() {
         document.querySelector(`[data-action="edit"][data-id="${CSS.escape(String(id))}"]`)?.focus?.();
       });
     }
+  });
+  annotationInfoPopover?.addEventListener("keydown", e => {
+    if (!annotationInfoPopover.classList.contains("open")) return;
+    if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+    const key = String(e.key || "").toLowerCase();
+    if (key !== "k" && key !== "d") return;
+    const action = key === "k" ? "keep_ai" : "dismiss";
+    const btn = annotationInfoPopover.querySelector(`[data-action="${action}"]`);
+    if (!btn) return;
+    e.preventDefault();
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   document.addEventListener("mousedown", e => {
     if (!annotationInfoPopover?.classList.contains("open")) return;

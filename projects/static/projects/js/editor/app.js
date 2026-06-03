@@ -771,7 +771,7 @@ function renderAnnotationMarkers() {
     cm.setAnnotationMarkers?.([]);
     return;
   }
-  const activeStatuses = new Set(["open", "in_progress"]);
+  const activeStatuses = new Set(["ai_draft", "open", "in_progress"]);
   const groups = new Map();
   for (const item of s.longdoc.annotations || []) {
     if (!item || item.file_name !== currentFile || !activeStatuses.has(String(item.status || ""))) continue;
@@ -779,7 +779,8 @@ function renderAnnotationMarkers() {
     const existing = groups.get(line) || { line, count: 0, ids: [], status: "open", titles: [] };
     existing.count += 1;
     existing.ids.push(item.id);
-    existing.status = existing.status === "in_progress" || item.status === "in_progress" ? "in_progress" : "open";
+    if (item.status === "ai_draft") existing.status = "ai_draft";
+    else if (existing.status !== "ai_draft" && (existing.status === "in_progress" || item.status === "in_progress")) existing.status = "in_progress";
     existing.titles.push(String(item.instruction || "").trim());
     groups.set(line, existing);
   }
@@ -826,6 +827,19 @@ async function openAnnotationMarkerPopover(info, event) {
       });
       await longdoc.loadLongdocData?.();
       setSaveHint("Помітку оновлено", "saved");
+    } catch (err) {
+      setSaveHint(`Помилка: ${err.message}`, "error");
+    }
+    return;
+  }
+  if (result.action === "keep_ai") {
+    try {
+      await api(`/api/projects/${cfg.projectId}/annotations/${result.id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "open" }),
+      });
+      await longdoc.loadLongdocData?.();
+      setSaveHint("AI-помітку залишено", "saved");
     } catch (err) {
       setSaveHint(`Помилка: ${err.message}`, "error");
     }

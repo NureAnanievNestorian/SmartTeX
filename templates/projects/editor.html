@@ -996,6 +996,11 @@
             box-shadow: none;
         }
 
+        .e-check-dot.ai_draft {
+            background: #f59e0b;
+            box-shadow: 0 0 0 3px rgba(245, 158, 11, .16), 0 0 18px rgba(245, 158, 11, .28);
+        }
+
         .e-ref-chip {
             padding: 3px 8px;
             border-radius: 999px;
@@ -1090,6 +1095,84 @@
             font-size: 12px;
         }
 
+        .ai-review-queue {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 13px;
+            border-radius: 18px;
+            background:
+                radial-gradient(circle at 0 0, rgba(245, 158, 11, .18), transparent 34%),
+                linear-gradient(135deg, rgba(245, 158, 11, .10), rgba(59, 130, 246, .055));
+            box-shadow:
+                inset 0 0 0 1px rgba(245, 158, 11, .22),
+                0 16px 46px rgba(0, 0, 0, .16);
+        }
+
+        .ai-review-head,
+        .ai-review-card-top,
+        .ai-review-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .ai-review-head {
+            justify-content: space-between;
+        }
+
+        .ai-review-head strong {
+            display: block;
+            color: #fde68a;
+            font-size: 13px;
+        }
+
+        .ai-review-head span {
+            color: var(--e-text2);
+            font-size: 11px;
+        }
+
+        .ai-review-head kbd,
+        .ai-review-actions kbd {
+            padding: 1px 5px;
+            border-radius: 6px;
+            color: #fef3c7;
+            background: rgba(0, 0, 0, .24);
+            box-shadow: inset 0 0 0 1px rgba(245, 158, 11, .25);
+            font: 700 10px/1.4 var(--e-font-mono);
+        }
+
+        .ai-review-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .ai-review-card {
+            background: rgba(21, 21, 24, .68);
+            box-shadow:
+                inset 0 0 0 1px rgba(245, 158, 11, .18),
+                0 8px 20px rgba(0, 0, 0, .12);
+        }
+
+        .ai-review-card:focus {
+            outline: 2px solid rgba(245, 158, 11, .62);
+            outline-offset: 2px;
+        }
+
+        .ai-review-card-top,
+        .ai-review-actions {
+            justify-content: space-between;
+        }
+
+        .ai-review-actions {
+            flex-wrap: wrap;
+        }
+
+        .ai-review-line {
+            color: var(--e-text);
+            font-weight: 650;
+        }
+
         .e-longdoc-meta {
             font-size: 11px;
             color: var(--e-text2);
@@ -1113,7 +1196,8 @@
         }
 
         .e-longdoc-chip.warn,
-        .e-longdoc-chip.partial {
+        .e-longdoc-chip.partial,
+        .e-longdoc-chip.ai_draft {
             color: #fde68a;
             background: rgba(245, 158, 11, .12);
             border-color: rgba(245, 158, 11, .22);
@@ -1632,11 +1716,13 @@
 
         .diff-row {
             display: grid;
-            grid-template-columns: 18px 44px 44px minmax(0, 1fr);
+            grid-template-columns: 18px 44px 44px minmax(0, 1fr) 32px;
             align-items: stretch;
         }
 
-        .diff-row + .diff-row {
+        .diff-row-wrap + .diff-row-wrap,
+        .diff-row-wrap + .diff-meta,
+        .diff-row-wrap + .diff-hunk {
             border-top: 1px solid rgba(40, 60, 90, 0.35);
         }
 
@@ -1654,7 +1740,7 @@
             background: var(--e-raised);
         }
 
-        .diff-sign, .diff-ln, .diff-code {
+        .diff-sign, .diff-ln, .diff-code, .diff-annotate-cell {
             display: block;
             padding: 2px 8px;
             white-space: pre;
@@ -1678,6 +1764,209 @@
             overflow-wrap: anywhere;
             word-break: break-word;
             color: #b4c7df;
+        }
+
+        .diff-annotate-cell {
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border-left: 1px solid rgba(40, 60, 90, 0.22);
+        }
+
+        .diff-annotate-btn {
+            width: 22px;
+            height: 22px;
+            border: 1px solid rgba(148, 163, 184, .22);
+            border-radius: 999px;
+            color: #9fb3cc;
+            background: rgba(255, 255, 255, .035);
+            cursor: pointer;
+            opacity: .28;
+            transition: opacity .14s ease, transform .14s ease, color .14s ease, border-color .14s ease, background .14s ease;
+        }
+
+        .diff-row:hover .diff-annotate-btn,
+        .diff-annotate-btn:focus-visible {
+            opacity: 1;
+            color: #fde68a;
+            border-color: rgba(245, 158, 11, .42);
+            background: rgba(245, 158, 11, .13);
+            transform: scale(1.03);
+        }
+
+        .diff-annotate-spacer {
+            width: 22px;
+            height: 22px;
+        }
+
+        .diff-row-annotations {
+            display: grid;
+            gap: 7px;
+            padding: 7px 10px 9px 122px;
+            background:
+                linear-gradient(90deg, rgba(245, 158, 11, .09), transparent 56%),
+                rgba(255, 255, 255, .018);
+            border-top: 1px solid rgba(245, 158, 11, .14);
+        }
+
+        .diff-row-resolved-annotations {
+            display: grid;
+            gap: 6px;
+            padding: 6px 10px 7px 122px;
+            background:
+                linear-gradient(90deg, rgba(94, 170, 187, .12), transparent 52%),
+                rgba(94, 170, 187, .035);
+            border-top: 1px solid rgba(94, 170, 187, .16);
+        }
+
+        .diff-row-resolved-annotation {
+            display: grid;
+            gap: 4px;
+            max-width: 760px;
+            padding: 7px 9px;
+            border-radius: 9px;
+            border: 1px solid rgba(94, 170, 187, .24);
+            background: rgba(94, 170, 187, .075);
+        }
+
+        .diff-row-resolved-annotation-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            color: #9bd5df;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: .035em;
+            text-transform: uppercase;
+        }
+
+        .diff-row-resolved-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 7px;
+            border-radius: 999px;
+            border: 1px solid rgba(74, 222, 128, .24);
+            background: rgba(34, 197, 94, .13);
+            color: #95f0b4;
+        }
+
+        .diff-row-resolved-annotation-text {
+            color: var(--e-text);
+            font-size: 12px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+        }
+
+        .diff-row-resolved-fragment {
+            color: var(--e-text2);
+            font: 11px/1.45 "JetBrains Mono", monospace;
+            padding: 5px 7px;
+            border-radius: 7px;
+            background: rgba(0, 0, 0, .14);
+        }
+
+        .diff-detached-resolved {
+            display: grid;
+            gap: 8px;
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid rgba(94, 170, 187, .22);
+            background: rgba(94, 170, 187, .055);
+        }
+
+        .diff-detached-resolved-head,
+        .diff-detached-resolved-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .diff-detached-resolved-head {
+            color: #9bd5df;
+            font-size: 11px;
+        }
+
+        .diff-detached-resolved-head strong {
+            color: var(--e-text);
+        }
+
+        .diff-detached-resolved-item {
+            align-items: flex-start;
+            padding: 7px 8px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, .025);
+        }
+
+        .diff-detached-resolved-item span {
+            color: #8eb8d8;
+            font: 11px/1.4 "JetBrains Mono", monospace;
+            flex-shrink: 0;
+        }
+
+        .diff-detached-resolved-item strong {
+            color: var(--e-text);
+            font-size: 12px;
+            line-height: 1.45;
+            text-align: right;
+        }
+
+        .diff-row-annotation {
+            display: grid;
+            gap: 5px;
+            max-width: 760px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid rgba(245, 158, 11, .22);
+            background: rgba(245, 158, 11, .075);
+        }
+
+        .diff-row-annotation-head,
+        .diff-row-annotation-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: space-between;
+        }
+
+        .diff-row-annotation-head {
+            color: #fde68a;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+        }
+
+        .diff-row-annotation-text {
+            color: var(--e-text);
+            font-size: 12px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+        }
+
+        .diff-row-annotation-fragment {
+            color: var(--e-text2);
+            font: 11px/1.45 "JetBrains Mono", monospace;
+            padding: 6px 8px;
+            border-radius: 7px;
+            background: rgba(0, 0, 0, .18);
+        }
+
+        .diff-row-annotation-actions {
+            justify-content: flex-start;
+        }
+
+        .diff-row-annotation-actions button {
+            border: 1px solid rgba(245, 158, 11, .24);
+            border-radius: 8px;
+            color: #fde68a;
+            background: rgba(245, 158, 11, .08);
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
         }
 
         .diff-row.ctx-empty {
@@ -3745,6 +4034,29 @@
             border-color: var(--e-border);
         }
 
+        html[data-theme="light"] .ai-review-queue {
+            background:
+                radial-gradient(circle at 0 0, rgba(217, 119, 6, .12), transparent 34%),
+                linear-gradient(135deg, rgba(245, 158, 11, .09), rgba(9, 105, 218, .04));
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, .20);
+        }
+
+        html[data-theme="light"] .ai-review-card {
+            background: rgba(255, 255, 255, .86);
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, .18);
+        }
+
+        html[data-theme="light"] .ai-review-head strong {
+            color: #92400e;
+        }
+
+        html[data-theme="light"] .ai-review-head kbd,
+        html[data-theme="light"] .ai-review-actions kbd {
+            color: #92400e;
+            background: rgba(245, 158, 11, .10);
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, .24);
+        }
+
         html[data-theme="light"] .e-longdoc-modebar {
             background: var(--e-surface);
         }
@@ -4783,6 +5095,12 @@
             box-shadow: 0 0 0 1px rgba(34, 197, 94, .12) inset;
         }
 
+        .annotation-info-item.ai_draft {
+            border-color: rgba(245, 158, 11, .34);
+            background: rgba(245, 158, 11, .075);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, .12);
+        }
+
         .annotation-info-item.done,
         .annotation-info-item.dismissed {
             opacity: .8;
@@ -5199,7 +5517,7 @@
         </div>
     </div>
 
-    <div class="annotation-info-popover annotation-popover" id="annotation-info-popover" role="dialog" aria-labelledby="annotation-info-title">
+    <div class="annotation-info-popover annotation-popover" id="annotation-info-popover" role="dialog" aria-labelledby="annotation-info-title" tabindex="-1">
         <div class="annotation-popover-card">
             <div class="e-dialog-head">
                 <strong id="annotation-info-title">Помітки</strong>

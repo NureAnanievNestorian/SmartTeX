@@ -30,6 +30,7 @@ from .models import (
     ProjectContextFile,
     ProjectLongDocSettings,
     ProjectAnnotation,
+    ChangeProposalDiffAnnotation,
     ProjectNoteSection,
     ProjectOutlineItem,
     ProjectRequirement,
@@ -853,6 +854,30 @@ def serialize_annotation(item: ProjectAnnotation) -> dict[str, Any]:
     }
 
 
+def serialize_diff_annotation(item: ChangeProposalDiffAnnotation) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "proposal_id": item.proposal_id,
+        "file_name": item.file_name,
+        "side": item.side,
+        "line_number": item.line_number,
+        "selected_text": item.selected_text,
+        "instruction": item.instruction,
+        "status": item.status,
+        "created_by": item.created_by,
+        "resolved_by_session_id": item.resolved_by_session_id,
+        "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def list_diff_annotations(proposal, *, status: str | None = None) -> list[dict[str, Any]]:
+    qs = ChangeProposalDiffAnnotation.objects.filter(proposal=proposal)
+    if status:
+        qs = qs.filter(status=status)
+    return [serialize_diff_annotation(item) for item in qs.order_by("status", "file_name", "line_number", "id")]
+
+
 def list_annotations(project, *, status: str | None = None, file_name: str | None = None) -> list[dict[str, Any]]:
     qs = ProjectAnnotation.objects.filter(project=project)
     if status:
@@ -876,6 +901,7 @@ def create_annotation(
     source: str = "web",
     summary: str = "",
     created_by: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     file_name = str(file_name or "").strip()
     instruction = str(instruction or "").strip()
@@ -892,6 +918,12 @@ def create_annotation(
         line_end = max(1, int(line_end))
     if line_start is not None and line_end is not None and line_end < line_start:
         line_end = line_start
+    normalized_status = str(status or "").strip()
+    if not normalized_status:
+        normalized_status = ProjectAnnotation.Status.AI_DRAFT if source == "mcp" else ProjectAnnotation.Status.OPEN
+    valid_statuses = {choice[0] for choice in ProjectAnnotation.Status.choices}
+    if normalized_status not in valid_statuses:
+        raise ValueError("unsupported annotation status")
     item = ProjectAnnotation.objects.create(
         project=project,
         task=task,
@@ -900,6 +932,7 @@ def create_annotation(
         line_end=line_end,
         selected_text=str(selected_text or ""),
         instruction=instruction,
+        status=normalized_status,
         created_by=created_by or (ProjectAnnotation.CreatedBy.MCP if source == "mcp" else ProjectAnnotation.CreatedBy.USER),
     )
     _audit_db_change(
@@ -935,6 +968,8 @@ def update_annotation(project, *, annotation_id: int, actor=None, source: str = 
             raise ValueError("instruction is required")
     if "status" in changes:
         status = str(changes.pop("status") or "").strip()
+        if status not in {choice[0] for choice in ProjectAnnotation.Status.choices}:
+            raise ValueError("unsupported annotation status")
         item.status = status
         done_statuses = {ProjectAnnotation.Status.DONE, ProjectAnnotation.Status.DISMISSED}
         item.resolved_at = timezone.now() if status in done_statuses else None
@@ -1444,7 +1479,7 @@ def assert_longdoc_feature(project, feature_name: str, *, require_write: bool = 
                 error="PROJECT_LOCKED",
                 message=str(exc),
                 status_code=423,
-                suggestion="Wait for the active AI session to finish or unlock the project before editing Writing Assistant data.",
+                suggestion=exc.suggestion(),
                 extra={"session_id": exc.session.id},
             ) from exc
     return settings_obj
@@ -1664,6 +1699,7 @@ def overview_payload(project) -> dict[str, Any]:
             for item in tasks[:12]
         ],
         "annotation_counts": {
+            "ai_draft": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.AI_DRAFT),
             "open": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.OPEN),
             "in_progress": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.IN_PROGRESS),
             "done": sum(1 for item in annotations if item.status == ProjectAnnotation.Status.DONE),

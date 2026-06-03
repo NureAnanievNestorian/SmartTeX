@@ -5,6 +5,7 @@ from .models import (
     AIBatchChange,
     AISession,
     AssistantAuditLog,
+    ChangeProposalDiffAnnotation,
     ProjectAnnotation,
     ProjectContextFile,
     ProjectLongDocSettings,
@@ -50,6 +51,13 @@ class ProjectAnnotationAdmin(admin.ModelAdmin):
     list_display = ("project", "file_name", "line_start", "status", "task", "updated_at")
     list_filter = ("status", "created_by")
     search_fields = ("project__title", "file_name", "instruction", "selected_text")
+
+
+@admin.register(ChangeProposalDiffAnnotation)
+class ChangeProposalDiffAnnotationAdmin(admin.ModelAdmin):
+    list_display = ("proposal", "file_name", "side", "line_number", "status", "created_by", "updated_at")
+    list_filter = ("status", "side", "created_by")
+    search_fields = ("proposal__goal", "proposal__project__title", "file_name", "instruction", "selected_text")
 
 
 @admin.register(ProjectNoteSection)

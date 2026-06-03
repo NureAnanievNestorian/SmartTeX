@@ -115,6 +115,7 @@ class ProjectTask(models.Model):
 
 class ProjectAnnotation(models.Model):
     class Status(models.TextChoices):
+        AI_DRAFT = "ai_draft", "AI Draft"
         OPEN = "open", "Open"
         IN_PROGRESS = "in_progress", "In Progress"
         DONE = "done", "Done"
@@ -425,6 +426,51 @@ class AIBatchChange(models.Model):
 
     def __str__(self) -> str:
         return f"{self.batch_id}:{self.filename}"
+
+
+class ChangeProposalDiffAnnotation(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        DONE = "done", "Done"
+        DISMISSED = "dismissed", "Dismissed"
+
+    class Side(models.TextChoices):
+        OLD = "old", "Old"
+        NEW = "new", "New"
+        CONTEXT = "context", "Context"
+
+    class CreatedBy(models.TextChoices):
+        USER = "user", "User"
+        MCP = "mcp", "MCP"
+
+    proposal = models.ForeignKey(ChangeProposal, on_delete=models.CASCADE, related_name="diff_annotations")
+    file_name = models.CharField(max_length=500)
+    side = models.CharField(max_length=20, choices=Side.choices, default=Side.NEW)
+    line_number = models.PositiveIntegerField()
+    selected_text = models.TextField(blank=True)
+    instruction = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    created_by = models.CharField(max_length=20, choices=CreatedBy.choices, default=CreatedBy.USER)
+    resolved_by_session = models.ForeignKey(
+        AISession,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="resolved_diff_annotations",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["proposal_id", "status", "file_name", "line_number", "id"]
+        indexes = [
+            models.Index(fields=["proposal", "status"]),
+            models.Index(fields=["proposal", "file_name", "line_number"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.proposal_id}:{self.file_name}:{self.side}:{self.line_number}"
 
 
 class AssistantAuditLog(models.Model):
