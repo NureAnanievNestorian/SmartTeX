@@ -611,6 +611,7 @@ def serialize_change_proposal(proposal: ChangeProposal | None) -> dict[str, Any]
         "status": proposal.status,
         "smcl_risk_level": proposal.smcl_risk_level or "low",
         "smcl_warnings": proposal.smcl_warnings or [],
+        "semantic_diff_summary": (proposal.smcl_metadata or {}).get("semantic_diff_summary") or {},
         "validation_status": proposal.validation_status,
         "compile_status": proposal.compile_status,
         "compile_error_summary": proposal.compile_error_summary,

@@ -79,7 +79,10 @@ class ProposalPolicyEngine:
             fallback_used=(not enabled) or (action in {"warn", "reject"} and not bool(review.get("review_payload"))),
             warnings=review.get("warnings") or [],
             risk_level=review.get("risk_level") or "low",
-            metadata={"diff_review": review.get("review_payload") or {}},
+            metadata={
+                "diff_review": review.get("review_payload") or {},
+                "semantic_diff_summary": (review.get("review_payload") or {}).get("semantic_summary") or {},
+            },
         )
 
     @staticmethod

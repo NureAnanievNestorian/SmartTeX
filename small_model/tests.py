@@ -194,6 +194,55 @@ class SmallModelControlLayerTests(TestCase):
         self.assertEqual(result.action, "allow")
         self.assertFalse(result.smcl_used)
 
+    def test_diff_review_builds_semantic_summary(self) -> None:
+        diff = (
+            "diff --git a/main.typ b/main.typ\n"
+            "--- a/main.typ\n"
+            "+++ b/main.typ\n"
+            "@@ -10,3 +10,3 @@\n"
+            " = Architecture\n"
+            "-Old paragraph explains the mobile client responsibilities and offline state handling.\n"
+            "+New paragraph clarifies the mobile client responsibilities and offline state handling.\n"
+        )
+
+        review_input = build_diff_review_input(diff)
+
+        self.assertEqual(review_input.semantic_summary["stats"]["files_changed"], 1)
+        self.assertEqual(review_input.semantic_summary["title"], "Змінено 1 файл: +1/-1")
+        self.assertIn("Architecture", review_input.touched_headings)
+
+    def test_diff_review_warns_with_human_fields_for_content_loss(self) -> None:
+        diff = (
+            "diff --git a/main.typ b/main.typ\n"
+            "--- a/main.typ\n"
+            "+++ b/main.typ\n"
+            "@@ -20,6 +20,1 @@\n"
+            "-= Аналіз аналогів\n"
+            "-Spotify демонструє усталений підхід до організації аудіоконтенту через каталог, пошук і персоналізовані рекомендації.\n"
+            "-Genius є прикладом середовища, де текст і пояснення спільноти формують окремий користувацький сценарій.\n"
+            "-SoundCloud показує модель авторського профілю, публікацій і соціальної взаємодії навколо аудіоконтенту.\n"
+            "-Ці приклади потрібні для порівняння функцій майбутнього застосунку з існуючими платформами.\n"
+            "+Оновлено формулювання.\n"
+        )
+
+        result = ProposalPolicyEngine.post_patch_check(
+            self.user,
+            self.project,
+            ChangeProposal(
+                project=self.project,
+                goal="Tiny wording edit",
+                smcl_metadata={"edit_intent": {"max_changed_lines": 10, "max_files": 1, "edit_mode": "paragraph_edit"}},
+            ),
+            diff,
+        )
+
+        warnings = {item["code"]: item for item in result.warnings}
+        self.assertIn("DELETED_HEADING", warnings)
+        self.assertIn("CONTENT_LOSS_TRAP", warnings)
+        self.assertEqual(warnings["DELETED_HEADING"]["human_title"], "Видалено заголовок")
+        self.assertTrue(warnings["CONTENT_LOSS_TRAP"]["samples"])
+        self.assertEqual(result.metadata["semantic_diff_summary"]["impact"], "high")
+
     @override_settings(SMALL_MODEL_FEATURE_ENABLED=True)
     def test_provider_narrower_patch_reject_without_semantic_risk_is_downgraded_to_warning(self) -> None:
         UserSmallModelAccess.objects.create(user=self.user, enabled=True)

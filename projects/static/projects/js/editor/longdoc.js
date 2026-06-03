@@ -2520,6 +2520,78 @@ function truncateDiffFragment(text, maxLen = 260) {
   return value.length > maxLen ? `${value.slice(0, maxLen - 1)}…` : value;
 }
 
+function renderSemanticDiffSummary(summary) {
+  if (!summary || typeof summary !== "object" || !summary.title) return "";
+  const impact = String(summary.impact || "low");
+  const items = Array.isArray(summary.items) ? summary.items : [];
+  const impactLabel = impact === "high" ? "Високий вплив" : impact === "medium" ? "Середній вплив" : "Локальна зміна";
+  return `
+    <section class="smcl-review-card semantic ${escHtml(impact)}">
+      <div class="smcl-review-head">
+        <span class="smcl-review-kicker">Semantic diff summary</span>
+        <span class="smcl-review-impact">${escHtml(impactLabel)}</span>
+      </div>
+      <div class="smcl-review-title">${escHtml(summary.title)}</div>
+      ${items.length ? `
+        <div class="smcl-summary-grid">
+          ${items.map(item => `
+            <div class="smcl-summary-item ${escHtml(item.kind || "item")}">
+              <strong>${escHtml(item.label || "")}</strong>
+              <span>${escHtml(item.detail || "")}</span>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function renderSmclWarnings(warnings, riskLevel) {
+  const items = Array.isArray(warnings) ? warnings : [];
+  if (!items.length) return "";
+  return `
+    <section class="smcl-review-card warnings ${escHtml(riskLevel || "medium")}">
+      <div class="smcl-review-head">
+        <span class="smcl-review-kicker">Safety review</span>
+        <span class="diff-chip del">${escHtml(riskLevel || "medium")}</span>
+      </div>
+      <div class="smcl-warning-list">
+        ${items.map(w => {
+          const title = w?.human_title || w?.message || w?.code || "Попередження";
+          const detail = w?.human_detail || w?.message || "";
+          const samples = Array.isArray(w?.samples) ? w.samples : [];
+          const locations = Array.isArray(w?.locations) ? w.locations : [];
+          const severity = String(w?.severity || "medium");
+          return `
+            <article class="smcl-warning-item ${escHtml(severity)}">
+              <div class="smcl-warning-icon">${severity === "high" ? "!" : "i"}</div>
+              <div class="smcl-warning-body">
+                <div class="smcl-warning-title">
+                  <strong>${escHtml(title)}</strong>
+                  <span>${escHtml(w?.code || "")}</span>
+                </div>
+                ${detail ? `<p>${escHtml(detail)}</p>` : ""}
+                ${locations.length ? `<div class="smcl-warning-tags">${locations.map(item => `<span>${escHtml(item)}</span>`).join("")}</div>` : ""}
+                ${samples.length ? `<div class="smcl-warning-samples">${samples.slice(0, 2).map(item => `<code>${escHtml(truncateDiffFragment(item, 180))}</code>`).join("")}</div>` : ""}
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSmclReviewPanel(data, session) {
+  const warnings = data.smcl_warnings || session?.smcl_warnings || [];
+  const summary = data.semantic_diff_summary || session?.semantic_diff_summary || data.smcl_metadata?.semantic_diff_summary || {};
+  const riskLevel = data.smcl_risk_level || session?.smcl_risk_level || "medium";
+  const summaryHtml = renderSemanticDiffSummary(summary);
+  const warningsHtml = renderSmclWarnings(warnings, riskLevel);
+  if (!summaryHtml && !warningsHtml) return "";
+  return `<div class="smcl-review-panel">${summaryHtml}${warningsHtml}</div>`;
+}
+
 async function openSessionDiffModal({ forceReload = false } = {}) {
   const overlay = sessionDiffOverlayEl;
   const content = sessionDiffContentEl;
@@ -2544,20 +2616,14 @@ async function openSessionDiffModal({ forceReload = false } = {}) {
     const currentSession = s.longdoc.activeSession;
     if (!currentSession || activeSessionSignature(currentSession) !== signature) return;
     s.longdoc.proposalModalDiffSignature = signature;
-    const warnings = data.smcl_warnings || session?.smcl_warnings || [];
-    const warningHtml = warnings.length ? `
-      <div class="diff-summary">
-        <span class="diff-chip del">SMCL ${escHtml(data.smcl_risk_level || session?.smcl_risk_level || "medium")}</span>
-        <span>${warnings.map(w => escHtml(w.message || w.code || "")).join(" · ")}</span>
-      </div>
-    ` : "";
+    const reviewHtml = renderSmclReviewPanel(data, session);
     let diffHtml;
     if (!data.diff_text && data.compile_error_summary) {
       diffHtml = `<pre class="diff-empty diff-compile-error">${escHtml(data.compile_error_summary)}</pre>`;
     } else {
       diffHtml = renderDiffContent(data.diff_text || "", data.diff_annotations || [], data.resolved_annotations || []);
     }
-    if (content) content.innerHTML = warningHtml + diffHtml;
+    if (content) content.innerHTML = reviewHtml + diffHtml;
 
   } catch (err) {
     if (content) content.innerHTML = `<span class="diff-empty">Помилка завантаження diff: ${escHtml(err.message)}</span>`;

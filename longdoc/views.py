@@ -848,6 +848,8 @@ def api_change_proposal_diff(request: HttpRequest, project_id: int) -> JsonRespo
             "compile_error_summary": proposal.compile_error_summary or "",
             "smcl_risk_level": proposal.smcl_risk_level or "low",
             "smcl_warnings": proposal.smcl_warnings or [],
+            "smcl_metadata": proposal.smcl_metadata or {},
+            "semantic_diff_summary": (proposal.smcl_metadata or {}).get("semantic_diff_summary") or {},
             "resolved_annotations": resolved_annotations,
             "diff_annotations": list_diff_annotations(proposal),
         }
