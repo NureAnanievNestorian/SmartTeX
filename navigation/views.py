@@ -53,6 +53,8 @@ def api_prepare_document_work(request: HttpRequest, project_id: int) -> JsonResp
         attempted_patch_ops=body.get("attempted_patch_ops") if isinstance(body.get("attempted_patch_ops"), list) else None,
         selected_file=(str(body.get("selected_file")) if body.get("selected_file") else None),
         selected_region_id=(int(body["selected_region_id"]) if str(body.get("selected_region_id") or "").strip().isdigit() else None),
+        annotation_ids=body.get("annotation_ids") if isinstance(body.get("annotation_ids"), list) else None,
+        target_filenames=body.get("target_filenames") if isinstance(body.get("target_filenames"), list) else None,
     )
     return JsonResponse(result)
 

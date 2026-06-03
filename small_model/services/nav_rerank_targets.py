@@ -67,8 +67,23 @@ class NavRerankTargetsService(SmallModelCallMixin):
                     "filename": str(c.get("filename") or ""),
                     "region_title": str(c.get("region_title") or "")[:200],
                     "role": str(c.get("role") or ""),
+                    "reachability": str(c.get("reachability") or ""),
                     "state": str(c.get("state") or ""),
                     "summary": str(c.get("summary") or "")[:280],
+                    "reason": str(c.get("reason") or "")[:280],
+                    "annotation_ids": list(c.get("annotation_ids") or [])[:20],
+                    "annotation_instructions": [
+                        {
+                            "id": item.get("id"),
+                            "status": str(item.get("status") or "")[:30],
+                            "line_start": item.get("line_start"),
+                            "line_end": item.get("line_end"),
+                            "instruction": str(item.get("instruction") or "")[:220],
+                            "selected_text": str(item.get("selected_text") or "")[:180],
+                        }
+                        for item in (c.get("annotation_instructions") or [])[:8]
+                        if isinstance(item, dict)
+                    ],
                     "deterministic_score": float(c.get("deterministic_score", 0.0) or 0.0),
                 }
                 for c in clamped
@@ -81,7 +96,11 @@ class NavRerankTargetsService(SmallModelCallMixin):
                 "Rerank candidates for the user's edit request. Return "
                 "STRICT JSON. Only include candidate_ids from the input. "
                 "Higher confidence means more likely to be the correct "
-                "edit target. Do not invent paths."
+                "edit target. Do not invent paths. Treat annotation_ids and "
+                "annotation_instructions as high-signal factual links to the "
+                "target file/lines. deterministic_score is only a weak lexical "
+                "signal; prefer concrete file summaries, headings, annotation "
+                "context, and selected text when available."
             ),
             input_payload=payload,
             response_schema=schemas.NAV_RERANK_TARGETS_SCHEMA,

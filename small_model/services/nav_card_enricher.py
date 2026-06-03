@@ -27,6 +27,7 @@ _MAX_REP_LINES = 40
 _MAX_REP_CHARS = 2000
 _MAX_HEADINGS = 24
 _MAX_TRIGGERS = 6
+_MAX_LABELS = 8
 
 
 def _representative_slice(content: str) -> str:
@@ -99,7 +100,11 @@ def _sanitize_file_enrichment(raw: dict, *, deterministic_role: str) -> dict:
         "summary_confidence": summary_confidence,
         "role_refinement": role_refinement,
         "role_confidence": role_confidence,
-        "edit_triggers": _clamp_triggers(raw.get("edit_triggers")),
+        "edit_triggers": [
+            *_clamp_triggers(raw.get("edit_triggers")),
+            *_labels_to_triggers(raw.get("semantic_labels"), source="semantic_label"),
+            *_labels_to_triggers(raw.get("primary_terms"), source="primary_term"),
+        ][:_MAX_TRIGGERS + _MAX_LABELS],
     }
 
 
@@ -123,8 +128,23 @@ def _sanitize_region_enrichment(raw: dict) -> dict:
         "state": state,
         "state_confidence": state_confidence,
         "summary_confidence": summary_confidence,
-        "edit_triggers": _clamp_triggers(raw.get("edit_triggers")),
+        "edit_triggers": [
+            *_clamp_triggers(raw.get("edit_triggers")),
+            *_labels_to_triggers(raw.get("semantic_labels"), source="semantic_label"),
+            *_labels_to_triggers(raw.get("primary_terms"), source="primary_term"),
+        ][:_MAX_TRIGGERS + _MAX_LABELS],
     }
+
+
+def _labels_to_triggers(items: Any, *, source: str) -> list[dict]:
+    if not isinstance(items, list):
+        return []
+    out: list[dict] = []
+    for item in items[:_MAX_LABELS]:
+        phrase = str(item or "").strip()
+        if 3 <= len(phrase) <= 80:
+            out.append({"phrase": phrase, "weight": 1.4, "source": source})
+    return out
 
 
 class NavFileCardEnrichService(SmallModelCallMixin):
@@ -170,7 +190,9 @@ class NavFileCardEnrichService(SmallModelCallMixin):
             system_instruction=(
                 "Enrich a navigation FileCard. Return STRICT JSON. "
                 "Do not invent files. Never override deterministic structural facts. "
-                "Only refine role when deterministic_role is unknown/auxiliary."
+                "Only refine role when deterministic_role is unknown/auxiliary. "
+                "Write a useful search/edit summary of what this file is about, not file statistics. "
+                "semantic_labels and primary_terms should be short phrases a user may mention when asking to edit this file."
             ),
             input_payload=payload,
             response_schema=schemas.NAV_FILE_CARD_ENRICH_SCHEMA,
@@ -225,7 +247,8 @@ class NavRegionCardEnrichService(SmallModelCallMixin):
             project=project,
             system_instruction=(
                 "Enrich a navigation RegionCard. Return STRICT JSON. "
-                "Do not invent content. State must reflect what the body actually contains."
+                "Do not invent content. State must reflect what the body actually contains. "
+                "Write a useful search/edit summary of this region and include semantic labels or terms users may mention."
             ),
             input_payload=payload,
             response_schema=schemas.NAV_REGION_CARD_ENRICH_SCHEMA,

@@ -36,6 +36,10 @@ Use the returned ``read_targets``, ``likely_edit_targets``,
 your reads and edits. Do not check settings or feature flags first —
 feature availability is reported inside ``capabilities``.
 
+When the user names concrete annotations, files, or other known targets,
+pass them as structured fields instead of relying on natural-language
+parsing: ``annotation_ids=[...]`` and/or ``target_filenames=[...]``.
+
 **Context bundle**: when ``context_bundle`` is present in the response,
 use it as follows:
 
@@ -61,6 +65,8 @@ def prepare_document_work_tool(
     attempted_patch_ops: Optional[list[dict]] = None,
     selected_file: Optional[str] = None,
     selected_region_id: Optional[int] = None,
+    annotation_ids: Optional[list[int]] = None,
+    target_filenames: Optional[list[str]] = None,
     include_context: bool = True,
     context_budget_lines: int = 120,
 ) -> dict[str, Any]:
@@ -81,6 +87,8 @@ def prepare_document_work_tool(
             attempted_patch_ops=attempted_patch_ops,
             selected_file=selected_file,
             selected_region_id=selected_region_id,
+            annotation_ids=annotation_ids,
+            target_filenames=target_filenames,
             include_context=include_context,
             context_budget_lines=context_budget_lines,
         )

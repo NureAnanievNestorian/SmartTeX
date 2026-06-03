@@ -23,6 +23,7 @@ from navigation.models import (
     Reachability,
     RegionCard,
     RegionKind,
+    Source,
     StateKind,
 )
 from navigation.services.preparation import (
@@ -31,6 +32,8 @@ from navigation.services.preparation import (
     _score_file_card,
     _score_region,
 )
+from navigation.services.index_builder import _upsert_file_card
+from navigation.services.discovery import DiscoveredFile
 from navigation.services.structure import deterministic_region_triggers
 from projects.models import Project
 from templates_lib.models import Template
@@ -209,6 +212,124 @@ class ContextBundleEditTargetPolicyTests(TestCase):
         kw_generic = _request_keywords("update placeholder section")
         score_bench_edit = _score_file_card(fc2, kw_generic, for_edit=True)
         self.assertLess(score_bench_edit, score_edit, "BENCHMARK file should score lower than explicitly targeted lib.typ")
+
+    def test_prepare_uses_annotation_files_as_high_confidence_targets(self) -> None:
+        from longdoc.models import ProjectAnnotation
+        from navigation.services.preparation import prepare_document_work
+
+        user = _make_user("annotationprep")
+        project = _make_project(user, "Annotation Prep Test")
+        index, _ = ProjectNavigationIndex.objects.get_or_create(project=project, defaults={"status": IndexStatus.READY})
+        index.status = IndexStatus.READY
+        index.schema_version = 1
+        index.last_built_version_number = 1
+        index.save()
+        FileCard.objects.create(
+            index=index,
+            filename="sections/04-software-decisions.typ",
+            role=FileRole.CONTENT_SECTION,
+            reachability=Reachability.REACHABLE,
+            summary="Software decisions: data layer, services, payloads, subscription payments.",
+            line_count=120,
+        )
+        FileCard.objects.create(
+            index=index,
+            filename="sections/03-architecture.typ",
+            role=FileRole.CONTENT_SECTION,
+            reachability=Reachability.REACHABLE,
+            edit_triggers=[{"phrase": "payload"}],
+            line_count=120,
+        )
+        annotation = ProjectAnnotation.objects.create(
+            project=project,
+            file_name="sections/04-software-decisions.typ",
+            line_start=40,
+            line_end=42,
+            selected_text="data layer",
+            instruction="Замінити англіцизм data layer.",
+        )
+
+        with patch("navigation.services.preparation.project_dir", return_value=Path(tempfile.gettempdir())):
+            payload = prepare_document_work(
+                project,
+                user_request="Виправити прийняті помітки одним proposal",
+                annotation_ids=[annotation.id],
+                include_context=False,
+            )
+
+        self.assertEqual(payload["read_targets"][0]["filename"], "sections/04-software-decisions.typ")
+        self.assertEqual(payload["likely_edit_targets"][0]["filename"], "sections/04-software-decisions.typ")
+        self.assertEqual(payload["annotation_context"]["matched_ids"], [annotation.id])
+
+    def test_prepare_accepts_explicit_target_filenames(self) -> None:
+        from navigation.services.preparation import prepare_document_work
+
+        user = _make_user("targetfiles")
+        project = _make_project(user, "Target Filename Prep Test")
+        index, _ = ProjectNavigationIndex.objects.get_or_create(project=project, defaults={"status": IndexStatus.READY})
+        index.status = IndexStatus.READY
+        index.schema_version = 1
+        index.last_built_version_number = 1
+        index.save()
+        FileCard.objects.create(
+            index=index,
+            filename="sections/04-software-decisions.typ",
+            role=FileRole.CONTENT_SECTION,
+            reachability=Reachability.REACHABLE,
+            summary="Software decisions.",
+            line_count=80,
+        )
+
+        payload = prepare_document_work(
+            project,
+            user_request="Внести точкові правки",
+            target_filenames=["sections/04-software-decisions.typ"],
+            include_context=False,
+        )
+
+        self.assertEqual(payload["read_targets"][0]["filename"], "sections/04-software-decisions.typ")
+        self.assertEqual(payload["target_file_context"]["matched"], ["sections/04-software-decisions.typ"])
+
+    def test_upsert_preserves_small_model_navigation_metadata_when_content_unchanged(self) -> None:
+        user = _make_user("enrichcache")
+        project = _make_project(user, "Enrich Cache Test")
+        index, _ = ProjectNavigationIndex.objects.get_or_create(project=project, defaults={"status": IndexStatus.READY})
+        card = FileCard.objects.create(
+            index=index,
+            filename="sections/04-software-decisions.typ",
+            role=FileRole.CONTENT_SECTION,
+            reachability=Reachability.REACHABLE,
+            summary="Small model summary about software decisions.",
+            summary_source=Source.SMALL_MODEL,
+            edit_triggers=[{"phrase": "керування підпискою", "source": "small_model"}],
+            triggers_source=Source.SMALL_MODEL,
+            content_hash="abc",
+            line_count=2,
+            byte_size=10,
+        )
+        df = DiscoveredFile(
+            filename="sections/04-software-decisions.typ",
+            absolute_path=Path(tempfile.gettempdir()) / "missing.typ",
+            line_count=2,
+            byte_size=10,
+            content_hash="abc",
+        )
+
+        _upsert_file_card(
+            index=index,
+            df=df,
+            project=project,
+            reachable_set={"sections/04-software-decisions.typ"},
+            orphan_set=set(),
+            dynamic_unresolved=set(),
+            includes_map={"forward": {}, "reverse": {}},
+            version_number=1,
+        )
+
+        card.refresh_from_db()
+        self.assertEqual(card.summary_source, Source.SMALL_MODEL)
+        self.assertIn("software decisions", card.summary)
+        self.assertEqual(card.triggers_source, Source.SMALL_MODEL)
 
 
 class MetadataBlockContextTests(TestCase):

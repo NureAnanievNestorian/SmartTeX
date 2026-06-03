@@ -430,8 +430,16 @@ def _upsert_file_card(
         updated = False
         if not created:
             unchanged = card.content_hash == df.content_hash and not card.is_stale
+            preserve_sm_summary = unchanged and card.summary_source == Source.SMALL_MODEL and bool(card.summary)
+            preserve_sm_triggers = unchanged and card.triggers_source == Source.SMALL_MODEL and bool(card.edit_triggers)
+            old_summary = card.summary
+            old_summary_source = card.summary_source
+            old_summary_confidence = card.summary_confidence
+            old_triggers = card.edit_triggers
+            old_triggers_source = card.triggers_source
             # Always refresh deterministic metadata; cheaper to overwrite than diff.
-            # But preserve small-model authored fields (none in Phase 1).
+            # Preserve small-model search metadata while content is unchanged;
+            # re-enrich only changed cards so rebuilds don't waste tokens.
             card.role = role
             card.role_source = Source.DETERMINISTIC
             card.role_confidence = role_conf
@@ -445,6 +453,13 @@ def _upsert_file_card(
             card.summary_source = Source.DETERMINISTIC
             card.edit_triggers = triggers
             card.triggers_source = Source.DETERMINISTIC
+            if preserve_sm_summary:
+                card.summary = old_summary
+                card.summary_source = old_summary_source
+                card.summary_confidence = old_summary_confidence
+            if preserve_sm_triggers:
+                card.edit_triggers = old_triggers
+                card.triggers_source = old_triggers_source
             card.line_count = df.line_count
             card.byte_size = df.byte_size
             card.content_hash = df.content_hash
@@ -513,6 +528,14 @@ def _sync_region_cards(
             RegionCard.objects.create(file_card=card, order=info.order, **defaults)
             created += 1
         else:
+            unchanged = existing_card.content_hash == info.content_hash and not existing_card.is_stale
+            if unchanged and existing_card.summary_source == Source.SMALL_MODEL and existing_card.summary:
+                defaults["summary"] = existing_card.summary
+                defaults["summary_source"] = existing_card.summary_source
+                defaults["summary_confidence"] = existing_card.summary_confidence
+            if unchanged and existing_card.triggers_source == Source.SMALL_MODEL and existing_card.edit_triggers:
+                defaults["edit_triggers"] = existing_card.edit_triggers
+                defaults["triggers_source"] = existing_card.triggers_source
             changed = False
             for k, v in defaults.items():
                 if getattr(existing_card, k) != v:
@@ -615,6 +638,7 @@ def _enrich_cards(
         if remaining <= 0:
             summary.enrichment_budget_exhausted = True
             break
+        enrich_file = _card_needs_enrichment(card)
         abs_path = root / card.filename
         try:
             content = abs_path.read_text(encoding="utf-8", errors="ignore")
@@ -623,36 +647,39 @@ def _enrich_cards(
         headings = list(
             card.region_cards.exclude(title="").values_list("title", flat=True)[:24]
         )
-        try:
-            file_result = file_service.run(
-                user=user,
-                project=project,
-                filename=card.filename,
-                deterministic_role=card.role,
-                deterministic_state=card.state,
-                line_count=card.line_count,
-                byte_size=card.byte_size,
-                heading_titles=headings,
-                representative_content=content,
-                includes_out=list(card.includes_out_filenames or []),
-                included_by=list(card.included_by_filenames or []),
-            )
-        except Exception:  # pragma: no cover - defensive
-            file_result = None
-            seen_provider_error = True
-        remaining -= 1
+        if enrich_file:
+            try:
+                file_result = file_service.run(
+                    user=user,
+                    project=project,
+                    filename=card.filename,
+                    deterministic_role=card.role,
+                    deterministic_state=card.state,
+                    line_count=card.line_count,
+                    byte_size=card.byte_size,
+                    heading_titles=headings,
+                    representative_content=content,
+                    includes_out=list(card.includes_out_filenames or []),
+                    included_by=list(card.included_by_filenames or []),
+                )
+            except Exception:  # pragma: no cover - defensive
+                file_result = None
+                seen_provider_error = True
+            remaining -= 1
 
-        if file_result and file_result.get("_error") == "QUOTA_EXCEEDED":
-            seen_quota_error = True
-            break
-        if file_result:
-            if _apply_file_enrichment(card, file_result):
-                summary.file_cards_enriched += 1
+            if file_result and file_result.get("_error") == "QUOTA_EXCEEDED":
+                seen_quota_error = True
+                break
+            if file_result:
+                if _apply_file_enrichment(card, file_result):
+                    summary.file_cards_enriched += 1
 
         for region in list(card.region_cards.all()):
             if remaining <= 0:
                 summary.enrichment_budget_exhausted = True
                 break
+            if not _region_needs_enrichment(region):
+                continue
             # Skip tiny / trivial regions.
             span = max(1, int(region.line_end) - int(region.line_start) + 1)
             if span < 3 and not region.title:
@@ -751,6 +778,22 @@ def _apply_file_enrichment(card: FileCard, result: dict) -> bool:
     if changed:
         card.save()
     return changed
+
+
+def _card_needs_enrichment(card: FileCard) -> bool:
+    if card.is_stale:
+        return True
+    has_summary = card.summary_source == Source.SMALL_MODEL and bool(card.summary)
+    has_triggers = card.triggers_source == Source.SMALL_MODEL and bool(card.edit_triggers)
+    return not (has_summary and has_triggers)
+
+
+def _region_needs_enrichment(region: RegionCard) -> bool:
+    if region.is_stale:
+        return True
+    has_summary = region.summary_source == Source.SMALL_MODEL and bool(region.summary)
+    has_triggers = region.triggers_source == Source.SMALL_MODEL and bool(region.edit_triggers)
+    return not (has_summary and has_triggers)
 
 
 def _apply_region_enrichment(region: RegionCard, result: dict) -> bool:

@@ -280,6 +280,37 @@ def _request_keywords(user_request: str) -> set[str]:
     return {w.lower() for w in words if len(w) >= 3}
 
 
+def _normalize_int_ids(values: list[Any] | tuple[Any, ...] | None, *, max_ids: int = 100) -> list[int]:
+    result: list[int] = []
+    seen: set[int] = set()
+    for value in values or []:
+        try:
+            item = int(value)
+        except (TypeError, ValueError):
+            continue
+        if item <= 0 or item in seen:
+            continue
+        result.append(item)
+        seen.add(item)
+        if len(result) >= max_ids:
+            break
+    return result
+
+
+def _normalize_target_filenames(values: list[Any] | tuple[Any, ...] | None, *, max_items: int = 24) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        filename = _canon_graph_path(str(value or ""))
+        if not filename or filename.startswith("../") or filename in seen:
+            continue
+        result.append(filename)
+        seen.add(filename)
+        if len(result) >= max_items:
+            break
+    return result
+
+
 def _score_file_card(card: FileCard, keywords: set[str], *, for_edit: bool = False) -> float:
     if not keywords:
         return 0.0
@@ -388,13 +419,167 @@ def _edit_target_entry(
     }
 
 
+def _annotation_context_targets(
+    *,
+    project: Project,
+    index: ProjectNavigationIndex,
+    annotation_ids: list[int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    if not annotation_ids:
+        return [], [], {"matched_ids": [], "missing_ids": []}
+    try:
+        from longdoc.models import ProjectAnnotation
+    except Exception:  # pragma: no cover
+        return [], [], {"matched_ids": [], "missing_ids": annotation_ids}
+
+    annotations = list(
+        ProjectAnnotation.objects
+        .filter(project=project, id__in=annotation_ids)
+        .exclude(status=ProjectAnnotation.Status.DISMISSED)
+        .order_by("file_name", "line_start", "id")
+    )
+    by_id = {item.id: item for item in annotations}
+    missing = [item_id for item_id in annotation_ids if item_id not in by_id]
+    grouped: dict[str, list[ProjectAnnotation]] = {}
+    for item in annotations:
+        if item.file_name:
+            grouped.setdefault(_canon_graph_path(item.file_name), []).append(item)
+
+    read_targets: list[dict[str, Any]] = []
+    edit_targets: list[dict[str, Any]] = []
+    for filename, items in grouped.items():
+        card = _find_file_card(index, filename)
+        if card is None:
+            continue
+        line_start = min((item.line_start or 1) for item in items)
+        line_end = max((item.line_end or item.line_start or line_start) for item in items)
+        pad = 8
+        line_start = max(1, line_start - pad)
+        line_end = min(max(1, card.line_count or line_end), line_end + pad)
+        annotation_label = ", ".join(f"#{item.id}" for item in items[:8])
+        target = {
+            "filename": filename,
+            "line_start": int(line_start),
+            "line_end": int(line_end),
+            "region_card_id": None,
+            "region_title": "",
+            "kind": "annotation_context",
+            "state": card.state,
+            "reason": f"annotation target(s): {annotation_label}",
+            "confidence": "high",
+            "suggested_tool": "read_file_lines",
+            "_raw_score": 100.0,
+            "_fc_role": str(card.role),
+            "_fc_reachability": str(card.reachability),
+            "_file_summary": card.summary or "",
+            "_annotation_ids": [item.id for item in items],
+            "_annotation_instructions": [
+                {
+                    "id": item.id,
+                    "status": item.status,
+                    "line_start": item.line_start,
+                    "line_end": item.line_end,
+                    "instruction": str(item.instruction or "")[:260],
+                    "selected_text": str(item.selected_text or "")[:220],
+                }
+                for item in items[:12]
+            ],
+        }
+        read_targets.append(target)
+        if card.role not in _EDIT_EXCLUDED_ROLES and card.reachability not in {Reachability.EXCLUDED, Reachability.MISSING}:
+            edit_targets.append({
+                "filename": filename,
+                "line_start": int(line_start),
+                "line_end": int(line_end),
+                "region_card_id": None,
+                "region_title": "",
+                "state": card.state,
+                "reason": target["reason"],
+                "confidence": "high",
+            })
+
+    meta = {
+        "requested_ids": annotation_ids,
+        "matched_ids": [item.id for item in annotations],
+        "missing_ids": missing,
+        "files": sorted(grouped.keys()),
+    }
+    return read_targets, edit_targets, meta
+
+
+def _filename_context_targets(
+    *,
+    index: ProjectNavigationIndex,
+    target_filenames: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    if not target_filenames:
+        return [], [], {"matched": [], "missing": []}
+    read_targets: list[dict[str, Any]] = []
+    edit_targets: list[dict[str, Any]] = []
+    matched: list[str] = []
+    missing: list[str] = []
+    for filename in target_filenames:
+        card = _find_file_card(index, filename)
+        if card is None:
+            missing.append(filename)
+            continue
+        matched.append(filename)
+        target = {
+            "filename": filename,
+            "line_start": 1,
+            "line_end": min(max(1, card.line_count or 1), 220),
+            "region_card_id": None,
+            "region_title": "",
+            "kind": "explicit_file",
+            "state": card.state,
+            "reason": "explicit target filename",
+            "confidence": "high",
+            "suggested_tool": "read_file_lines",
+            "_raw_score": 90.0,
+            "_fc_role": str(card.role),
+            "_fc_reachability": str(card.reachability),
+            "_file_summary": card.summary or "",
+        }
+        read_targets.append(target)
+        if card.role not in _EDIT_EXCLUDED_ROLES and card.reachability not in {Reachability.EXCLUDED, Reachability.MISSING}:
+            edit_targets.append({
+                "filename": filename,
+                "line_start": target["line_start"],
+                "line_end": target["line_end"],
+                "region_card_id": None,
+                "region_title": "",
+                "state": card.state,
+                "reason": target["reason"],
+                "confidence": "high",
+            })
+    return read_targets, edit_targets, {"matched": matched, "missing": missing}
+
+
+def _prepend_unique_targets(existing: list[dict[str, Any]], priority: list[dict[str, Any]], *, max_items: int) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*priority, *existing]:
+        filename = item.get("filename")
+        if not filename or filename in seen:
+            continue
+        result.append(item)
+        seen.add(filename)
+        if len(result) >= max_items:
+            break
+    return result
+
+
 def _populate_indexed_keyword(
     payload: dict[str, Any],
     *,
     index: ProjectNavigationIndex,
     user_request: str,
+    annotation_ids: list[int] | None = None,
+    target_filenames: list[str] | None = None,
 ) -> None:
     keywords = _request_keywords(user_request)
+    annotation_ids = _normalize_int_ids(annotation_ids)
+    target_filenames = _normalize_target_filenames(target_filenames)
     task_type = _infer_task_type(user_request)
     payload["task_type"] = task_type
     max_lines, max_files = _edit_budget(task_type)
@@ -441,6 +626,7 @@ def _populate_indexed_keyword(
         target["_raw_score"] = score
         target["_fc_role"] = str(fc.role)
         target["_fc_reachability"] = str(fc.reachability)
+        target["_file_summary"] = fc.summary or ""
         read_targets.append(target)
 
     # Build edit targets from independent edit scoring.
@@ -469,9 +655,48 @@ def _populate_indexed_keyword(
     payload["_pre_rerank_edit_targets"] = list(edit_targets)
     payload["constraints"]["do_not_touch_files"] = do_not_touch
 
-    if not read_targets:
+    annotation_read_targets, annotation_edit_targets, annotation_meta = _annotation_context_targets(
+        project=index.project,
+        index=index,
+        annotation_ids=annotation_ids,
+    )
+    if annotation_ids:
+        payload["annotation_context"] = annotation_meta
+        if annotation_meta.get("missing_ids"):
+            payload["warnings"].append("annotation_ids_not_found")
+    if annotation_read_targets:
+        payload["read_targets"] = _prepend_unique_targets(
+            payload["read_targets"], annotation_read_targets, max_items=_MAX_READ_TARGETS
+        )
+        payload["likely_edit_targets"] = _prepend_unique_targets(
+            payload["likely_edit_targets"], annotation_edit_targets, max_items=_MAX_EDIT_TARGETS
+        )
+        payload["_pre_rerank_edit_targets"] = list(payload["likely_edit_targets"])
+        payload["scope_confidence"] = "high"
+
+    filename_read_targets, filename_edit_targets, filename_meta = _filename_context_targets(
+        index=index,
+        target_filenames=target_filenames,
+    )
+    if target_filenames:
+        payload["target_file_context"] = filename_meta
+        if filename_meta.get("missing"):
+            payload["warnings"].append("target_filenames_not_found")
+    if filename_read_targets:
+        payload["read_targets"] = _prepend_unique_targets(
+            payload["read_targets"], filename_read_targets, max_items=_MAX_READ_TARGETS
+        )
+        payload["likely_edit_targets"] = _prepend_unique_targets(
+            payload["likely_edit_targets"], filename_edit_targets, max_items=_MAX_EDIT_TARGETS
+        )
+        payload["_pre_rerank_edit_targets"] = list(payload["likely_edit_targets"])
+        payload["scope_confidence"] = "high"
+
+    if not payload["read_targets"]:
         payload["scope_confidence"] = "low"
         payload["warnings"].append("no_keyword_match")
+    elif annotation_read_targets or filename_read_targets:
+        payload["scope_confidence"] = "high"
     elif read_scored and read_scored[0][0] >= 4:
         payload["scope_confidence"] = "high"
     else:
@@ -642,6 +867,7 @@ def _build_context_bundle(
             "region_card_id": region_card_id,
             "region_title": target.get("region_title") or "",
             "reason": target.get("reason") or "",
+            "annotation_instructions": target.get("_annotation_instructions") or [],
             "complete_region": complete_region,
             "content": snippet_text,
         })
@@ -697,6 +923,8 @@ def prepare_document_work(
     attempted_patch_ops: Optional[list[dict]] = None,
     selected_file: Optional[str] = None,
     selected_region_id: Optional[int] = None,
+    annotation_ids: Optional[list[int]] = None,
+    target_filenames: Optional[list[str]] = None,
     include_context: bool = True,
     context_budget_lines: int = 120,
 ) -> dict[str, Any]:
@@ -763,6 +991,9 @@ def prepare_document_work(
             selected_file=selected_file,
             selected_region_id=selected_region_id,
         )
+        annotation_ids = _normalize_int_ids(annotation_ids)
+        target_filenames = _normalize_target_filenames(target_filenames)
+        structured_target_request = bool(annotation_ids or target_filenames)
         mode = sel.select_mode(
             inputs,
             index=index_obj,
@@ -771,7 +1002,7 @@ def prepare_document_work(
         )
 
         # Cache lookup by request signature for non-repair, non-cheap-direct flows.
-        if mode in {"indexed_keyword", "fallback_structural"} and index_obj:
+        if mode in {"indexed_keyword", "fallback_structural"} and index_obj and not structured_target_request:
             cached = prep_cache.lookup_by_request(
                 project_id=project.id,
                 user_request=user_request or "",
@@ -839,7 +1070,11 @@ def prepare_document_work(
 
         elif mode == "indexed_keyword" and index_obj:
             _populate_indexed_keyword(
-                response, index=index_obj, user_request=user_request or ""
+                response,
+                index=index_obj,
+                user_request=user_request or "",
+                annotation_ids=annotation_ids,
+                target_filenames=target_filenames,
             )
             # Optional small-model rerank promotion.
             promoted = _maybe_small_model_rerank(
@@ -882,7 +1117,12 @@ def prepare_document_work(
         # Request-key deduplication is only useful for reusable modes; repair/minimal
         # results should still be findable by ID so propose/validate don't fail.
         reusable_modes = {"indexed_keyword", "indexed_reranked", "fallback_structural", "cheap_direct"}
-        if index_obj:
+        if index_obj and structured_target_request:
+            try:
+                prep_cache.store_id_only(response)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("preparation id-only cache write failed: %s", exc)
+        elif index_obj:
             try:
                 prep_cache.store(
                     payload=response,
@@ -961,7 +1201,10 @@ def _maybe_small_model_rerank(
             "role": t.get("_fc_role", ""),
             "reachability": t.get("_fc_reachability", ""),
             "state": t.get("state") or "",
-            "summary": t.get("reason") or "",
+            "summary": t.get("_file_summary") or t.get("reason") or "",
+            "reason": t.get("reason") or "",
+            "annotation_ids": t.get("_annotation_ids") or [],
+            "annotation_instructions": t.get("_annotation_instructions") or [],
             "deterministic_score": t.get("_raw_score", float(len(read_targets) - idx)),
         })
     try:

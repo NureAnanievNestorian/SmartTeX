@@ -159,6 +159,8 @@ NAV_FILE_CARD_ENRICH_SCHEMA = {
                 },
             },
         },
+        "semantic_labels": {"type": "array", "items": {"type": "string"}},
+        "primary_terms": {"type": "array", "items": {"type": "string"}},
     },
 }
 
@@ -179,6 +181,8 @@ NAV_REGION_CARD_ENRICH_SCHEMA = {
                 },
             },
         },
+        "semantic_labels": {"type": "array", "items": {"type": "string"}},
+        "primary_terms": {"type": "array", "items": {"type": "string"}},
     },
 }
 
