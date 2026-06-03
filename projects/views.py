@@ -452,6 +452,8 @@ def _project_payload(project: Project, user=None) -> dict:
             "mcp_write_context": bool(longdoc_settings and longdoc_settings.enabled and longdoc_settings.mcp_write_context),
             "locked": locked,
             "locking_proposal_id": locking_proposal.id if locking_proposal else None,
+            "locking_session_id": locking_session.id if locking_session else None,
+            "locking_session_status": locking_session.status if locking_session else "",
         },
         "small_model": {
             "enabled": bool(small_model_settings and small_model_settings.small_model_control_enabled),

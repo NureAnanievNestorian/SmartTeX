@@ -1137,9 +1137,13 @@ def api_change_proposal_discard(request: HttpRequest, project_id: int) -> JsonRe
 
     project = _project_with_owner(project_id, request.user)
     proposal = get_active_change_proposal(project)
-    if proposal is None:
-        return JsonResponse({"error": "NO_ACTIVE_PROPOSAL", "message": "No active suggested change."}, status=404)
     try:
+        if proposal is None:
+            locking_session = get_locking_session(project)
+            if locking_session is None:
+                return JsonResponse({"error": "NO_ACTIVE_PROPOSAL", "message": "No active suggested change."}, status=404)
+            discard_session(locking_session)
+            return JsonResponse({"proposal": None, "discarded_session_id": locking_session.id})
         if proposal.internal_session_id:
             discard_session(proposal.internal_session)
         else:

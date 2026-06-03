@@ -4383,6 +4383,42 @@
             min-width: 0;
         }
 
+        .e-readonly-actions {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            margin-left: 2px;
+        }
+
+        .e-readonly-overlay.can-discard-lock .e-readonly-actions {
+            display: inline-flex;
+        }
+
+        .e-readonly-discard {
+            border: 1px solid rgba(248, 113, 113, .38);
+            border-radius: 11px;
+            color: #fecaca;
+            background: rgba(127, 29, 29, .28);
+            padding: 7px 10px;
+            font-size: 12px;
+            font-weight: 900;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: transform .14s ease, border-color .14s ease, background .14s ease;
+        }
+
+        .e-readonly-discard:hover {
+            transform: translateY(-1px);
+            border-color: rgba(248, 113, 113, .68);
+            background: rgba(153, 27, 27, .42);
+        }
+
+        .e-readonly-discard:disabled {
+            opacity: .62;
+            cursor: wait;
+            transform: none;
+        }
+
         .e-readonly-kicker {
             color: rgba(216, 255, 231, .62);
             font-size: 10px;
@@ -5913,6 +5949,9 @@
                             <span class="e-readonly-copy">
                                 <span class="e-readonly-kicker">Read-only</span>
                                 <span class="e-readonly-label" data-readonly-label>{% if session_review %}Перегляд зміни доступний тільки для читання{% else %}Редактор доступний тільки для читання, доки запропонована зміна активна{% endif %}</span>
+                            </span>
+                            <span class="e-readonly-actions">
+                                <button class="e-readonly-discard" id="readonly-discard-session-btn" type="button">Скасувати AI-сесію</button>
                             </span>
                         </span>
                     </div>

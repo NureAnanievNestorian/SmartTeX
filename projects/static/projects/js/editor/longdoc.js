@@ -20,6 +20,7 @@ const overviewBadgeEl = document.getElementById("writing-assistant-badge");
 const centerEl = document.getElementById("drop-zone");
 const waTabBtnEl = document.getElementById("wa-tab-btn");
 const readonlyOverlayEl = document.getElementById("readonly-overlay");
+const readonlyDiscardSessionBtn = document.getElementById("readonly-discard-session-btn");
 
 let _reloadProjectMeta = null;
 let _refreshAnnotationMarkers = null;
@@ -1785,11 +1786,20 @@ function isProjectLockedForEditing() {
   return Boolean(cfg.sessionReview || s.longdoc.settings?.locked || s.projectMeta?.longdoc?.locked);
 }
 
+function hasHiddenLockingSession() {
+  const sessionId = s.projectMeta?.longdoc?.locking_session_id;
+  const proposalId = s.projectMeta?.longdoc?.locking_proposal_id;
+  return Boolean(sessionId && !proposalId && !isSessionVisibleInUi(s.longdoc.activeSession));
+}
+
 function readonlyReasonText() {
   if (cfg.sessionReview) return "Перегляд зміни доступний тільки для читання";
   const session = s.longdoc.activeSession;
   if (session && !isSessionVisibleInUi(session)) {
     return "AI готує запропоновану зміну. Редагування тимчасово заблоковано";
+  }
+  if (hasHiddenLockingSession()) {
+    return "AI-сесія зависла або ще готується. Можна скасувати її, щоб розблокувати редактор";
   }
   if (session) {
     return "Запропонована зміна активна. Прийміть або відхиліть її, щоб редагувати";
@@ -1802,6 +1812,7 @@ function applyProjectEditLock() {
   if (editorWrapEl) editorWrapEl.classList.toggle("project-locked", locked);
   if (readonlyOverlayEl) {
     readonlyOverlayEl.setAttribute("aria-hidden", locked ? "false" : "true");
+    readonlyOverlayEl.classList.toggle("can-discard-lock", Boolean(locked && hasHiddenLockingSession()));
     const label = readonlyOverlayEl.querySelector("[data-readonly-label]");
     if (label) label.textContent = readonlyReasonText();
   }
@@ -2382,7 +2393,11 @@ async function acceptSession() {
 }
 
 async function discardSession() {
-  if (!(await showConfirm("Відхилити запропоновану зміну? Дію не можна скасувати."))) return;
+  const hiddenLock = hasHiddenLockingSession();
+  const message = hiddenLock
+    ? "Скасувати активну AI-сесію і розблокувати редактор? Незбережений proposal від цієї сесії буде відхилено."
+    : "Відхилити запропоновану зміну? Дію не можна скасувати.";
+  if (!(await showConfirm(message))) return;
   try {
     await api(`/api/projects/${cfg.projectId}/change-proposals/discard/`, { method: "POST" });
     if (cfg.sessionReview) {
@@ -2392,6 +2407,8 @@ async function discardSession() {
     s.longdoc.activeSession = null;
     renderSessionBanner();
     closeSessionDiffModal();
+    const main = await import("./app.js");
+    await main.loadProjectMeta?.();
     await loadLongdocData();
   } catch (err) {
     alert(`Не вдалося відхилити зміни: ${err.message}`);
@@ -2423,6 +2440,7 @@ export function initSessionUI() {
   document.getElementById("session-diff-discard-btn")?.addEventListener("click", discardSession);
   document.getElementById("session-diff-footer-accept-btn")?.addEventListener("click", acceptSession);
   document.getElementById("session-diff-footer-discard-btn")?.addEventListener("click", discardSession);
+  readonlyDiscardSessionBtn?.addEventListener("click", discardSession);
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();
   });
