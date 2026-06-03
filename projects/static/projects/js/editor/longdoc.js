@@ -234,6 +234,7 @@ function positionAnnotationRailCards() {
   if (!list) return;
   const headHeight = head?.getBoundingClientRect?.().height || 0;
   const listHeight = list.clientHeight || 0;
+  const safeVisibleTop = 24;
   const cards = [];
   for (const card of list.querySelectorAll(".annotation-rail-card[data-line-start]")) {
     const line = Number(card.getAttribute("data-line-start") || 1);
@@ -246,7 +247,10 @@ function positionAnnotationRailCards() {
     card.style.visibility = "hidden";
     card.style.top = "0px";
     const height = card.offsetHeight || 0;
-    const desiredTop = Math.round(anchorTop - headHeight + 8);
+    let desiredTop = Math.round(anchorTop - headHeight + 8);
+    if (anchorTop >= 0 && desiredTop < safeVisibleTop) {
+      desiredTop = safeVisibleTop;
+    }
     if (listHeight && (desiredTop + height < -24 || desiredTop > listHeight + 24)) {
       card.style.display = "none";
       continue;
