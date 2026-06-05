@@ -3,6 +3,7 @@ import * as state from "./state.js";
 import * as apiMod from "./api.js";
 import * as cm from "./cm.js";
 import * as tinymist from "./tinymist.js";
+import * as localRuntime from "./local_runtime.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
@@ -39,6 +40,7 @@ let _previewLastRevealKey = "";
 let _previewMemorySyncTimer = null;
 let _previewUserInteractingUntil = 0;
 let _previewStatusEl = null;
+let _localPreviewRootUri = "";
 const PREVIEW_THEME_KEY = "smarttex.typst.previewTheme";
 const PREVIEW_FOLLOW_KEY = "smarttex.typst.previewFollowCursor";
 const PREVIEW_CLICK_KEY = "smarttex.typst.previewClickSync";
@@ -136,34 +138,51 @@ function isTypstProject() {
 }
 
 function typstPreviewEnabled() {
-  return isTypstProject() && s.projectMeta?.tinymist?.preview_enabled !== false;
+  if (!isTypstProject()) return false;
+  return s.projectMeta?.tinymist?.preview_enabled !== false || localRuntime.hasLocalRuntimeCapability("typst-preview");
 }
 
-function typstPreviewAutostart() {
-  return typstPreviewEnabled() && s.projectMeta?.tinymist?.preview_autostart !== false;
+function currentPreviewThemeParam() {
+  return s.typstPreviewTheme === "light"
+    ? "never"
+    : s.typstPreviewTheme === "dark"
+      ? "always"
+      : "auto";
 }
 
 function previewBaseUrl() {
-  const themeParam = s.typstPreviewTheme === "light"
-    ? "never"
-    : s.typstPreviewTheme === "dark"
-      ? "always"
-      : "auto";
-  return `/api/projects/${cfg.projectId}/typst-preview/?theme=${encodeURIComponent(themeParam)}`;
+  if (localRuntime.isLocalRuntimeActive()) {
+    const local = localRuntime.localRuntimeConfig();
+    const params = new URLSearchParams({
+      project_id: String(cfg.projectId || ""),
+      secret: local.secret || "",
+      theme: currentPreviewThemeParam(),
+    });
+    return `${local.url}/v1/preview/?${params.toString()}`;
+  }
+  return `/api/projects/${cfg.projectId}/typst-preview/?theme=${encodeURIComponent(currentPreviewThemeParam())}`;
 }
 
 function previewControlWsUrl() {
+  if (localRuntime.isLocalRuntimeActive()) {
+    const local = localRuntime.localRuntimeConfig();
+    const base = new URL(local.url || "http://127.0.0.1:8765");
+    base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+    base.pathname = "/ws/typst-preview/control/";
+    base.search = "";
+    base.searchParams.set("project_id", String(cfg.projectId || ""));
+    base.searchParams.set("secret", local.secret || "");
+    base.searchParams.set("theme", currentPreviewThemeParam());
+    return base.toString();
+  }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const themeParam = s.typstPreviewTheme === "light"
-    ? "never"
-    : s.typstPreviewTheme === "dark"
-      ? "always"
-      : "auto";
-  return `${proto}//${location.host}/ws/projects/${cfg.projectId}/typst-preview/control/?preview_project=${encodeURIComponent(cfg.projectId)}&preview_theme=${encodeURIComponent(themeParam)}`;
+  return `${proto}//${location.host}/ws/projects/${cfg.projectId}/typst-preview/control/?preview_project=${encodeURIComponent(cfg.projectId)}&preview_theme=${encodeURIComponent(currentPreviewThemeParam())}`;
 }
 
 function absolutePreviewFilepath(filename) {
-  const rootUri = tinymist.getRootUri?.() || "";
+  const rootUri = localRuntime.isLocalRuntimeActive()
+    ? _localPreviewRootUri
+    : (tinymist.getRootUri?.() || "");
   const relative = String(filename || "");
   if (!rootUri || !relative) return "";
   if (relative.startsWith("file://")) return relative.replace(/^file:\/\//, "");
@@ -229,9 +248,9 @@ function applyPreviewModeUi() {
   const webModeActive = previewEnabled && mode === "web";
   previewKindbarEl?.classList.toggle("visible", previewEnabled);
   previewKindWebBtn?.classList.toggle("active", previewEnabled && mode === "web");
-  previewKindPdfBtn?.classList.toggle("active", mode === "pdf");
+  previewKindPdfBtn?.classList.toggle("active", false);
   if (previewKindWebBtn) previewKindWebBtn.style.display = previewEnabled ? "" : "none";
-  if (previewKindPdfBtn) previewKindPdfBtn.style.display = previewEnabled ? "" : "none";
+  if (previewKindPdfBtn) previewKindPdfBtn.style.display = "none";
   if (previewSyncFollowBtn?.parentElement) previewSyncFollowBtn.parentElement.style.display = webModeActive ? "" : "none";
   if (previewThemeAutoBtn?.parentElement) previewThemeAutoBtn.parentElement.style.display = webModeActive ? "" : "none";
   typstPreviewWrapEl?.classList.toggle("visible", webModeActive);
@@ -293,7 +312,9 @@ function connectPreviewControl() {
   previewDebug("control connect", { url: ws.url });
   ws.onopen = () => {
     previewDebug("control open");
-    if (s.typstPreviewFollowCursor) revealPreviewSelection(true);
+    if (s.typstPreviewFollowCursor && (!localRuntime.isLocalRuntimeActive() || _localPreviewRootUri)) {
+      revealPreviewSelection(true);
+    }
   };
   ws.onmessage = ev => {
     let data = null;
@@ -317,7 +338,10 @@ function connectPreviewControl() {
 }
 
 function sendPreviewControlEvent(payload) {
-  if (!previewControlConnected()) return false;
+  if (!previewControlConnected()) {
+    previewDebug("control send skipped: socket not connected", payload);
+    return false;
+  }
   try {
     _previewControlWs.send(JSON.stringify(payload));
     previewDebug("control send", payload);
@@ -418,13 +442,7 @@ function handlePreviewControlMessage(data) {
 export function initPreviewPanel() {
   loadPreviewThemePreference();
   loadPreviewSyncPreferences();
-  if (!isTypstProject()) {
-    s.previewMode = "pdf";
-  } else if (!typstPreviewAutostart()) {
-    s.previewMode = "pdf";
-  } else {
-    s.previewMode = "web";
-  }
+  s.previewMode = typstPreviewEnabled() ? "web" : "pdf";
   if (!_previewUiInitialized) {
     previewKindWebBtn?.addEventListener("click", () => setPreviewMode("web"));
     previewKindPdfBtn?.addEventListener("click", () => setPreviewMode("pdf"));
@@ -438,15 +456,23 @@ export function initPreviewPanel() {
     typstPreviewWrapEl?.addEventListener("pointerdown", () => markPreviewUserInteraction(4000), { passive: true });
     typstPreviewFrameEl?.addEventListener("load", () => {
       _previewBridgeReady = false;
+      connectPreviewControl();
       setTimeout(() => revealPreviewSelection(true), 220);
+    });
+    window.addEventListener(localRuntime.LOCAL_RUNTIME_CHANGED_EVENT, () => {
+      disconnectPreviewControl();
+      applyPreviewModeUi();
+      if (typstPreviewEnabled() && s.previewMode === "web") {
+        refreshTypstPreview(true).catch(() => {});
+      }
     });
     window.addEventListener("message", onPreviewFrameMessage);
     _previewUiInitialized = true;
   }
   applyPreviewModeUi();
   if (typstPreviewEnabled() && s.previewMode === "web") {
-    connectPreviewControl();
-    if (!typstPreviewFrameEl?.src) refreshTypstPreview(true);
+    if (typstPreviewFrameEl?.src) connectPreviewControl();
+    else refreshTypstPreview(true);
   } else {
     disconnectPreviewControl();
   }
@@ -457,11 +483,10 @@ export function getPreviewMode() {
 }
 
 export function setPreviewMode(mode) {
-  s.previewMode = typstPreviewEnabled() && mode === "web" ? "web" : "pdf";
+  s.previewMode = typstPreviewEnabled() ? "web" : "pdf";
   _previewLastRevealKey = "";
   applyPreviewModeUi();
   if (s.previewMode === "web") {
-    connectPreviewControl();
     refreshTypstPreview(true);
   } else if (s.pdfCurrentUrl) {
     disconnectPreviewControl();
@@ -476,6 +501,7 @@ export function setPreviewTheme(theme) {
   persistPreviewThemePreference();
   applyPreviewModeUi();
   if (typstPreviewEnabled() && s.previewMode === "web") {
+    disconnectPreviewControl();
     refreshTypstPreview(true);
   }
 }
@@ -496,6 +522,7 @@ export function togglePreviewClickSync() {
 export async function refreshTypstPreview(force = false) {
   if (!typstPreviewEnabled()) return;
   _previewBridgeReady = false;
+  _localPreviewRootUri = "";
   if (force) _previewLastRevealKey = "";
   const base = previewBaseUrl();
   const nextUrl = `${base}${base.includes("?") ? "&" : "?"}t=${force ? Date.now() : (s.lastPdfVersion || Date.now())}`;
@@ -572,9 +599,13 @@ export function revealPreviewSelection(force = false) {
     if (!payload) return;
     const revealKey = `${payload.filename}:${payload.lineNumber}:${payload.columnNumber}`;
     if (!force && revealKey === _previewLastRevealKey) return;
-    _previewLastRevealKey = revealKey;
     previewDebug("reveal payload", payload);
     const absolute = absolutePreviewFilepath(payload.filename);
+    const localRootPending = localRuntime.isLocalRuntimeActive() && !_localPreviewRootUri;
+    if (localRootPending) {
+      previewDebug("reveal deferred: local preview root is not ready yet");
+      return;
+    }
     const didSendCursor = absolute
       ? sendPreviewControlEvent({
         event: "changeCursorPosition",
@@ -592,8 +623,11 @@ export function revealPreviewSelection(force = false) {
         character: Math.max(0, Number(payload.columnNumber || 1) - 1),
       })
       : false;
-    if (shouldScroll) {
-      postToPreview({ type: "smarttex-preview-reveal", payload });
+    const didPostFallback = shouldScroll
+      ? postToPreview({ type: "smarttex-preview-reveal", payload })
+      : false;
+    if (didSendCursor || didSendOfficialScroll || didPostFallback) {
+      _previewLastRevealKey = revealKey;
     }
   }, force ? 40 : 260);
 }
@@ -699,12 +733,14 @@ function normalizeSourceFilename(value) {
 }
 
 function onPreviewFrameMessage(event) {
-  if (event.origin !== window.location.origin) return;
+  if (event.origin !== previewFrameOrigin()) return;
   const data = event.data || {};
   if (data.type === "smarttex-preview-ready") {
     _previewBridgeReady = true;
+    if (data.rootUri) _localPreviewRootUri = String(data.rootUri || "");
     previewDebug("bridge ready");
     revealPreviewSelection(true);
+    setTimeout(() => revealPreviewSelection(true), 280);
     return;
   }
   if (data.type === "smarttex-preview-click") {
@@ -746,6 +782,14 @@ function onPreviewFrameMessage(event) {
       return;
     }
     runFallback();
+  }
+}
+
+function previewFrameOrigin() {
+  try {
+    return new URL(typstPreviewFrameEl?.src || window.location.href, window.location.href).origin;
+  } catch (_) {
+    return window.location.origin;
   }
 }
 

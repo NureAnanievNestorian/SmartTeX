@@ -1846,26 +1846,29 @@ def parse_compile_diagnostics(project: Project, log_text: str) -> list[dict[str,
     if project.markup_type == MarkupType.TYPST:
         lines = text.splitlines()
         pending_message = ""
+        pending_severity = "error"
         for line in lines:
             stripped = line.strip()
             lowered = stripped.lower()
             if lowered.startswith("error:"):
                 pending_message = stripped.split(":", 1)[1].strip()
+                pending_severity = "error"
                 continue
             if lowered.startswith("warning:"):
                 pending_message = stripped.split(":", 1)[1].strip()
+                pending_severity = "warning"
                 continue
             arrow = re.search(r"(?:-->|┌─)\s+([A-Za-z0-9_./-]+\.typ):(\d+):(\d+)", line)
             if arrow:
-                severity = "warning" if "warning" in pending_message.lower() else "error"
                 _push(
                     arrow.group(1),
                     int(arrow.group(2)),
                     int(arrow.group(3)),
-                    severity,
+                    pending_severity,
                     pending_message or "Typst compiler issue",
                 )
                 pending_message = ""
+                pending_severity = "error"
         return diagnostics[:50]
 
     current_file = main_source_filename(project)

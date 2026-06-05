@@ -197,6 +197,10 @@ export async function runCompile(mode = "manual") {
   try {
     await waitUntilSaveIdle();
     await saveCurrentFile();
+    const useLocalRuntime = Boolean(s.projectMeta?.local_runtime?.enabled) && s.projectMeta?.markup_type === "typst";
+    if (useLocalRuntime) {
+      setSaveHint("Локальна компіляція…", "saving");
+    }
     const data = await api(`/api/projects/${cfg.projectId}/compile/`, { method: "POST" });
     setCompileState(data.compile_state || (data.status === "success" ? "synced" : "failed"), data.status);
     if (logEl) logEl.textContent = data.log || "";

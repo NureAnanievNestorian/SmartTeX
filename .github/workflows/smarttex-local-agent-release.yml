@@ -1,0 +1,36 @@
+name: SmartTeX Local Agent Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Update channel"
+        required: true
+        default: "stable"
+  push:
+    tags:
+      - "smarttex-local-v*"
+
+jobs:
+  build-local-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: local_agent/go/go.mod
+          cache-dependency-path: local_agent/go/go.sum
+
+      - name: Build static update assets
+        env:
+          SMARTTEX_LOCAL_UPDATE_CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
+        run: |
+          chmod +x local_agent/go/scripts/build-release-assets.sh
+          local_agent/go/scripts/build-release-assets.sh
+
+      - name: Upload local agent assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: smarttex-local-agent-${{ github.event.inputs.channel || 'stable' }}
+          path: projects/static/local-agent/${{ github.event.inputs.channel || 'stable' }}/

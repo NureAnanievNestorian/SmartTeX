@@ -124,3 +124,29 @@ class OAuthAccessToken(models.Model):
     @classmethod
     def issue_token(cls) -> str:
         return secrets.token_urlsafe(48)
+
+
+class OAuthRefreshToken(models.Model):
+    token = models.CharField(max_length=128, unique=True, db_index=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="oauth_refresh_tokens")
+    client = models.ForeignKey(
+        OAuthClient,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="refresh_tokens",
+    )
+    scope = models.CharField(max_length=500, blank=True, default="")
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
+
+    def is_active(self) -> bool:
+        return self.revoked_at is None and not self.is_expired()
+
+    @classmethod
+    def issue_token(cls) -> str:
+        return secrets.token_urlsafe(48)

@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import subprocess
@@ -8,10 +9,12 @@ from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.files.base import ContentFile
+from django.http import JsonResponse
 from django.test import Client, TestCase, override_settings
+from django.utils import timezone
 
 from SmartTeX.markup import MarkupType
-from projects.models import Project, ProjectVersion
+from projects.models import LocalCompileJob, Project, ProjectLocalRuntime, ProjectVersion
 from projects.pdf_embed_job import _IMPORT_LINE
 from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from projects.services import (
@@ -367,6 +370,401 @@ class ProjectTypstSupportTests(TestCase):
         self.assertNotIn("main.log", names)
         self.assertFalse(any(name.startswith(".smarttex-git/") for name in names))
 
+    def test_project_zip_download_can_include_compile_support_files(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Compile Support ZIP", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        root = source_file_path(project).parent
+        helper = root / ".smarttex" / "auto_generated" / "pdf_includes.typ"
+        manifest = root / ".smarttex" / "pdf_includes.json"
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_text("#let smarttex-include-pdf = none\n", encoding="utf-8")
+        manifest.write_text("{}", encoding="utf-8")
+
+        regular_response = self.client.get(f"/api/projects/{project.id}/download-zip/")
+        support_response = self.client.get(f"/api/projects/{project.id}/download-zip/?compile_support=1")
+
+        self.assertEqual(regular_response.status_code, 200)
+        self.assertEqual(support_response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(b"".join(regular_response.streaming_content))) as zf:
+            regular_names = set(zf.namelist())
+        with zipfile.ZipFile(io.BytesIO(b"".join(support_response.streaming_content))) as zf:
+            support_names = set(zf.namelist())
+
+        self.assertNotIn(".smarttex/auto_generated/pdf_includes.typ", regular_names)
+        self.assertIn(".smarttex/auto_generated/pdf_includes.typ", support_names)
+        self.assertIn(".smarttex/pdf_includes.json", support_names)
+
+    def test_local_compile_result_upload_writes_pdf_log_and_version_event(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Compile", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        pdf_bytes = b"%PDF-1.7\n% smarttex local poc\n"
+
+        response = self.client.post(
+            f"/api/projects/{project.id}/compile/local-result/",
+            data=json.dumps({
+                "status": "success",
+                "log": "local compile ok",
+                "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+                "diagnostics": [
+                    {
+                        "file": "main.typ",
+                        "line": 1,
+                        "column": 1,
+                        "severity": "warning",
+                        "message": "demo",
+                    }
+                ],
+                "tool": "smarttex-local",
+                "tool_version": "test",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        project.refresh_from_db()
+        self.assertEqual(project.last_status, Project.CompileStatus.SUCCESS)
+        self.assertEqual(payload["compile_state"], "synced")
+        self.assertEqual(payload["runtime"], "local_agent")
+        self.assertEqual((source_file_path(project).parent / ".smarttex" / "main.pdf").read_bytes(), pdf_bytes)
+        self.assertEqual((source_file_path(project).parent / ".smarttex" / "main.log").read_text(encoding="utf-8"), "local compile ok")
+        event = ProjectVersion.objects.filter(project=project, operation="local_compile").first()
+        self.assertIsNotNone(event)
+        self.assertFalse(event.is_revertible)
+
+    def test_project_local_runtime_setting_and_job_claim(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Queue", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+
+        settings_response = self.client.put(
+            f"/api/projects/{project.id}/local-runtime/",
+            data=json.dumps({"enabled": True, "capabilities": ["compile", "tinymist-lsp"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(settings_response.status_code, 200)
+        self.assertTrue(settings_response.json()["enabled"])
+
+        job = LocalCompileJob.objects.create(project=project, requested_by=self.user)
+        claim_response = self.client.post(
+            "/api/local-runtime/jobs/claim/",
+            data=json.dumps({
+                "agent_id": "test-agent",
+                "agent_version": "test",
+                "capabilities": ["compile", "tinymist-lsp"],
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(claim_response.status_code, 200)
+        self.assertEqual(claim_response.json()["job"]["id"], job.id)
+        job.refresh_from_db()
+        self.assertEqual(job.status, LocalCompileJob.Status.RUNNING)
+        runtime = ProjectLocalRuntime.objects.get(project=project)
+        self.assertEqual(runtime.agent_id, "test-agent")
+        self.assertIsNotNone(runtime.last_seen_at)
+
+    def test_local_runtime_payload_reports_waiting_and_offline_states(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime States", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        runtime = ProjectLocalRuntime.objects.create(project=project, enabled=True)
+
+        waiting_response = self.client.get(f"/api/projects/{project.id}/local-runtime/")
+        self.assertEqual(waiting_response.status_code, 200)
+        waiting_payload = waiting_response.json()
+        self.assertEqual(waiting_payload["connection_state"], "waiting")
+        self.assertFalse(waiting_payload["connected"])
+        self.assertIsNone(waiting_payload["last_seen_age_seconds"])
+
+        runtime.last_seen_at = timezone.now() - timezone.timedelta(minutes=3)
+        runtime.save(update_fields=["last_seen_at", "updated_at"])
+        offline_response = self.client.get(f"/api/projects/{project.id}/local-runtime/")
+        self.assertEqual(offline_response.status_code, 200)
+        offline_payload = offline_response.json()
+        self.assertEqual(offline_payload["connection_state"], "offline")
+        self.assertGreaterEqual(offline_payload["last_seen_age_seconds"], 180)
+
+    @override_settings(LOCAL_RUNTIME_ENABLED=False)
+    def test_local_runtime_global_kill_switch_blocks_agent_paths(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Disabled", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(project=project, enabled=True, last_seen_at=timezone.now())
+
+        payload = self.client.get(f"/api/projects/{project.id}/local-runtime/").json()
+        self.assertFalse(payload["available"])
+        self.assertFalse(payload["enabled"])
+        self.assertEqual(payload["connection_state"], "unavailable")
+
+        enable_response = self.client.put(
+            f"/api/projects/{project.id}/local-runtime/",
+            data=json.dumps({"enabled": True}),
+            content_type="application/json",
+        )
+        self.assertEqual(enable_response.status_code, 403)
+
+        heartbeat = self.client.post(
+            "/api/local-runtime/heartbeat/",
+            data=json.dumps({"agent_id": "disabled-agent", "capabilities": ["compile"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(heartbeat.status_code, 403)
+
+        claim = self.client.post(
+            "/api/local-runtime/jobs/claim/",
+            data=json.dumps({"agent_id": "disabled-agent", "capabilities": ["compile"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(claim.status_code, 403)
+
+        upload = self.client.post(
+            f"/api/projects/{project.id}/compile/local-result/",
+            data=json.dumps({"status": "error", "log": "blocked"}),
+            content_type="application/json",
+        )
+        self.assertEqual(upload.status_code, 403)
+
+    @override_settings(TINYMIST_LSP_ENABLED=False, TINYMIST_PREVIEW_ENABLED=False)
+    def test_project_detail_keeps_local_tinymist_capabilities_when_server_tinymist_disabled(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Local Tinymist", markup_type=MarkupType.TYPST)
+        ProjectLocalRuntime.objects.create(
+            project=project,
+            enabled=True,
+            capabilities=["compile", "typst-preview", "tinymist-lsp"],
+            last_seen_at=timezone.now(),
+        )
+
+        response = self.client.get(f"/api/projects/{project.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["tinymist"]["lsp_enabled"])
+        self.assertFalse(payload["tinymist"]["preview_enabled"])
+        self.assertTrue(payload["local_runtime"]["enabled"])
+        self.assertTrue(payload["local_runtime"]["connected"])
+        self.assertIn("tinymist-lsp", payload["local_runtime"]["capabilities"])
+        self.assertIn("typst-preview", payload["local_runtime"]["capabilities"])
+
+    def test_disabling_project_local_runtime_expires_pending_jobs(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Disable", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(project=project, enabled=True)
+        queued = LocalCompileJob.objects.create(project=project, requested_by=self.user)
+        running = LocalCompileJob.objects.create(project=project, requested_by=self.user, status=LocalCompileJob.Status.RUNNING)
+
+        response = self.client.put(
+            f"/api/projects/{project.id}/local-runtime/",
+            data=json.dumps({"enabled": False}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["enabled"])
+        queued.refresh_from_db()
+        running.refresh_from_db()
+        self.assertEqual(queued.status, LocalCompileJob.Status.EXPIRED)
+        self.assertEqual(running.status, LocalCompileJob.Status.EXPIRED)
+
+    def test_project_local_runtime_jobs_endpoint_reports_recent_jobs(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Observability", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(project=project, enabled=True, agent_id="obs-agent", last_seen_at=timezone.now())
+        job = LocalCompileJob.objects.create(
+            project=project,
+            requested_by=self.user,
+            status=LocalCompileJob.Status.ERROR,
+            agent_id="obs-agent",
+            request_payload={"source": "mcp"},
+            result_payload={"tool": "smarttex-local-go"},
+            error="compile failed",
+            completed_at=timezone.now(),
+        )
+
+        response = self.client.get(f"/api/projects/{project.id}/local-runtime/jobs/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["local_runtime"]["agent_id"], "obs-agent")
+        self.assertEqual(payload["jobs"][0]["id"], job.id)
+        self.assertEqual(payload["jobs"][0]["status"], LocalCompileJob.Status.ERROR)
+        self.assertEqual(payload["jobs"][0]["error"], "compile failed")
+
+    @override_settings(LOCAL_RUNTIME_JOB_RETENTION_SECONDS=60)
+    def test_local_runtime_heartbeat_cleans_old_completed_jobs(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Cleanup", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(project=project, enabled=True)
+        old_job = LocalCompileJob.objects.create(
+            project=project,
+            requested_by=self.user,
+            status=LocalCompileJob.Status.SUCCESS,
+            completed_at=timezone.now() - timezone.timedelta(minutes=5),
+        )
+        fresh_job = LocalCompileJob.objects.create(
+            project=project,
+            requested_by=self.user,
+            status=LocalCompileJob.Status.SUCCESS,
+            completed_at=timezone.now(),
+        )
+
+        response = self.client.post(
+            "/api/local-runtime/heartbeat/",
+            data=json.dumps({"agent_id": "cleanup-agent", "agent_version": "test", "capabilities": ["compile"]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(LocalCompileJob.objects.filter(pk=old_job.pk).exists())
+        self.assertTrue(LocalCompileJob.objects.filter(pk=fresh_job.pk).exists())
+
+    def test_local_compile_result_upload_completes_matching_job(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Result", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        job = LocalCompileJob.objects.create(project=project, requested_by=self.user, status=LocalCompileJob.Status.RUNNING)
+        pdf_bytes = b"%PDF-1.7\n% smarttex local job\n"
+
+        response = self.client.post(
+            f"/api/projects/{project.id}/compile/local-result/",
+            data=json.dumps({
+                "job_id": job.id,
+                "status": "success",
+                "log": "local job ok",
+                "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        job.refresh_from_db()
+        self.assertEqual(job.status, LocalCompileJob.Status.SUCCESS)
+        self.assertTrue(job.result_payload["pdf_uploaded"])
+
+    def test_local_compile_error_upload_updates_runtime_error(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Error", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(project=project, enabled=True, last_seen_at=timezone.now())
+        job = LocalCompileJob.objects.create(project=project, requested_by=self.user, status=LocalCompileJob.Status.RUNNING)
+
+        response = self.client.post(
+            f"/api/projects/{project.id}/compile/local-result/",
+            data=json.dumps({
+                "job_id": job.id,
+                "status": "error",
+                "log": "tinymist panic: local compile failed",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        runtime = ProjectLocalRuntime.objects.get(project=project)
+        self.assertIn("local compile failed", runtime.last_error)
+        payload = self.client.get(f"/api/projects/{project.id}/local-runtime/").json()
+        self.assertEqual(payload["connection_state"], "connected")
+        self.assertIn("local compile failed", payload["last_error"])
+
+    @override_settings(LOCAL_RUNTIME_COMPILE_WAIT_SECONDS=1)
+    def test_local_compile_timeout_updates_runtime_error(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Timeout", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(project=project, enabled=True, last_seen_at=timezone.now())
+
+        with patch("projects.views.time.sleep", return_value=None), patch(
+            "projects.views.time.monotonic", side_effect=[0.0, 0.2, 2.0, 6.0]
+        ):
+            response = self.client.post(f"/api/projects/{project.id}/compile/", HTTP_X_CHANGE_SOURCE="mcp")
+
+        self.assertEqual(response.status_code, 504)
+        runtime = ProjectLocalRuntime.objects.get(project=project)
+        self.assertIn("Timed out waiting for local agent compile result", runtime.last_error)
+        project.refresh_from_db()
+        self.assertEqual(project.last_status, Project.CompileStatus.ERROR)
+
+    def test_compile_endpoint_routes_to_local_runtime_when_active(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Route", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(
+            project=project,
+            enabled=True,
+            agent_id="test-agent",
+            agent_version="test",
+            capabilities=["compile"],
+            last_seen_at=timezone.now(),
+        )
+
+        with patch("projects.views.compile_project") as server_compile, patch("projects.views._wait_for_local_compile") as local_compile:
+            local_compile.return_value = JsonResponse({"status": "success", "runtime": "local_agent"})
+            response = self.client.post(f"/api/projects/{project.id}/compile/", HTTP_X_CHANGE_SOURCE="mcp")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["runtime"], "local_agent")
+        server_compile.assert_not_called()
+        local_compile.assert_called_once()
+
+    @override_settings(LOCAL_RUNTIME_ENABLED=False)
+    def test_compile_endpoint_uses_server_when_local_runtime_globally_disabled(self) -> None:
+        create_response = self.client.post(
+            "/api/projects/",
+            data=json.dumps({"title": "Local Runtime Fallback", "markup_type": "typst"}),
+            content_type="application/json",
+        )
+        project = Project.objects.get(pk=create_response.json()["id"])
+        ProjectLocalRuntime.objects.create(project=project, enabled=True, last_seen_at=timezone.now())
+
+        with patch("projects.views.compile_project") as server_compile, patch("projects.views._wait_for_local_compile") as local_compile:
+            server_compile.return_value.status = Project.CompileStatus.SUCCESS
+            server_compile.return_value.log = "server compile ok"
+            response = self.client.post(f"/api/projects/{project.id}/compile/")
+
+        self.assertEqual(response.status_code, 200)
+        server_compile.assert_called_once()
+        local_compile.assert_not_called()
+
     def test_create_template_zip_includes_pdf_embed_support_files(self) -> None:
         project = Project.objects.create(owner=self.user, title="Template Export", markup_type=MarkupType.TYPST)
         root = source_file_path(project).parent
@@ -440,6 +838,11 @@ class ProjectTypstSupportTests(TestCase):
 
         self.assertEqual(typst_diags[0]["file"], "chapters/01-introduction.typ")
         self.assertEqual(typst_diags[0]["line"], 12)
+        warning_diags = parse_compile_diagnostics(
+            typst_project,
+            'warning: unknown font family: liberation serif\n    ┌─ coursework-v2-template/src/style.typ:161:59\n',
+        )
+        self.assertEqual(warning_diags[0]["severity"], "warning")
         self.assertEqual(latex_diags[0]["line"], 42)
 
     def test_pdf_embed_import_is_injected_into_reachable_typst_tree_only(self) -> None:

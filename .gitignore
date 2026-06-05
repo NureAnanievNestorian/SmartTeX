@@ -65,6 +65,8 @@ Thumbs.db
 node_modules/
 dist/
 build/
+bin/
+local_agent/go/smarttex-local-go
 
 # Docker / local data
 *.pid

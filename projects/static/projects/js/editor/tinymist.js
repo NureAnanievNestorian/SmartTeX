@@ -9,6 +9,7 @@
 import * as state from "./state.js";
 import * as cm from "./cm.js";
 import * as apiMod from "./api.js";
+import * as localRuntime from "./local_runtime.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
@@ -17,6 +18,7 @@ let _ws = null;
 let _nextId = 1;
 const _pending = new Map(); // id -> { resolve, reject, timer }
 let _reconnectTimer = null;
+let _connectSeq = 0;
 let _status = "disconnected";
 let _rootUri = "";
 const _openDocs = new Map(); // uri -> version number
@@ -126,9 +128,11 @@ function _setStatus(status, label) {
 export function getStatus()  { return _status; }
 export function getRootUri() { return _rootUri; }
 export function isEnabled() {
-  return s.projectMeta?.markup_type === "typst" && s.projectMeta?.tinymist?.lsp_enabled !== false;
+  if (s.projectMeta?.markup_type !== "typst") return false;
+  return s.projectMeta?.tinymist?.lsp_enabled !== false || localRuntime.hasLocalRuntimeCapability("tinymist-lsp");
 }
 export function shouldAutostart() {
+  if (localRuntime.hasLocalRuntimeCapability("tinymist-lsp")) return true;
   return isEnabled() && s.projectMeta?.tinymist?.lsp_autostart !== false;
 }
 
@@ -139,6 +143,9 @@ export function initStatusEl(el) {
       if (isEnabled()) restart();
     });
   }
+  window.addEventListener(localRuntime.LOCAL_RUNTIME_CHANGED_EVENT, () => {
+    if (isEnabled()) restart();
+  });
 }
 
 // ── Connection ────────────────────────────────────────────────────────────────
@@ -150,11 +157,50 @@ export function connect() {
   }
   if (!cfg.projectId) return;
   if (_ws && (_ws.readyState === WebSocket.CONNECTING || _ws.readyState === WebSocket.OPEN)) return;
-  _setStatus("connecting", "підключення…");
+  const connectSeq = ++_connectSeq;
+  _setStatus("connecting", "підключення...");
 
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  _ws = new WebSocket(`${proto}//${location.host}/ws/projects/${cfg.projectId}/tinymist/`);
-  _debug("connect", { projectId: cfg.projectId });
+  if (localRuntime.isLocalRuntimeActive()) {
+    const local = localRuntime.localRuntimeConfig();
+    if (!local.secret) {
+      _setStatus("error", "local bridge secret не налаштований");
+      return;
+    }
+    const localUrl = new URL(local.url || "http://127.0.0.1:8765");
+    localUrl.protocol = localUrl.protocol === "https:" ? "wss:" : "ws:";
+    localUrl.pathname = "/v1/lsp";
+    localUrl.search = new URLSearchParams({
+      project_id: String(cfg.projectId),
+      secret: local.secret || "",
+    }).toString();
+    _setStatus("connecting", "перевірка local agent...");
+    localRuntime.checkLocalRuntime(local)
+      .then(health => {
+        if (connectSeq !== _connectSeq) return;
+        if (!health?.ok) {
+          _setStatus("error", health?.detail || "local agent недоступний");
+          return;
+        }
+        if (health.tinymist_available === false) {
+          _setStatus("error", "tinymist не знайдено локально");
+          return;
+        }
+        _openWebSocket(localUrl.toString(), "local");
+      })
+      .catch(err => {
+        if (connectSeq === _connectSeq) _setStatus("error", `local agent недоступний: ${err.message}`);
+      });
+    return;
+  } else {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    _openWebSocket(`${proto}//${location.host}/ws/projects/${cfg.projectId}/tinymist/`, "server");
+  }
+}
+
+function _openWebSocket(wsUrl, runtimeLabel = "server") {
+  if (_ws && (_ws.readyState === WebSocket.CONNECTING || _ws.readyState === WebSocket.OPEN)) return;
+  _ws = new WebSocket(wsUrl);
+  _debug("connect", { projectId: cfg.projectId, runtime: runtimeLabel });
 
   _ws.onopen = () => _debug("socket open");
 
@@ -167,7 +213,7 @@ export function connect() {
 
   _ws.onerror = (event) => {
     _debug("socket error", event);
-    _setStatus("error", "помилка з'єднання");
+    _setStatus("error", runtimeLabel === "local" ? "помилка local LSP bridge" : "помилка з'єднання");
   };
 
   _ws.onclose = () => {
@@ -185,6 +231,7 @@ export function connect() {
 }
 
 export function disconnect() {
+  _connectSeq++;
   clearTimeout(_reconnectTimer);
   _reconnectTimer = null;
   _rejectPending("tinymist disconnected");

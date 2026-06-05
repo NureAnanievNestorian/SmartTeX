@@ -1,6 +1,7 @@
 import json
 import base64
 import binascii
+import time
 import mimetypes
 import posixpath
 import urllib.error
@@ -12,6 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseForbidden, HttpResponseNotFound, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 from asgiref.sync import async_to_sync
@@ -25,7 +27,7 @@ from small_model.services.quota_service import SmallModelQuotaService
 from templates_lib.models import Template
 from templates_lib.services import normalize_template_main_file
 
-from .models import GitHubInstallation, Project, ProjectVersion
+from .models import GitHubInstallation, LocalCompileJob, Project, ProjectLocalRuntime, ProjectVersion
 from .services import (
     ALLOWED_UPLOAD_EXTENSIONS,
     build_project_zip,
@@ -76,6 +78,7 @@ from .services import (
     search_project_content,
     get_source_section,
     insert_text_at_position,
+    log_file_path,
     update_source_section,
     write_source_content,
     extract_project_zip,
@@ -437,6 +440,15 @@ def _project_payload(project: Project, user=None) -> dict:
             "lsp_autostart": bool(getattr(settings, "TINYMIST_LSP_AUTOSTART", True)),
             "preview_autostart": bool(getattr(settings, "TINYMIST_PREVIEW_AUTOSTART", True)),
         },
+        "toolchain": {
+            "typst_docker_image": str(getattr(settings, "TYPST_DOCKER_IMAGE", "")),
+            "typst_binary": str(getattr(settings, "TYPST_BINARY", "typst")),
+            "tinymist_binary": str(getattr(settings, "TINYMIST_BIN", "tinymist")),
+            "expected_typst_version": str(getattr(settings, "TYPST_EXPECTED_VERSION", "")),
+            "expected_tinymist_version": str(getattr(settings, "TINYMIST_EXPECTED_VERSION", "")),
+            "local_bundle_channel": str(getattr(settings, "LOCAL_RUNTIME_TOOLCHAIN_CHANNEL", "stable")),
+        },
+        "local_runtime": _local_runtime_payload(project),
         "last_status": project.last_status,
         "longdoc": {
             "enabled": bool(longdoc_settings and longdoc_settings.enabled),
@@ -494,6 +506,172 @@ def _compile_payload(project: Project, *, status: str, log: str, request_mode: s
         "log": log,
         "diagnostics": diagnostics,
     }
+
+
+def _local_runtime_payload(project: Project) -> dict[str, object]:
+    feature_available = _local_runtime_feature_enabled()
+    runtime = ProjectLocalRuntime.objects.filter(project=project).first()
+    if runtime is None:
+        return {
+            "available": feature_available,
+            "enabled": False,
+            "connected": False,
+            "connection_state": "disabled" if feature_available else "unavailable",
+            "connection_detail": "" if feature_available else "Local runtime is disabled on this server.",
+            "agent_id": "",
+            "agent_version": "",
+            "capabilities": [],
+            "last_seen_at": None,
+            "last_seen_age_seconds": None,
+            "last_error": "",
+        }
+    now = timezone.now()
+    heartbeat_ttl = int(getattr(settings, "LOCAL_RUNTIME_HEARTBEAT_TTL_SECONDS", 45))
+    connected = bool(
+        feature_available
+        and runtime.enabled
+        and runtime.last_seen_at
+        and runtime.last_seen_at >= now - timezone.timedelta(seconds=max(5, heartbeat_ttl))
+    )
+    last_seen_age_seconds = int((now - runtime.last_seen_at).total_seconds()) if runtime.last_seen_at else None
+    if not feature_available:
+        connection_state = "unavailable"
+        connection_detail = "Local runtime is disabled on this server."
+    elif not runtime.enabled:
+        connection_state = "disabled"
+        connection_detail = ""
+    elif connected:
+        connection_state = "connected"
+        connection_detail = ""
+    elif runtime.last_error:
+        connection_state = "error"
+        connection_detail = runtime.last_error
+    elif runtime.last_seen_at:
+        connection_state = "offline"
+        connection_detail = "The local agent heartbeat became stale."
+    else:
+        connection_state = "waiting"
+        connection_detail = "Local runtime is enabled, but no agent heartbeat has been received yet."
+    return {
+        "available": feature_available,
+        "enabled": bool(feature_available and runtime.enabled),
+        "connected": connected,
+        "connection_state": connection_state,
+        "connection_detail": connection_detail,
+        "agent_id": runtime.agent_id,
+        "agent_version": runtime.agent_version,
+        "capabilities": runtime.capabilities if feature_available and isinstance(runtime.capabilities, list) else [],
+        "last_seen_at": runtime.last_seen_at.isoformat() if runtime.last_seen_at else None,
+        "last_seen_age_seconds": last_seen_age_seconds,
+        "last_error": runtime.last_error,
+    }
+
+
+def _local_runtime_feature_enabled() -> bool:
+    return bool(getattr(settings, "LOCAL_RUNTIME_ENABLED", True))
+
+
+def _local_runtime_project_enabled(project: Project) -> bool:
+    if not _local_runtime_feature_enabled():
+        return False
+    return ProjectLocalRuntime.objects.filter(project=project, enabled=True).exists()
+
+
+def _local_runtime_connected(project: Project) -> bool:
+    return bool(_local_runtime_payload(project).get("connected"))
+
+
+def _set_local_runtime_error(project: Project, message: str) -> None:
+    ProjectLocalRuntime.objects.filter(project=project).update(
+        last_error=str(message or "")[:4000],
+        updated_at=timezone.now(),
+    )
+
+
+def _set_local_runtime_error_for_projects(project_ids, message: str) -> None:
+    ids = [int(project_id) for project_id in project_ids if project_id]
+    if not ids:
+        return
+    ProjectLocalRuntime.objects.filter(project_id__in=ids).update(
+        last_error=str(message or "")[:4000],
+        updated_at=timezone.now(),
+    )
+
+
+def _cleanup_local_runtime_jobs(user=None) -> None:
+    retention_seconds = int(getattr(settings, "LOCAL_RUNTIME_JOB_RETENTION_SECONDS", 7 * 24 * 60 * 60))
+    if retention_seconds <= 0:
+        return
+    cutoff = timezone.now() - timezone.timedelta(seconds=retention_seconds)
+    qs = LocalCompileJob.objects.filter(
+        status__in=[LocalCompileJob.Status.SUCCESS, LocalCompileJob.Status.ERROR, LocalCompileJob.Status.EXPIRED],
+        completed_at__lt=cutoff,
+    )
+    if user is not None:
+        qs = qs.filter(project__owner=user)
+    qs.delete()
+
+
+def _wait_for_local_compile(project: Project, user, *, source: str = "web") -> JsonResponse:
+    if project.markup_type != MarkupType.TYPST:
+        return JsonResponse({"detail": "Local runtime currently supports Typst projects only"}, status=400)
+    if not _local_runtime_connected(project):
+        _set_local_runtime_error(project, "Local runtime is enabled, but no active smarttex-local heartbeat is available.")
+        return JsonResponse(
+            {
+                "error": "LOCAL_RUNTIME_OFFLINE",
+                "detail": "Local runtime is enabled, but no local agent heartbeat is active for this project.",
+                "suggestion": "Start `smarttex-local serve` on your machine or disable Local mode for this project.",
+                "local_runtime": _local_runtime_payload(project),
+            },
+            status=503,
+        )
+
+    now = timezone.now()
+    LocalCompileJob.objects.filter(project=project, status=LocalCompileJob.Status.QUEUED).update(
+        status=LocalCompileJob.Status.EXPIRED,
+        error="Superseded by a newer local compile request",
+        completed_at=now,
+    )
+    job = LocalCompileJob.objects.create(
+        project=project,
+        requested_by=user,
+        request_payload={"source": source, "main_file": main_source_filename(project)},
+    )
+    project.last_status = Project.CompileStatus.PENDING
+    project.save(update_fields=["last_status", "updated_at"])
+    queued_log = f"Queued local compile job #{job.id}. Waiting for smarttex-local agent...\n"
+    log_file_path(project).write_text(queued_log, encoding="utf-8")
+
+    wait_seconds = int(getattr(settings, "LOCAL_RUNTIME_COMPILE_WAIT_SECONDS", 90))
+    deadline = time.monotonic() + max(5, wait_seconds)
+    while time.monotonic() < deadline:
+        job.refresh_from_db()
+        if job.status in {LocalCompileJob.Status.SUCCESS, LocalCompileJob.Status.ERROR, LocalCompileJob.Status.EXPIRED}:
+            project.refresh_from_db(fields=["last_status", "updated_at"])
+            payload = _compile_payload(project, status=project.last_status, log=read_compile_log(project), request_mode="compile")
+            payload["runtime"] = "local_agent"
+            payload["local_runtime_job_id"] = job.id
+            payload["local_runtime_status"] = job.status
+            if job.error:
+                payload["local_runtime_error"] = job.error
+            return JsonResponse(payload, status=200 if job.status == LocalCompileJob.Status.SUCCESS else 502)
+        time.sleep(0.4)
+
+    job.status = LocalCompileJob.Status.EXPIRED
+    job.error = "Timed out waiting for local agent compile result"
+    job.completed_at = timezone.now()
+    job.save(update_fields=["status", "error", "completed_at"])
+    _set_local_runtime_error(project, job.error)
+    project.last_status = Project.CompileStatus.ERROR
+    project.save(update_fields=["last_status", "updated_at"])
+    timeout_log = f"Local compile job #{job.id} timed out waiting for smarttex-local agent.\n"
+    log_file_path(project).write_text(timeout_log, encoding="utf-8")
+    payload = _compile_payload(project, status=project.last_status, log=timeout_log, request_mode="compile")
+    payload["runtime"] = "local_agent"
+    payload["local_runtime_job_id"] = job.id
+    payload["local_runtime_status"] = job.status
+    return JsonResponse(payload, status=504)
 
 
 def _change_meta(request: HttpRequest, body: dict | None = None) -> dict:
@@ -1559,6 +1737,10 @@ def api_project_compile(request: HttpRequest, project_id: int) -> JsonResponse:
     project = _project_with_owner(project_id, user)
 
     if request.method == "POST":
+        if _local_runtime_project_enabled(project):
+            source = (request.headers.get("X-Change-Source") or "web").strip().lower()
+            return _wait_for_local_compile(project, user, source=source if source in {"web", "mcp", "api"} else "api")
+
         result = compile_project(project)
         project.last_status = result.status
         project.save(update_fields=["last_status", "updated_at"])
@@ -1590,6 +1772,328 @@ def api_project_compile(request: HttpRequest, project_id: int) -> JsonResponse:
         return JsonResponse(_compile_payload(project, status=project.last_status, log=result.log, request_mode="compile"))
 
     return JsonResponse(_compile_payload(project, status=project.last_status, log=read_compile_log(project), request_mode="read"))
+
+
+@csrf_exempt
+@require_http_methods(["GET", "PUT"])
+def api_project_local_runtime(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    runtime, _ = ProjectLocalRuntime.objects.get_or_create(project=project)
+
+    if request.method == "PUT":
+        if not _local_runtime_feature_enabled() and bool(_json_body(request).get("enabled")):
+            return JsonResponse(
+                {
+                    "error": "LOCAL_RUNTIME_DISABLED",
+                    "detail": "Local runtime is disabled on this server.",
+                    "local_runtime": _local_runtime_payload(project),
+                },
+                status=403,
+            )
+        body = _json_body(request)
+        runtime.enabled = bool(body.get("enabled"))
+        if isinstance(body.get("capabilities"), list):
+            runtime.capabilities = body["capabilities"][:20]
+        if not runtime.enabled:
+            runtime.last_error = ""
+            now = timezone.now()
+            LocalCompileJob.objects.filter(
+                project=project,
+                status__in=[LocalCompileJob.Status.QUEUED, LocalCompileJob.Status.RUNNING],
+            ).update(
+                status=LocalCompileJob.Status.EXPIRED,
+                error="Local runtime was disabled for this project",
+                completed_at=now,
+            )
+        runtime.save(update_fields=["enabled", "capabilities", "last_error", "updated_at"])
+    return JsonResponse(_local_runtime_payload(project))
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def api_project_local_runtime_jobs(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    try:
+        limit = min(max(int(request.GET.get("limit", "20")), 1), 100)
+    except (TypeError, ValueError):
+        limit = 20
+    jobs = LocalCompileJob.objects.filter(project=project).order_by("-created_at", "-id")[:limit]
+    return JsonResponse(
+        {
+            "local_runtime": _local_runtime_payload(project),
+            "jobs": [
+                {
+                    "id": job.id,
+                    "status": job.status,
+                    "agent_id": job.agent_id,
+                    "request": job.request_payload,
+                    "result": job.result_payload,
+                    "error": job.error,
+                    "created_at": job.created_at.isoformat() if job.created_at else None,
+                    "claimed_at": job.claimed_at.isoformat() if job.claimed_at else None,
+                    "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                }
+                for job in jobs
+            ],
+        }
+    )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_local_runtime_heartbeat(request: HttpRequest) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    if not _local_runtime_feature_enabled():
+        return JsonResponse({"ok": False, "error": "LOCAL_RUNTIME_DISABLED", "enabled_project_ids": []}, status=403)
+    body = _json_body(request)
+    _cleanup_local_runtime_jobs(user)
+    agent_id = str(body.get("agent_id") or "").strip()[:128]
+    agent_version = str(body.get("agent_version") or "").strip()[:64]
+    capabilities = body.get("capabilities")
+    if not isinstance(capabilities, list):
+        capabilities = []
+    now = timezone.now()
+    runtimes = ProjectLocalRuntime.objects.select_related("project").filter(project__owner=user, enabled=True)
+    updated_ids: list[int] = []
+    for runtime in runtimes:
+        runtime.agent_id = agent_id
+        runtime.agent_version = agent_version
+        runtime.capabilities = capabilities[:20]
+        runtime.last_seen_at = now
+        runtime.save(update_fields=["agent_id", "agent_version", "capabilities", "last_seen_at", "updated_at"])
+        updated_ids.append(runtime.project_id)
+    return JsonResponse({"ok": True, "enabled_project_ids": updated_ids, "server_time": now.isoformat()})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_local_runtime_claim_job(request: HttpRequest) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    if not _local_runtime_feature_enabled():
+        return JsonResponse({"job": None, "error": "LOCAL_RUNTIME_DISABLED", "enabled_project_ids": []}, status=403)
+    body = _json_body(request)
+    _cleanup_local_runtime_jobs(user)
+    agent_id = str(body.get("agent_id") or "").strip()[:128]
+    agent_version = str(body.get("agent_version") or "").strip()[:64]
+    capabilities = body.get("capabilities")
+    if not isinstance(capabilities, list):
+        capabilities = []
+    now = timezone.now()
+
+    ProjectLocalRuntime.objects.filter(project__owner=user, enabled=True).update(
+        agent_id=agent_id,
+        agent_version=agent_version,
+        capabilities=capabilities[:20],
+        last_seen_at=now,
+        updated_at=now,
+    )
+    queued_stale_before = now - timezone.timedelta(seconds=int(getattr(settings, "LOCAL_RUNTIME_QUEUED_JOB_STALE_SECONDS", 180)))
+    expired_queued_ids = list(LocalCompileJob.objects.filter(
+        project__owner=user,
+        status=LocalCompileJob.Status.QUEUED,
+        created_at__lt=queued_stale_before,
+    ).values_list("project_id", flat=True))
+    LocalCompileJob.objects.filter(
+        project__owner=user,
+        status=LocalCompileJob.Status.QUEUED,
+        created_at__lt=queued_stale_before,
+    ).update(status=LocalCompileJob.Status.EXPIRED, error="Local runtime job expired before being claimed", completed_at=now)
+    _set_local_runtime_error_for_projects(expired_queued_ids, "A queued local compile job expired before the agent claimed it.")
+    running_stale_before = now - timezone.timedelta(seconds=int(getattr(settings, "LOCAL_RUNTIME_RUNNING_JOB_STALE_SECONDS", 600)))
+    expired_running_ids = list(LocalCompileJob.objects.filter(
+        project__owner=user,
+        status=LocalCompileJob.Status.RUNNING,
+        claimed_at__lt=running_stale_before,
+    ).values_list("project_id", flat=True))
+    LocalCompileJob.objects.filter(
+        project__owner=user,
+        status=LocalCompileJob.Status.RUNNING,
+        claimed_at__lt=running_stale_before,
+    ).update(status=LocalCompileJob.Status.EXPIRED, error="Local runtime job expired while running", completed_at=now)
+    _set_local_runtime_error_for_projects(expired_running_ids, "A running local compile job expired before the agent finished it.")
+
+    with transaction.atomic():
+        job = (
+            LocalCompileJob.objects.select_for_update()
+            .filter(
+                project__owner=user,
+                project__local_runtime__enabled=True,
+                status=LocalCompileJob.Status.QUEUED,
+            )
+            .order_by("created_at", "id")
+            .first()
+        )
+        if job is None:
+            enabled_ids = list(
+                ProjectLocalRuntime.objects.filter(project__owner=user, enabled=True).values_list("project_id", flat=True)
+            )
+            return JsonResponse({"job": None, "enabled_project_ids": enabled_ids})
+        job.status = LocalCompileJob.Status.RUNNING
+        job.agent_id = agent_id
+        job.claimed_at = now
+        job.save(update_fields=["status", "agent_id", "claimed_at"])
+
+    return JsonResponse(
+        {
+            "job": {
+                "id": job.id,
+                "project_id": job.project_id,
+                "main_file": main_source_filename(job.project),
+                "request": job.request_payload,
+            }
+        }
+    )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_compile_local_result(request: HttpRequest, project_id: int) -> JsonResponse:
+    """Accept compile artifacts produced by a trusted local SmartTeX agent.
+
+    This endpoint intentionally does not accept source-file changes. Local
+    runtime mode only offloads heavy compiler/LSP work; the server remains the
+    source of truth for project text, versions, proposals, and locks.
+    """
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    if not _local_runtime_feature_enabled():
+        return JsonResponse({"error": "LOCAL_RUNTIME_DISABLED", "detail": "Local runtime is disabled on this server."}, status=403)
+
+    project = _project_with_owner(project_id, user)
+    is_multipart = (request.content_type or "").lower().startswith("multipart/form-data")
+    if is_multipart:
+        body = request.POST.dict()
+    else:
+        body = _json_body(request)
+    job = None
+    raw_job_id = body.get("job_id")
+    if raw_job_id not in (None, ""):
+        try:
+            job_id = int(raw_job_id)
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "job_id must be an integer"}, status=400)
+        job = LocalCompileJob.objects.filter(project=project, requested_by=user, id=job_id).first()
+        if job is None:
+            return JsonResponse({"detail": "local compile job not found"}, status=404)
+        if job.status not in {LocalCompileJob.Status.QUEUED, LocalCompileJob.Status.RUNNING}:
+            return JsonResponse({"detail": f"local compile job is already {job.status}"}, status=409)
+
+    raw_status = str(body.get("status") or "").strip().lower()
+    if raw_status in {"success", "synced", "ok"}:
+        status = Project.CompileStatus.SUCCESS
+    elif raw_status in {"error", "failed", "failure"}:
+        status = Project.CompileStatus.ERROR
+    else:
+        return JsonResponse({"detail": "status must be success or error"}, status=400)
+
+    if is_multipart and request.FILES.get("log"):
+        log = request.FILES["log"].read().decode("utf-8", errors="replace")
+    else:
+        log = str(body.get("log") or "")
+    if len(log.encode("utf-8", errors="replace")) > int(getattr(settings, "LOCAL_COMPILE_MAX_LOG_BYTES", 2 * 1024 * 1024)):
+        return JsonResponse({"detail": "log is too large"}, status=400)
+
+    pdf_bytes = b""
+    if is_multipart and request.FILES.get("pdf"):
+        pdf_bytes = request.FILES["pdf"].read()
+        max_pdf = int(getattr(settings, "LOCAL_COMPILE_MAX_PDF_BYTES", 50 * 1024 * 1024))
+        if len(pdf_bytes) > max_pdf:
+            return JsonResponse({"detail": "pdf is too large"}, status=400)
+        if not pdf_bytes.startswith(b"%PDF"):
+            return JsonResponse({"detail": "pdf must be a PDF file"}, status=400)
+    else:
+        pdf_b64 = str(body.get("pdf_base64") or "").strip()
+        if not pdf_b64:
+            pdf_b64 = ""
+    if not pdf_bytes and pdf_b64:
+        try:
+            pdf_bytes = base64.b64decode(pdf_b64, validate=True)
+        except (binascii.Error, ValueError):
+            return JsonResponse({"detail": "pdf_base64 is not valid base64"}, status=400)
+        max_pdf = int(getattr(settings, "LOCAL_COMPILE_MAX_PDF_BYTES", 50 * 1024 * 1024))
+        if len(pdf_bytes) > max_pdf:
+            return JsonResponse({"detail": "pdf is too large"}, status=400)
+        if not pdf_bytes.startswith(b"%PDF"):
+            return JsonResponse({"detail": "pdf_base64 must contain a PDF file"}, status=400)
+    if status == Project.CompileStatus.SUCCESS and not pdf_bytes:
+        return JsonResponse({"detail": "successful local compile must include pdf_base64"}, status=400)
+
+    workdir = ensure_project_dir(project)
+    smarttex_dir = workdir / ".smarttex"
+    smarttex_dir.mkdir(parents=True, exist_ok=True)
+    log_file_path(project).write_text(log, encoding="utf-8", errors="ignore")
+    if pdf_bytes:
+        pdf_file_path(project).write_bytes(pdf_bytes)
+
+    project.last_status = status
+    project.save(update_fields=["last_status", "updated_at"])
+    if job is not None:
+        job.status = LocalCompileJob.Status.SUCCESS if status == Project.CompileStatus.SUCCESS else LocalCompileJob.Status.ERROR
+        job.result_payload = {
+            "status": raw_status,
+            "tool": str(body.get("tool") or "smarttex-local"),
+            "tool_version": str(body.get("tool_version") or ""),
+            "compiler": str(body.get("compiler") or ""),
+            "pdf_uploaded": bool(pdf_bytes),
+        }
+        job.error = "" if status == Project.CompileStatus.SUCCESS else (log[:4000] or "Local compile failed")
+        job.completed_at = timezone.now()
+        job.save(update_fields=["status", "result_payload", "error", "completed_at"])
+    if status == Project.CompileStatus.SUCCESS:
+        _set_local_runtime_error(project, "")
+    else:
+        _set_local_runtime_error(project, log[:4000] or "Local compile failed")
+
+    diagnostics = body.get("diagnostics")
+    if isinstance(diagnostics, str) and diagnostics.strip():
+        try:
+            diagnostics = json.loads(diagnostics)
+        except json.JSONDecodeError:
+            diagnostics = None
+    if not isinstance(diagnostics, list):
+        diagnostics = parse_compile_diagnostics(project, log)
+    else:
+        diagnostics = diagnostics[:100]
+
+    if body.get("record_version", True) is not False:
+        create_project_version(
+            project=project,
+            actor=user,
+            source="api",
+            operation="local_compile",
+            target=main_source_filename(project),
+            target_file=main_source_filename(project),
+            summary="Compiled locally",
+            before_content="",
+            after_content="",
+            snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+            event_payload={
+                "runtime": "local_agent",
+                "tool": str(body.get("tool") or "smarttex-local"),
+                "tool_version": str(body.get("tool_version") or ""),
+                "compiler": str(body.get("compiler") or ""),
+                "pdf_uploaded": bool(pdf_bytes),
+                "diagnostics_count": len(diagnostics),
+                "base_version_number": body.get("base_version_number"),
+            },
+            is_revertible=False,
+        )
+
+    payload = _compile_payload(project, status=project.last_status, log=log, request_mode="compile")
+    payload["diagnostics"] = diagnostics
+    payload["runtime"] = "local_agent"
+    return JsonResponse(payload)
 
 
 @csrf_exempt
@@ -1738,7 +2242,19 @@ def api_project_download_zip(request: HttpRequest, project_id: int):
         return _unauthorized()
 
     project = _project_with_owner(project_id, user)
-    archive = build_project_zip(project)
+    include_compile_support = str(request.GET.get("compile_support") or "").strip().lower() in {"1", "true", "yes", "on"}
+    if include_compile_support:
+        try:
+            from projects.pre_compile import run_pre_compile_jobs
+            import projects.plantuml_job  # noqa: F401 — registers PlantUmlJob
+            import projects.pdf_embed_job  # noqa: F401 — registers PdfEmbedJob
+
+            run_pre_compile_jobs(project)
+        except Exception:
+            # ZIP download should still work; missing generated files will be
+            # surfaced by the local compiler log if pre-compile failed.
+            pass
+    archive = build_project_zip(project, include_template_support_files=include_compile_support)
     filename_base = project_pdf_download_name(project).rsplit(".", 1)[0] or "project"
     return FileResponse(archive, content_type="application/zip", filename=f"{filename_base}.zip")
 

@@ -638,6 +638,15 @@ export function initResizeHandles() {
 
   const expandedWidths = loadSavedWidths();
   let { leftCollapsed, rightCollapsed } = loadSideState();
+  let resizeRenderFrame = 0;
+
+  function schedulePdfResizeRender() {
+    if (!s.pdfDoc || resizeRenderFrame) return;
+    resizeRenderFrame = requestAnimationFrame(() => {
+      resizeRenderFrame = 0;
+      import("./pdfviewer.js").then(m => m.renderPdfPages(true));
+    });
+  }
 
   function syncSidePanels() {
     const collapseEnabled = canCollapseSides();
@@ -666,9 +675,12 @@ export function initResizeHandles() {
   function makeDragger(handleId, side) {
     const handle = document.getElementById(handleId);
     if (!handle) return;
-    handle.addEventListener("mousedown", () => {
+    handle.addEventListener("mousedown", e => {
       if ((side === "left" && leftCollapsed) || (side === "right" && rightCollapsed) || !canCollapseSides() && side === "right") return;
+      e.preventDefault();
       handle.classList.add("dragging");
+      body.classList.add("resizing-side-panel");
+      document.body.classList.add("e-is-resizing-panel");
       const totalW = body.clientWidth;
       const computedLeft  = leftCollapsed ? COLLAPSED_W : expandedWidths.left;
       const computedRight = rightCollapsed ? COLLAPSED_W : expandedWidths.right;
@@ -684,15 +696,18 @@ export function initResizeHandles() {
         } else {
           const rw = clamp(totalW - x, MIN_W, totalW - MIN_W - computedLeft - 2);
           expandedWidths.right = rw;
-          if (s.pdfDoc) { import("./pdfviewer.js").then(m => m.renderPdfPages(true)); }
           applyWidths(computedLeft, rw);
+          schedulePdfResizeRender();
           savePanelWidths();
         }
       }
       function onUp() {
         handle.classList.remove("dragging");
+        body.classList.remove("resizing-side-panel");
+        document.body.classList.remove("e-is-resizing-panel");
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
+        if (side === "right") schedulePdfResizeRender();
       }
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);

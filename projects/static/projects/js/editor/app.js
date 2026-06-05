@@ -9,6 +9,7 @@ import * as compile from "./compile.js";
 import * as longdoc from "./longdoc.js";
 import * as search from "./search.js";
 import * as tinymist from "./tinymist.js";
+import * as localRuntime from "./local_runtime.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
@@ -1943,6 +1944,7 @@ export function initEditorApp() {
 
   // ── Tinymist setup ──
   tinymist.initStatusEl(document.getElementById("sb-tinymist"));
+  localRuntime.initStatusToggle(document.getElementById("sb-local-runtime"), { setSaveHint });
   tinymist.setNavigationCallback(lspNavigateTo);
   tinymist.setReferencesCallback(findReferencesAt);
   setPreviewCodeNavigationCallback(lspNavigateTo);

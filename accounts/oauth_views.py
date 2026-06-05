@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .models import MCPToken, OAuthAccessToken, OAuthAuthorizationCode, OAuthClient
+from .models import MCPToken, OAuthAccessToken, OAuthAuthorizationCode, OAuthClient, OAuthRefreshToken
 
 
 def _json_body(request: HttpRequest) -> dict:
@@ -73,6 +73,53 @@ def _redirect_with_params(base_url: str, params: dict[str, str]) -> HttpResponse
     return HttpResponseRedirect(f"{base_url}{joiner}{urlencode(params)}")
 
 
+def _unique_access_token() -> str:
+    token_value = OAuthAccessToken.issue_token()
+    while OAuthAccessToken.objects.filter(token=token_value).exists():
+        token_value = OAuthAccessToken.issue_token()
+    return token_value
+
+
+def _unique_refresh_token() -> str:
+    token_value = OAuthRefreshToken.issue_token()
+    while OAuthRefreshToken.objects.filter(token=token_value).exists():
+        token_value = OAuthRefreshToken.issue_token()
+    return token_value
+
+
+def _issue_oauth_token_pair(user, client: OAuthClient | None, scope: str) -> tuple[OAuthAccessToken, OAuthRefreshToken, int]:
+    expires_in = int(getattr(settings, "OAUTH_ACCESS_TOKEN_TTL_SECONDS", 3600))
+    refresh_ttl = int(getattr(settings, "OAUTH_REFRESH_TOKEN_TTL_SECONDS", 30 * 24 * 60 * 60))
+    now = timezone.now()
+    access = OAuthAccessToken.objects.create(
+        token=_unique_access_token(),
+        user=user,
+        client=client,
+        scope=scope,
+        expires_at=now + timedelta(seconds=max(60, expires_in)),
+    )
+    refresh = OAuthRefreshToken.objects.create(
+        token=_unique_refresh_token(),
+        user=user,
+        client=client,
+        scope=scope,
+        expires_at=now + timedelta(seconds=max(3600, refresh_ttl)),
+    )
+    return access, refresh, expires_in
+
+
+def _oauth_token_response(access: OAuthAccessToken, refresh: OAuthRefreshToken, expires_in: int) -> JsonResponse:
+    return JsonResponse(
+        {
+            "access_token": access.token,
+            "refresh_token": refresh.token,
+            "token_type": "Bearer",
+            "expires_in": expires_in,
+            "scope": access.scope,
+        }
+    )
+
+
 @require_GET
 def oauth_authorization_server_metadata(request: HttpRequest) -> JsonResponse:
     return JsonResponse(
@@ -83,7 +130,7 @@ def oauth_authorization_server_metadata(request: HttpRequest) -> JsonResponse:
             "registration_endpoint": _make_url(request, "/oauth/register/"),
             "introspection_endpoint": _make_url(request, "/oauth/introspect/"),
             "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256", "plain"],
             "token_endpoint_auth_methods_supported": ["none"],
             "scopes_supported": ["smarttex:read", "smarttex:write"],
@@ -199,15 +246,32 @@ def oauth_authorize(request: HttpRequest):
 def oauth_token(request: HttpRequest) -> JsonResponse:
     body = _json_body(request)
     grant_type = _request_value(request, body, "grant_type")
-    code = _request_value(request, body, "code")
     client_id = _request_value(request, body, "client_id")
-    redirect_uri = _request_value(request, body, "redirect_uri")
-    code_verifier = _request_value(request, body, "code_verifier")
     if not client_id:
         client_id = _client_id_from_basic_auth(request)
 
+    if grant_type == "refresh_token":
+        refresh_token_value = _request_value(request, body, "refresh_token")
+        if not refresh_token_value or not client_id:
+            return JsonResponse({"error": "invalid_request"}, status=400)
+        refresh = (
+            OAuthRefreshToken.objects.select_related("user", "client")
+            .filter(token=refresh_token_value)
+            .first()
+        )
+        if not refresh or not refresh.is_active() or not refresh.client or refresh.client.client_id != client_id:
+            return JsonResponse({"error": "invalid_grant"}, status=400)
+        access, replacement_refresh, expires_in = _issue_oauth_token_pair(refresh.user, refresh.client, refresh.scope)
+        refresh.revoked_at = timezone.now()
+        refresh.save(update_fields=["revoked_at"])
+        return _oauth_token_response(access, replacement_refresh, expires_in)
+
     if grant_type != "authorization_code":
         return JsonResponse({"error": "unsupported_grant_type"}, status=400)
+
+    code = _request_value(request, body, "code")
+    redirect_uri = _request_value(request, body, "redirect_uri")
+    code_verifier = _request_value(request, body, "code_verifier")
     if not code or not redirect_uri or not code_verifier:
         return JsonResponse({"error": "invalid_request"}, status=400)
 
@@ -224,30 +288,10 @@ def oauth_token(request: HttpRequest) -> JsonResponse:
     if not _pkce_ok(code_verifier, auth_code.code_challenge, auth_code.code_challenge_method):
         return JsonResponse({"error": "invalid_grant"}, status=400)
 
-    access_token_value = OAuthAccessToken.issue_token()
-    while OAuthAccessToken.objects.filter(token=access_token_value).exists():
-        access_token_value = OAuthAccessToken.issue_token()
-
-    expires_in = int(getattr(settings, "OAUTH_ACCESS_TOKEN_TTL_SECONDS", 3600))
-    expires_at = timezone.now() + timedelta(seconds=expires_in)
-    token_obj = OAuthAccessToken.objects.create(
-        token=access_token_value,
-        user=auth_code.user,
-        client=auth_code.client,
-        scope=auth_code.scope,
-        expires_at=expires_at,
-    )
+    token_obj, refresh_obj, expires_in = _issue_oauth_token_pair(auth_code.user, auth_code.client, auth_code.scope)
     auth_code.used_at = timezone.now()
     auth_code.save(update_fields=["used_at"])
-
-    return JsonResponse(
-        {
-            "access_token": token_obj.token,
-            "token_type": "Bearer",
-            "expires_in": expires_in,
-            "scope": token_obj.scope,
-        }
-    )
+    return _oauth_token_response(token_obj, refresh_obj, expires_in)
 
 
 @csrf_exempt

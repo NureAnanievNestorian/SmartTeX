@@ -40,6 +40,52 @@ class Project(models.Model):
         return f"{self.title} ({self.owner_id})"
 
 
+class ProjectLocalRuntime(models.Model):
+    project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="local_runtime")
+    enabled = models.BooleanField(default=False)
+    agent_id = models.CharField(max_length=128, blank=True, default="")
+    agent_version = models.CharField(max_length=64, blank=True, default="")
+    capabilities = models.JSONField(default=list, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project_id"]
+
+    def __str__(self) -> str:
+        return f"Local runtime for project {self.project_id}: {'on' if self.enabled else 'off'}"
+
+
+class LocalCompileJob(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        SUCCESS = "success", "Success"
+        ERROR = "error", "Error"
+        EXPIRED = "expired", "Expired"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="local_compile_jobs")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    agent_id = models.CharField(max_length=128, blank=True, default="")
+    request_payload = models.JSONField(default=dict, blank=True)
+    result_payload = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(fields=["project", "status", "created_at"], name="projects_local_job_status_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Local compile job {self.id} for project {self.project_id}: {self.status}"
+
+
 class ProjectVersion(models.Model):
     class SnapshotKind(models.TextChoices):
         TEXT = "text", "Text"

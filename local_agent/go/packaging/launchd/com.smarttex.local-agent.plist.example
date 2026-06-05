@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.smarttex.local-agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOUR_USER/bin/smarttex-local</string>
+    <string>serve</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SMARTTEX_SERVER</key>
+    <string>https://smart-tex.pp.ua</string>
+    <key>SMARTTEX_LOCAL_WORKSPACE</key>
+    <string>/Users/YOUR_USER/.smarttex-local</string>
+    <key>SMARTTEX_LOCAL_LISTEN</key>
+    <string>127.0.0.1:8765</string>
+    <key>TINYMIST_BIN</key>
+    <string>/Users/YOUR_USER/bin/tinymist</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOUR_USER/Library/Logs/smarttex-local-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOUR_USER/Library/Logs/smarttex-local-agent.err.log</string>
+</dict>
+</plist>
