@@ -151,7 +151,11 @@ fi
 
 echo "Downloading SmartTeX Local Agent ${version:-latest}: $asset_url"
 curl -fsSL "$asset_url" -o "$tmp_dir/smarttex-local"
-actual_sha="$(shasum -a 256 "$tmp_dir/smarttex-local" | awk '{print $1}')"
+if command -v shasum >/dev/null 2>&1; then
+  actual_sha="$(shasum -a 256 "$tmp_dir/smarttex-local" | awk '{print $1}')"
+else
+  actual_sha="$(sha256sum "$tmp_dir/smarttex-local" | awk '{print $1}')"
+fi
 if [[ "$actual_sha" != "$asset_sha" ]]; then
   echo "Checksum mismatch for SmartTeX Local Agent" >&2
   echo "expected: $asset_sha" >&2
@@ -163,17 +167,114 @@ mkdir -p "$bin_dir"
 install_path="$bin_dir/smarttex-local"
 install -m 0755 "$tmp_dir/smarttex-local" "$install_path"
 
+path_hint=""
+case ":$PATH:" in
+  *":$bin_dir:"*) ;;
+  *)
+    shell_name="$(basename "${SHELL:-}")"
+    profile=""
+    case "$shell_name" in
+      zsh) profile="$HOME/.zshrc" ;;
+      bash) profile="$HOME/.bashrc" ;;
+    esac
+    if [[ -n "$profile" ]]; then
+      mkdir -p "$(dirname "$profile")"
+      touch "$profile"
+      if ! grep -Fq "$bin_dir" "$profile"; then
+        {
+          echo ""
+          echo "# SmartTeX Local Agent"
+          echo "export PATH=\"$bin_dir:\$PATH\""
+        } >> "$profile"
+        path_hint="Added $bin_dir to PATH in $profile. Restart your terminal or run: source $profile"
+      fi
+    fi
+    ;;
+esac
+
 echo
 echo "Installed: $install_path"
 echo "Version: $("$install_path" version)"
+if [[ -n "$path_hint" ]]; then
+  echo "$path_hint"
+fi
 echo
 echo "Next:"
-echo "  $install_path login --server ${server%/}"
-echo "  $install_path serve"
-echo
-echo "Tip: add $bin_dir to PATH if 'smarttex-local' is not found."
+echo "  smarttex-local login --server ${server%/}"
+echo "  smarttex-local serve"
 EOF
 chmod 0755 "$OUT_DIR/install.sh"
 
+cat > "$OUT_DIR/install.ps1" <<'EOF'
+$ErrorActionPreference = "Stop"
+
+$Channel = if ($env:SMARTTEX_LOCAL_UPDATE_CHANNEL) { $env:SMARTTEX_LOCAL_UPDATE_CHANNEL } else { "stable" }
+$InstallDir = if ($env:SMARTTEX_LOCAL_BIN_DIR) { $env:SMARTTEX_LOCAL_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "SmartTeX\bin" }
+$Server = if ($env:SMARTTEX_SERVER) { $env:SMARTTEX_SERVER.TrimEnd("/") } else { "https://smart-tex.pp.ua" }
+$BaseUrl = "$Server/static/local-agent/$Channel"
+$ManifestUrl = "$BaseUrl/manifest.json"
+
+$ArchRaw = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+switch ($ArchRaw) {
+  "arm64" { $Arch = "arm64" }
+  "x64" { $Arch = "amd64" }
+  "x86" { throw "SmartTeX Local Agent does not ship a 32-bit Windows binary." }
+  default { throw "Unsupported Windows architecture: $ArchRaw" }
+}
+
+$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("smarttex-local-" + [System.Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+try {
+  $ManifestPath = Join-Path $TempDir "manifest.json"
+  Write-Host "Fetching SmartTeX Local Agent manifest: $ManifestUrl"
+  Invoke-WebRequest -Uri $ManifestUrl -OutFile $ManifestPath
+  $Manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
+  $Asset = $Manifest.assets | Where-Object { $_.os -eq "windows" -and $_.arch -eq $Arch } | Select-Object -First 1
+  if (-not $Asset) {
+    throw "No SmartTeX Local Agent binary for windows/$Arch"
+  }
+
+  $AssetUrl = [string]$Asset.url
+  if (-not ($AssetUrl.StartsWith("http://") -or $AssetUrl.StartsWith("https://"))) {
+    $AssetUrl = "$Server$AssetUrl"
+  }
+  $DownloadPath = Join-Path $TempDir "smarttex-local.exe"
+  Write-Host "Downloading SmartTeX Local Agent $($Manifest.version): $AssetUrl"
+  Invoke-WebRequest -Uri $AssetUrl -OutFile $DownloadPath
+
+  $ActualSha = (Get-FileHash -Algorithm SHA256 -Path $DownloadPath).Hash.ToLowerInvariant()
+  $ExpectedSha = ([string]$Asset.sha256).ToLowerInvariant()
+  if ($ActualSha -ne $ExpectedSha) {
+    throw "Checksum mismatch. Expected $ExpectedSha, got $ActualSha"
+  }
+
+  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+  $InstallPath = Join-Path $InstallDir "smarttex-local.exe"
+  Copy-Item -Force $DownloadPath $InstallPath
+
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $PathParts = @()
+  if ($UserPath) { $PathParts = $UserPath.Split(";") | Where-Object { $_ } }
+  $AlreadyInPath = $PathParts | Where-Object { $_.TrimEnd("\") -ieq $InstallDir.TrimEnd("\") }
+  if (-not $AlreadyInPath) {
+    $NextPath = if ($UserPath) { "$UserPath;$InstallDir" } else { $InstallDir }
+    [Environment]::SetEnvironmentVariable("Path", $NextPath, "User")
+    $env:Path = "$env:Path;$InstallDir"
+    Write-Host "Added $InstallDir to your user PATH. Restart PowerShell if smarttex-local is not found."
+  }
+
+  Write-Host ""
+  Write-Host "Installed: $InstallPath"
+  & $InstallPath version
+  Write-Host ""
+  Write-Host "Next:"
+  Write-Host "  smarttex-local login --server $Server"
+  Write-Host "  smarttex-local serve"
+} finally {
+  Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+}
+EOF
+
 echo "Wrote $OUT_DIR/manifest.json"
 echo "Wrote $OUT_DIR/install.sh"
+echo "Wrote $OUT_DIR/install.ps1"

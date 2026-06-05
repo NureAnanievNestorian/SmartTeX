@@ -34,6 +34,8 @@ import (
 
 const toolVersion = "0.3.1-local-preview-root"
 
+const maxUploadedCompileLogBytes = 1536 * 1024
+
 const localPreviewBridgeScript = `
 <script>
 (() => {
@@ -1752,7 +1754,23 @@ func compileTypst(root, mainFile, typstBin string, timeout time.Duration) compil
 		fmt.Sprintf("pdf_exists=%t", len(pdf) > 0),
 		fmt.Sprintf("pdf_size=%d", len(pdf)),
 	}, "\n")
-	return compileResult{Status: status, PDF: pdf, Log: log, ReturnCode: returnCode}
+	return compileResult{Status: status, PDF: pdf, Log: limitCompileLog(log, maxUploadedCompileLogBytes), ReturnCode: returnCode}
+}
+
+func limitCompileLog(log string, maxBytes int) string {
+	if maxBytes <= 0 || len([]byte(log)) <= maxBytes {
+		return log
+	}
+	raw := []byte(log)
+	marker := []byte(fmt.Sprintf("\n\n=== SmartTeX local compile log truncated to %d bytes ===\n", maxBytes))
+	if len(marker)+256 >= maxBytes {
+		return string(raw[:maxBytes])
+	}
+	headBytes := (maxBytes - len(marker)) / 2
+	tailBytes := maxBytes - len(marker) - headBytes
+	head := strings.TrimRight(string(raw[:headBytes]), "\x00")
+	tail := strings.TrimLeft(string(raw[len(raw)-tailBytes:]), "\x00")
+	return head + string(marker) + tail
 }
 
 func uploadCompileResult(cfg config, result compileResult) ([]byte, error) {

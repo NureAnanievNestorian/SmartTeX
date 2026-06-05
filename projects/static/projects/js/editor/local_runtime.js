@@ -100,9 +100,19 @@ function shellQuote(value) {
   return `'${String(value || "").replace(/'/g, "'\\''")}'`;
 }
 
-function installCommand() {
+function powershellQuote(value) {
+  return `'${String(value || "").replace(/'/g, "''")}'`;
+}
+
+function unixInstallCommand() {
   const origin = window.location.origin || "https://smart-tex.pp.ua";
   return `curl -fsSL ${origin}/static/local-agent/stable/install.sh | SMARTTEX_SERVER=${shellQuote(origin)} bash`;
+}
+
+function windowsInstallCommand() {
+  const origin = window.location.origin || "https://smart-tex.pp.ua";
+  const scriptUrl = `${origin}/static/local-agent/stable/install.ps1`;
+  return `powershell -ExecutionPolicy Bypass -NoProfile -Command "$env:SMARTTEX_SERVER=${powershellQuote(origin)}; iwr -useb ${powershellQuote(scriptUrl)} | iex"`;
 }
 
 export async function checkLocalRuntime(overrides = null) {
@@ -268,7 +278,9 @@ function updatePopoverFromState() {
   const urlInput = popoverEl.querySelector("[data-field='url']");
   const secretInput = popoverEl.querySelector("[data-field='secret']");
   const installNode = popoverEl.querySelector("[data-role='install-command']");
-  if (installNode) installNode.textContent = installCommand();
+  const windowsInstallNode = popoverEl.querySelector("[data-role='install-command-windows']");
+  if (installNode) installNode.textContent = unixInstallCommand();
+  if (windowsInstallNode) windowsInstallNode.textContent = windowsInstallCommand();
   if (urlInput && document.activeElement !== urlInput) urlInput.value = local.url || DEFAULT_AGENT_URL;
   if (secretInput && document.activeElement !== secretInput) secretInput.value = local.secret || "";
 
@@ -358,11 +370,19 @@ function ensurePopover() {
       <div class="e-local-runtime-install__copy">
         <div>
           <div class="e-local-runtime-install__title">Потрібен локальний agent?</div>
-          <div class="e-local-runtime-install__text">macOS/Linux: встановіть binary, потім запустіть <code>smarttex-local login --serve</code>.</div>
+          <div class="e-local-runtime-install__text">Інсталер поставить binary, додасть його в user PATH і після цього можна запускати <code>smarttex-local login --serve</code>.</div>
         </div>
-        <button class="e-local-runtime-copy" type="button" data-action="copy-install">Копіювати</button>
+      </div>
+      <div class="e-local-runtime-install__row">
+        <span class="e-local-runtime-install__os">macOS / Linux</span>
+        <button class="e-local-runtime-copy" type="button" data-action="copy-install-unix">Копіювати</button>
       </div>
       <code data-role="install-command"></code>
+      <div class="e-local-runtime-install__row">
+        <span class="e-local-runtime-install__os">Windows PowerShell</span>
+        <button class="e-local-runtime-copy" type="button" data-action="copy-install-windows">Копіювати</button>
+      </div>
+      <code data-role="install-command-windows"></code>
     </div>
     <label class="e-local-runtime-field">
       <span>Agent URL</span>
@@ -385,7 +405,8 @@ function ensurePopover() {
   popoverEl.querySelector("[data-action='test']")?.addEventListener("click", () => testFromPopover());
   popoverEl.querySelector("[data-action='enable']")?.addEventListener("click", () => enableFromPopover());
   popoverEl.querySelector("[data-action='disable']")?.addEventListener("click", () => disableFromPopover());
-  popoverEl.querySelector("[data-action='copy-install']")?.addEventListener("click", () => copyInstallCommand());
+  popoverEl.querySelector("[data-action='copy-install-unix']")?.addEventListener("click", () => copyInstallCommand("unix"));
+  popoverEl.querySelector("[data-action='copy-install-windows']")?.addEventListener("click", () => copyInstallCommand("windows"));
   popoverEl.querySelectorAll("input").forEach(input => {
     input.addEventListener("keydown", event => {
       if (event.key === "Enter") enableFromPopover();
@@ -434,11 +455,11 @@ function persistBrowserConfig(localCfg, enabled) {
   setLocalRuntimeEnabled(enabled);
 }
 
-async function copyInstallCommand() {
-  const command = installCommand();
+async function copyInstallCommand(platform = "unix") {
+  const command = platform === "windows" ? windowsInstallCommand() : unixInstallCommand();
   try {
     await navigator.clipboard.writeText(command);
-    setPopoverMessage("Команду встановлення скопійовано.", "success");
+    setPopoverMessage(platform === "windows" ? "Windows-команду встановлення скопійовано." : "Команду встановлення скопійовано.", "success");
   } catch (_) {
     setPopoverMessage(command, "muted");
   }

@@ -179,8 +179,9 @@ To build the static update bundle for deployment:
 SMARTTEX_LOCAL_UPDATE_CHANNEL=stable local_agent/go/scripts/build-release-assets.sh
 ```
 
-The script writes precompiled binaries, `manifest.json`, and the macOS/Linux
-`install.sh` bootstrapper to `projects/static/local-agent/stable/`.
+The script writes precompiled binaries, `manifest.json`, the macOS/Linux
+`install.sh` bootstrapper, and the Windows PowerShell `install.ps1`
+bootstrapper to `projects/static/local-agent/stable/`.
 
 The GitHub Actions workflow `.github/workflows/smarttex-local-agent-release.yml`
 builds the same bundle and deploys it to the VPS static volume at:
@@ -197,9 +198,19 @@ curl -fsSL https://smart-tex.pp.ua/static/local-agent/stable/install.sh | SMARTT
 smarttex-local login --serve --server https://smart-tex.pp.ua
 ```
 
+On Windows, run this in PowerShell:
+
+```powershell
+$env:SMARTTEX_SERVER='https://smart-tex.pp.ua'; iwr -useb https://smart-tex.pp.ua/static/local-agent/stable/install.ps1 | iex
+smarttex-local login --serve --server https://smart-tex.pp.ua
+```
+
 The release bundle includes macOS, Linux, and Windows binaries in the manifest.
-The generated `install.sh` bootstrapper is for macOS/Linux; Windows can use the
-manifested `.exe` directly until a PowerShell bootstrapper is added.
+Both bootstrappers verify SHA-256 before installing. `install.sh` installs to
+`~/.local/bin` by default and adds it to the shell profile when needed.
+`install.ps1` installs to `%LOCALAPPDATA%\SmartTeX\bin` by default and adds it
+to the current user's PATH. A terminal restart may be needed for existing
+shells to pick up the updated PATH.
 
 To include toolchain assets in the generated manifest, pass a JSON file:
 
