@@ -96,6 +96,15 @@ function normalizeAgentUrl(url) {
   return String(url || DEFAULT_AGENT_URL).trim().replace(/\/+$/, "") || DEFAULT_AGENT_URL;
 }
 
+function shellQuote(value) {
+  return `'${String(value || "").replace(/'/g, "'\\''")}'`;
+}
+
+function installCommand() {
+  const origin = window.location.origin || "https://smart-tex.pp.ua";
+  return `curl -fsSL ${origin}/static/local-agent/stable/install.sh | SMARTTEX_SERVER=${shellQuote(origin)} bash`;
+}
+
 export async function checkLocalRuntime(overrides = null) {
   const localCfg = overrides || localRuntimeConfig();
   const agentUrl = normalizeAgentUrl(localCfg.url);
@@ -258,6 +267,8 @@ function updatePopoverFromState() {
   const runtime = lastRuntime || s.projectMeta?.local_runtime || {};
   const urlInput = popoverEl.querySelector("[data-field='url']");
   const secretInput = popoverEl.querySelector("[data-field='secret']");
+  const installNode = popoverEl.querySelector("[data-role='install-command']");
+  if (installNode) installNode.textContent = installCommand();
   if (urlInput && document.activeElement !== urlInput) urlInput.value = local.url || DEFAULT_AGENT_URL;
   if (secretInput && document.activeElement !== secretInput) secretInput.value = local.secret || "";
 
@@ -343,6 +354,16 @@ function ensurePopover() {
       <div class="e-local-runtime-agent" data-role="agent">Agent не перевірено</div>
       <div class="e-local-runtime-caps" data-role="capabilities"></div>
     </div>
+    <div class="e-local-runtime-install">
+      <div class="e-local-runtime-install__copy">
+        <div>
+          <div class="e-local-runtime-install__title">Потрібен локальний agent?</div>
+          <div class="e-local-runtime-install__text">macOS/Linux: встановіть binary, потім запустіть <code>smarttex-local login --serve</code>.</div>
+        </div>
+        <button class="e-local-runtime-copy" type="button" data-action="copy-install">Копіювати</button>
+      </div>
+      <code data-role="install-command"></code>
+    </div>
     <label class="e-local-runtime-field">
       <span>Agent URL</span>
       <input data-field="url" autocomplete="off" spellcheck="false" />
@@ -364,6 +385,7 @@ function ensurePopover() {
   popoverEl.querySelector("[data-action='test']")?.addEventListener("click", () => testFromPopover());
   popoverEl.querySelector("[data-action='enable']")?.addEventListener("click", () => enableFromPopover());
   popoverEl.querySelector("[data-action='disable']")?.addEventListener("click", () => disableFromPopover());
+  popoverEl.querySelector("[data-action='copy-install']")?.addEventListener("click", () => copyInstallCommand());
   popoverEl.querySelectorAll("input").forEach(input => {
     input.addEventListener("keydown", event => {
       if (event.key === "Enter") enableFromPopover();
@@ -410,6 +432,16 @@ function persistBrowserConfig(localCfg, enabled) {
   setLocalRuntimeUrl(localCfg.url);
   setLocalRuntimeSecret(localCfg.secret);
   setLocalRuntimeEnabled(enabled);
+}
+
+async function copyInstallCommand() {
+  const command = installCommand();
+  try {
+    await navigator.clipboard.writeText(command);
+    setPopoverMessage("Команду встановлення скопійовано.", "success");
+  } catch (_) {
+    setPopoverMessage(command, "muted");
+  }
 }
 
 async function testFromPopover() {

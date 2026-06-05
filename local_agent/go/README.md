@@ -179,10 +179,27 @@ To build the static update bundle for deployment:
 SMARTTEX_LOCAL_UPDATE_CHANNEL=stable local_agent/go/scripts/build-release-assets.sh
 ```
 
-The script writes precompiled binaries and `manifest.json` to
-`projects/static/local-agent/stable/`. The GitHub Actions workflow
-`.github/workflows/smarttex-local-agent-release.yml` builds the same bundle as
-a release artifact.
+The script writes precompiled binaries, `manifest.json`, and the macOS/Linux
+`install.sh` bootstrapper to `projects/static/local-agent/stable/`.
+
+The GitHub Actions workflow `.github/workflows/smarttex-local-agent-release.yml`
+builds the same bundle and deploys it to the VPS static volume at:
+
+```text
+/opt/smarttex/static/local-agent/<channel>/
+```
+
+It uses the same `VPS_HOST`, `VPS_USER`, and `VPS_SSH_KEY` repository secrets as
+the main deploy workflow. After it finishes, users can install with:
+
+```bash
+curl -fsSL https://smart-tex.pp.ua/static/local-agent/stable/install.sh | SMARTTEX_SERVER='https://smart-tex.pp.ua' bash
+smarttex-local login --serve --server https://smart-tex.pp.ua
+```
+
+The release bundle includes macOS, Linux, and Windows binaries in the manifest.
+The generated `install.sh` bootstrapper is for macOS/Linux; Windows can use the
+manifested `.exe` directly until a PowerShell bootstrapper is added.
 
 To include toolchain assets in the generated manifest, pass a JSON file:
 

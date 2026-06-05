@@ -67,6 +67,7 @@ dist/
 build/
 bin/
 local_agent/go/smarttex-local-go
+projects/static/local-agent/
 
 # Docker / local data
 *.pid

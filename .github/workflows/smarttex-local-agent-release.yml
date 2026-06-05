@@ -34,3 +34,27 @@ jobs:
         with:
           name: smarttex-local-agent-${{ github.event.inputs.channel || 'stable' }}
           path: projects/static/local-agent/${{ github.event.inputs.channel || 'stable' }}/
+
+      - name: Deploy local agent assets to VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.VPS_HOST }}
+          DEPLOY_USER: ${{ secrets.VPS_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY"
+
+          install -m 0700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/smarttex_vps_key
+          chmod 0600 ~/.ssh/smarttex_vps_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+          deploy_path="/opt/smarttex/static/local-agent"
+          ssh -i ~/.ssh/smarttex_vps_key "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$deploy_path/$CHANNEL'"
+          rsync -az --delete -e "ssh -i ~/.ssh/smarttex_vps_key" \
+            "projects/static/local-agent/$CHANNEL/" \
+            "$DEPLOY_USER@$DEPLOY_HOST:$deploy_path/$CHANNEL/"
+
+          echo "Local agent assets deployed to $deploy_path/$CHANNEL"
