@@ -5120,7 +5120,13 @@
             display: inline-flex;
         }
 
-        .e-readonly-discard {
+        .e-readonly-overlay.can-use-web .e-readonly-actions {
+            display: inline-flex;
+        }
+
+        .e-readonly-discard,
+        .e-readonly-web {
+            display: none;
             border: 1px solid rgba(248, 113, 113, .38);
             border-radius: 11px;
             color: #fecaca;
@@ -5133,13 +5139,31 @@
             transition: transform .14s ease, border-color .14s ease, background .14s ease;
         }
 
-        .e-readonly-discard:hover {
+        .e-readonly-overlay.can-discard-lock .e-readonly-discard,
+        .e-readonly-overlay.can-use-web .e-readonly-web {
+            display: inline-flex;
+        }
+
+        .e-readonly-web {
+            border-color: rgba(74, 222, 128, .42);
+            color: #dcfce7;
+            background: rgba(22, 101, 52, .34);
+        }
+
+        .e-readonly-discard:hover,
+        .e-readonly-web:hover {
             transform: translateY(-1px);
             border-color: rgba(248, 113, 113, .68);
             background: rgba(153, 27, 27, .42);
         }
 
-        .e-readonly-discard:disabled {
+        .e-readonly-web:hover {
+            border-color: rgba(74, 222, 128, .72);
+            background: rgba(22, 163, 74, .34);
+        }
+
+        .e-readonly-discard:disabled,
+        .e-readonly-web:disabled {
             opacity: .62;
             cursor: wait;
             transform: none;
@@ -6682,6 +6706,7 @@
                             </span>
                             <span class="e-readonly-actions">
                                 <button class="e-readonly-discard" id="readonly-discard-session-btn" type="button">Скасувати AI-сесію</button>
+                                <button class="e-readonly-web" id="readonly-use-web-btn" type="button">Редагувати у вебі</button>
                             </span>
                         </span>
                     </div>

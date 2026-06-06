@@ -22,6 +22,10 @@ jobs:
           go-version-file: local_agent/go/go.mod
           cache-dependency-path: local_agent/go/go.sum
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Build static update assets
         env:
           SMARTTEX_LOCAL_UPDATE_CHANNEL: ${{ github.event.inputs.channel || 'stable' }}

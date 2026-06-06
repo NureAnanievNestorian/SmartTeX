@@ -194,6 +194,43 @@ const localPreviewBridgeScript = `
   window.addEventListener("message", event => {
     if (PARENT_ORIGIN !== "*" && event.origin !== PARENT_ORIGIN && event.origin !== window.location.origin) return;
     const data = event.data || {};
+    function primaryScroller() {
+      const root = document.scrollingElement || document.documentElement || document.body;
+      let best = root;
+      let bestDelta = Math.max(0, root.scrollHeight - root.clientHeight);
+      for (const el of Array.from(document.querySelectorAll("body *"))) {
+        const deltaY = Math.max(0, el.scrollHeight - el.clientHeight);
+        const deltaX = Math.max(0, el.scrollWidth - el.clientWidth);
+        if ((deltaY > bestDelta || deltaX > 200) && el.clientHeight > 120) {
+          best = el;
+          bestDelta = deltaY;
+        }
+      }
+      return best;
+    }
+    if (data?.type === "smarttex-preview-capture-scroll") {
+      const scroller = primaryScroller();
+      window.parent.postMessage({
+        type: "smarttex-preview-scroll-state",
+        key: data.key || "",
+        x: scroller.scrollLeft || window.scrollX || 0,
+        y: scroller.scrollTop || window.scrollY || 0,
+      }, PARENT_ORIGIN);
+      return;
+    }
+    if (data?.type === "smarttex-preview-restore-scroll") {
+      const x = Number(data.x || 0);
+      const y = Number(data.y || 0);
+      const apply = () => {
+        const scroller = primaryScroller();
+        scroller.scrollLeft = x;
+        scroller.scrollTop = y;
+        window.scrollTo(x, y);
+      };
+      requestAnimationFrame(apply);
+      setTimeout(apply, 80);
+      return;
+    }
     if (data?.type !== "smarttex-preview-reveal") return;
     const payload = data.payload || {};
     revealElement(findTextElement([
@@ -209,7 +246,7 @@ const localPreviewBridgeScript = `
     const text = bestClickableText(event);
     if (!location && !text) return;
     window.parent.postMessage({type: "smarttex-preview-click", payload: {text, location}}, PARENT_ORIGIN);
-  }, true);
+  }, false);
 
   window.parent.postMessage({type: "smarttex-preview-ready", rootUri: PREVIEW_ROOT_URI}, PARENT_ORIGIN);
 })();
@@ -325,6 +362,23 @@ type toolchainAsset struct {
 	Executable string `json:"executable"`
 }
 
+type workspaceState struct {
+	ProjectID          int               `json:"project_id"`
+	Server             string            `json:"server"`
+	WorkspaceID        string            `json:"workspace_id"`
+	BaseVersionNumber  int               `json:"base_version_number"`
+	LastSyncUnixMillis int64             `json:"last_sync_unix_millis"`
+	Files              map[string]string `json:"files"`
+}
+
+type workspaceFileSnapshot struct {
+	Path     string
+	Hash     string
+	IsText   bool
+	Content  string
+	RawBytes []byte
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "smarttex-local-go: %v\n", err)
@@ -344,6 +398,16 @@ func run(args []string) error {
 		return runProjects(args[1:])
 	case "compile":
 		return runCompile(args[1:])
+	case "workspace":
+		return runWorkspace(args[1:])
+	case "annotations":
+		return runAnnotations(args[1:])
+	case "proposals":
+		return runProposals(args[1:])
+	case "versions":
+		return runVersions(args[1:])
+	case "pdf-embed":
+		return runPdfEmbed(args[1:])
 	case "serve":
 		return runServe(args[1:])
 	case "doctor":
@@ -367,6 +431,11 @@ Usage:
   smarttex-local-go login [--server URL] [--serve]
   smarttex-local-go projects [--server URL] [--token TOKEN]
   smarttex-local-go compile --project ID [--server URL] [--token TOKEN]
+  smarttex-local-go workspace open|pull|sync|watch|status|release --project ID [--server URL] [--token TOKEN]
+  smarttex-local-go annotations list|add|update --project ID [--server URL] [--token TOKEN]
+  smarttex-local-go proposals status|diff|edit-line|accept|discard --project ID [--server URL] [--token TOKEN]
+  smarttex-local-go versions list|detail|rollback --project ID [--server URL] [--token TOKEN]
+  smarttex-local-go pdf-embed list|set --project ID [--server URL] [--token TOKEN]
   smarttex-local-go serve [--server URL] [--token TOKEN] [--secret SECRET] [--tinymist-bin PATH]
   smarttex-local-go doctor [--server URL] [--token TOKEN]
   smarttex-local-go update [--server URL] [--install-path PATH]
@@ -530,6 +599,768 @@ func runCompile(args []string) error {
 	if result.Status != "success" {
 		os.Exit(2)
 	}
+	return nil
+}
+
+func runWorkspace(args []string) error {
+	if len(args) == 0 {
+		return errors.New("workspace subcommand is required: open, sync, or watch")
+	}
+	switch args[0] {
+	case "open":
+		return runWorkspaceOpen(args[1:])
+	case "sync":
+		return runWorkspaceSync(args[1:], false)
+	case "watch":
+		return runWorkspaceWatch(args[1:])
+	case "status":
+		return runWorkspaceStatus(args[1:])
+	case "pull":
+		return runWorkspacePull(args[1:])
+	case "release", "close":
+		return runWorkspaceRelease(args[1:])
+	default:
+		return fmt.Errorf("unknown workspace subcommand %q", args[0])
+	}
+}
+
+func runAnnotations(args []string) error {
+	if len(args) == 0 {
+		return errors.New("annotations subcommand is required: list, add, or update")
+	}
+	switch args[0] {
+	case "list":
+		return runAnnotationsList(args[1:])
+	case "add":
+		return runAnnotationsAdd(args[1:])
+	case "update":
+		return runAnnotationsUpdate(args[1:])
+	default:
+		return fmt.Errorf("unknown annotations subcommand %q", args[0])
+	}
+}
+
+func runProposals(args []string) error {
+	if len(args) == 0 {
+		return errors.New("proposals subcommand is required: status, diff, accept, or discard")
+	}
+	switch args[0] {
+	case "status":
+		return runProposalStatus(args[1:])
+	case "diff":
+		return runProposalDiff(args[1:])
+	case "edit-line":
+		return runProposalEditLine(args[1:])
+	case "accept":
+		return runProposalAccept(args[1:])
+	case "discard":
+		return runProposalDiscard(args[1:])
+	default:
+		return fmt.Errorf("unknown proposals subcommand %q", args[0])
+	}
+}
+
+func runVersions(args []string) error {
+	if len(args) == 0 {
+		return errors.New("versions subcommand is required: list, detail, or rollback")
+	}
+	switch args[0] {
+	case "list":
+		return runVersionsList(args[1:])
+	case "detail", "show":
+		return runVersionDetail(args[1:])
+	case "rollback":
+		return runVersionRollback(args[1:])
+	default:
+		return fmt.Errorf("unknown versions subcommand %q", args[0])
+	}
+}
+
+func runPdfEmbed(args []string) error {
+	if len(args) == 0 {
+		return errors.New("pdf-embed subcommand is required: list or set")
+	}
+	switch args[0] {
+	case "list":
+		return runPdfEmbedList(args[1:])
+	case "set":
+		return runPdfEmbedSet(args[1:])
+	default:
+		return fmt.Errorf("unknown pdf-embed subcommand %q", args[0])
+	}
+}
+
+func pdfEmbedFlags(name string) (*flag.FlagSet, *string, *string, *int) {
+	fs, server, token := baseFlags("pdf-embed-" + name)
+	projectID := fs.Int("project", 0, "SmartTeX project id")
+	return fs, server, token, projectID
+}
+
+func runPdfEmbedList(args []string) error {
+	fs, server, token, projectID := pdfEmbedFlags("list")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	raw, err := apiRequest("GET", *server, fmt.Sprintf("/api/projects/%d/pdf-embed/", *projectID), resolvedToken, nil, "")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runPdfEmbedSet(args []string) error {
+	fs, server, token, projectID := pdfEmbedFlags("set")
+	filePath := fs.String("file", "", "project PDF file path")
+	enabled := fs.Bool("enabled", true, "whether PDF embed is enabled")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	pdfPath := strings.TrimSpace(*filePath)
+	if pdfPath == "" {
+		return errors.New("--file is required")
+	}
+	if !strings.HasSuffix(strings.ToLower(pdfPath), ".pdf") {
+		return errors.New("--file must point to a PDF")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"file": pdfPath, "enabled": *enabled}
+	raw, err := apiJSON("POST", *server, fmt.Sprintf("/api/projects/%d/pdf-embed/", *projectID), resolvedToken, body)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func versionFlags(name string) (*flag.FlagSet, *string, *string, *int) {
+	fs, server, token := baseFlags("versions-" + name)
+	projectID := fs.Int("project", 0, "SmartTeX project id")
+	return fs, server, token, projectID
+}
+
+func runVersionsList(args []string) error {
+	fs, server, token, projectID := versionFlags("list")
+	limit := fs.Int("limit", 40, "maximum number of versions")
+	beforeID := fs.Int("before-id", 0, "load versions before this version id")
+	fileName := fs.String("file", "", "filter by project file path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(*limit))
+	if *beforeID > 0 {
+		query.Set("before_id", strconv.Itoa(*beforeID))
+	}
+	if strings.TrimSpace(*fileName) != "" {
+		query.Set("file", strings.TrimSpace(*fileName))
+	}
+	raw, err := apiRequest("GET", *server, fmt.Sprintf("/api/projects/%d/versions/?%s", *projectID, query.Encode()), resolvedToken, nil, "")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runVersionDetail(args []string) error {
+	fs, server, token, projectID := versionFlags("detail")
+	versionID := fs.Int("id", 0, "project version id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	if *versionID <= 0 {
+		return errors.New("--id is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	raw, err := apiRequest("GET", *server, fmt.Sprintf("/api/projects/%d/versions/%d/", *projectID, *versionID), resolvedToken, nil, "")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runVersionRollback(args []string) error {
+	fs, server, token, projectID := versionFlags("rollback")
+	versionID := fs.Int("id", 0, "project version id")
+	summary := fs.String("summary", "", "rollback change summary")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	if *versionID <= 0 {
+		return errors.New("--id is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"change_source": "api",
+	}
+	if strings.TrimSpace(*summary) != "" {
+		body["change_summary"] = strings.TrimSpace(*summary)
+		body["summary"] = strings.TrimSpace(*summary)
+	}
+	raw, err := apiJSON("POST", *server, fmt.Sprintf("/api/projects/%d/versions/%d/rollback/", *projectID, *versionID), resolvedToken, body)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func proposalFlags(name string) (*flag.FlagSet, *string, *string, *int) {
+	fs, server, token := baseFlags("proposals-" + name)
+	projectID := fs.Int("project", 0, "SmartTeX project id")
+	return fs, server, token, projectID
+}
+
+func runProposalStatus(args []string) error {
+	fs, server, token, projectID := proposalFlags("status")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	raw, err := apiRequest("GET", *server, fmt.Sprintf("/api/projects/%d/change-proposals/status/", *projectID), resolvedToken, nil, "")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runProposalDiff(args []string) error {
+	fs, server, token, projectID := proposalFlags("diff")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	raw, err := apiRequest("GET", *server, fmt.Sprintf("/api/projects/%d/change-proposals/diff/", *projectID), resolvedToken, nil, "")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runProposalEditLine(args []string) error {
+	fs, server, token, projectID := proposalFlags("edit-line")
+	fileName := fs.String("file", "", "proposal file path")
+	lineNumber := fs.Int("line", 0, "1-based line number in the proposal new file")
+	expectedText := fs.String("expected-text", "", "expected current line text")
+	newText := fs.String("new-text", "", "replacement line text")
+	expectedTextProvided := cliFlagProvided(args, "expected-text")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	if strings.TrimSpace(*fileName) == "" {
+		return errors.New("--file is required")
+	}
+	if *lineNumber <= 0 {
+		return errors.New("--line is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"file_name":   strings.TrimSpace(*fileName),
+		"line_number": *lineNumber,
+		"new_text":    *newText,
+	}
+	if expectedTextProvided {
+		body["expected_text"] = *expectedText
+	}
+	raw, err := apiJSON("POST", *server, fmt.Sprintf("/api/projects/%d/change-proposals/manual-edit/", *projectID), resolvedToken, body)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func cliFlagProvided(args []string, name string) bool {
+	long := "--" + name
+	for _, arg := range args {
+		if arg == long || strings.HasPrefix(arg, long+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+func runProposalAccept(args []string) error {
+	fs, server, token, projectID := proposalFlags("accept")
+	acceptCompileErrors := fs.Bool("accept-compile-errors", false, "accept a failed-compile proposal by explicit user override")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{}
+	if *acceptCompileErrors {
+		body["accept_compile_errors"] = true
+	}
+	raw, err := apiJSON("POST", *server, fmt.Sprintf("/api/projects/%d/change-proposals/accept/", *projectID), resolvedToken, body)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runProposalDiscard(args []string) error {
+	fs, server, token, projectID := proposalFlags("discard")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	raw, err := apiJSON("POST", *server, fmt.Sprintf("/api/projects/%d/change-proposals/discard/", *projectID), resolvedToken, map[string]any{})
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func annotationFlags(name string) (*flag.FlagSet, *string, *string, *int) {
+	fs, server, token := baseFlags("annotations-" + name)
+	projectID := fs.Int("project", 0, "SmartTeX project id")
+	return fs, server, token, projectID
+}
+
+func runAnnotationsList(args []string) error {
+	fs, server, token, projectID := annotationFlags("list")
+	status := fs.String("status", "", "filter by annotation status")
+	fileName := fs.String("file", "", "filter by project file path")
+	human := fs.Bool("human", false, "print a compact table instead of JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	query := url.Values{}
+	if strings.TrimSpace(*status) != "" {
+		query.Set("status", strings.TrimSpace(*status))
+	}
+	if strings.TrimSpace(*fileName) != "" {
+		query.Set("file_name", strings.TrimSpace(*fileName))
+	}
+	path := fmt.Sprintf("/api/projects/%d/annotations/", *projectID)
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	raw, err := apiRequest("GET", *server, path, resolvedToken, nil, "")
+	if err != nil {
+		return err
+	}
+	if *human {
+		return printAnnotationsHuman(raw)
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runAnnotationsAdd(args []string) error {
+	fs, server, token, projectID := annotationFlags("add")
+	fileName := fs.String("file", "", "project file path")
+	instruction := fs.String("text", "", "annotation instruction")
+	lineStart := fs.Int("line", 0, "line number")
+	lineEnd := fs.Int("line-end", 0, "optional end line")
+	selectedText := fs.String("selected-text", "", "selected text fragment")
+	status := fs.String("status", "", "initial status")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	if strings.TrimSpace(*fileName) == "" {
+		return errors.New("--file is required")
+	}
+	if strings.TrimSpace(*instruction) == "" {
+		return errors.New("--text is required")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"file_name":      strings.TrimSpace(*fileName),
+		"instruction":    strings.TrimSpace(*instruction),
+		"selected_text":  *selectedText,
+		"change_source":  "api",
+		"change_summary": "Created from VS Code",
+	}
+	if *lineStart > 0 {
+		body["line_start"] = *lineStart
+	}
+	if *lineEnd > 0 {
+		body["line_end"] = *lineEnd
+	}
+	if strings.TrimSpace(*status) != "" {
+		body["status"] = strings.TrimSpace(*status)
+	}
+	raw, err := apiJSON("POST", *server, fmt.Sprintf("/api/projects/%d/annotations/", *projectID), resolvedToken, body)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func runAnnotationsUpdate(args []string) error {
+	fs, server, token, projectID := annotationFlags("update")
+	annotationID := fs.Int("id", 0, "annotation id")
+	status := fs.String("status", "", "new annotation status")
+	instruction := fs.String("text", "", "new annotation instruction")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *projectID <= 0 {
+		return errors.New("--project is required")
+	}
+	if *annotationID <= 0 {
+		return errors.New("--id is required")
+	}
+	body := map[string]any{
+		"change_source":  "api",
+		"change_summary": "Updated from VS Code",
+	}
+	if strings.TrimSpace(*status) != "" {
+		body["status"] = strings.TrimSpace(*status)
+	}
+	if strings.TrimSpace(*instruction) != "" {
+		body["instruction"] = strings.TrimSpace(*instruction)
+	}
+	if len(body) <= 2 {
+		return errors.New("nothing to update; pass --status or --text")
+	}
+	resolvedToken, err := resolveToken(*server, *token)
+	if err != nil {
+		return err
+	}
+	raw, err := apiJSON("PATCH", *server, fmt.Sprintf("/api/projects/%d/annotations/%d/", *projectID, *annotationID), resolvedToken, body)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(prettyJSON(raw)))
+	return nil
+}
+
+func printAnnotationsHuman(raw []byte) error {
+	var payload struct {
+		Annotations []map[string]any `json:"annotations"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return err
+	}
+	if len(payload.Annotations) == 0 {
+		fmt.Println("No annotations.")
+		return nil
+	}
+	for _, item := range payload.Annotations {
+		id := int(numberFromMap(item, "id"))
+		lineStart := int(numberFromMap(item, "line_start"))
+		lineEnd := int(numberFromMap(item, "line_end"))
+		fileName := fmt.Sprint(item["file_name"])
+		status := fmt.Sprint(item["status"])
+		instruction := strings.ReplaceAll(fmt.Sprint(item["instruction"]), "\n", " ")
+		lineLabel := strconv.Itoa(lineStart)
+		if lineEnd > 0 && lineEnd != lineStart {
+			lineLabel = fmt.Sprintf("%d-%d", lineStart, lineEnd)
+		}
+		fmt.Printf("#%d\t%s\t%s:%s\t%s\n", id, status, fileName, lineLabel, instruction)
+	}
+	return nil
+}
+
+func workspaceFlags(name string) (*flag.FlagSet, *string, *string, *int, *string, *string) {
+	fs, server, token := baseFlags("workspace-" + name)
+	projectID := fs.Int("project", 0, "SmartTeX project id")
+	workspace := fs.String("workspace", envOr("SMARTTEX_LOCAL_WORKSPACE", "~/.smarttex-local"), "local workspace root")
+	agentID := fs.String("agent-id", agentID(), "local workspace agent id")
+	return fs, server, token, projectID, workspace, agentID
+}
+
+func runWorkspaceOpen(args []string) error {
+	fs, server, token, projectID, workspace, agentID := workspaceFlags("open")
+	openCode := fs.Bool("code", false, "open the workspace in VS Code after pulling")
+	force := fs.Bool("force", false, "overwrite local workspace even if it has unsynced changes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, root, err := workspaceConfig(*server, *token, *projectID, *workspace)
+	if err != nil {
+		return err
+	}
+	previous, _ := loadWorkspaceState(root)
+	if !*force {
+		if dirty, err := localWorkspaceChangeCount(root); err != nil {
+			return err
+		} else if dirty > 0 {
+			return fmt.Errorf("local workspace has %d unsynced change(s); run `workspace sync` first or retry open with --force", dirty)
+		}
+	}
+	meta, err := loadProject(cfg, root)
+	if err != nil {
+		return err
+	}
+	state, err := claimWorkspaceLease(cfg, root, *agentID, previous.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if err := saveWorkspaceState(root, state); err != nil {
+		return err
+	}
+	fmt.Printf("SmartTeX workspace ready: %s\n", root)
+	fmt.Printf("Project: %s (#%d)\n", meta.Title, meta.ID)
+	fmt.Printf("Workspace lease: %s, server version: %d\n", state.WorkspaceID, state.BaseVersionNumber)
+	if *openCode {
+		if err := openVSCodeWorkspace(root); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Printf("Open this folder manually in VS Code: %s\n", root)
+		}
+	}
+	return nil
+}
+
+func runWorkspaceSync(args []string, quiet bool) error {
+	fs, server, token, projectID, workspace, agentID := workspaceFlags("sync")
+	force := fs.Bool("force", false, "sync even if server version advanced")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, root, err := workspaceConfig(*server, *token, *projectID, *workspace)
+	if err != nil {
+		return err
+	}
+	state, err := loadWorkspaceState(root)
+	if err != nil || state.WorkspaceID == "" {
+		state, err = claimWorkspaceLease(cfg, root, *agentID, "")
+		if err != nil {
+			return err
+		}
+	}
+	result, err := syncWorkspaceOnce(cfg, root, state, *agentID, *force)
+	if err != nil {
+		return err
+	}
+	if !quiet {
+		fmt.Println(result)
+	}
+	return nil
+}
+
+func runWorkspaceWatch(args []string) error {
+	fs, server, token, projectID, workspace, agentID := workspaceFlags("watch")
+	interval := fs.Duration("interval", 2*time.Second, "polling interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, root, err := workspaceConfig(*server, *token, *projectID, *workspace)
+	if err != nil {
+		return err
+	}
+	state, err := loadWorkspaceState(root)
+	if err != nil || state.WorkspaceID == "" {
+		state, err = claimWorkspaceLease(cfg, root, *agentID, "")
+		if err != nil {
+			return err
+		}
+		if err := saveWorkspaceState(root, state); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("Watching SmartTeX workspace %s. Press Ctrl+C to stop.\n", root)
+	ticker := time.NewTicker(maxDuration(*interval, 500*time.Millisecond))
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			msg, err := syncWorkspaceOnce(cfg, root, state, *agentID, false)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "workspace sync:", err)
+				continue
+			}
+			if nextState, err := loadWorkspaceState(root); err == nil {
+				state = nextState
+			}
+			if msg != "" {
+				fmt.Println(msg)
+			}
+		}
+	}
+}
+
+func runWorkspaceStatus(args []string) error {
+	fs, server, token, projectID, workspace, _ := workspaceFlags("status")
+	jsonOutput := fs.Bool("json", false, "print workspace status as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, root, err := workspaceConfig(*server, *token, *projectID, *workspace)
+	if err != nil {
+		return err
+	}
+	state, _ := loadWorkspaceState(root)
+	dirty, err := localWorkspaceChangeCount(root)
+	if err != nil {
+		return err
+	}
+	raw, err := apiRequest("GET", cfg.Server, fmt.Sprintf("/api/projects/%d/local-workspace/", cfg.ProjectID), cfg.Token, nil, "")
+	if err != nil {
+		return err
+	}
+	var remote map[string]any
+	if err := json.Unmarshal(raw, &remote); err != nil {
+		return err
+	}
+	latestVersion := int(numberFromMap(remote, "latest_version_number"))
+	leaseActive := boolFromMap(remote, "active")
+	if *jsonOutput {
+		payload := map[string]any{
+			"workspace":                root,
+			"workspace_id":             firstNonEmpty(state.WorkspaceID, ""),
+			"project_id":               cfg.ProjectID,
+			"local_unsynced_changes":   dirty,
+			"local_base_version":       state.BaseVersionNumber,
+			"server_latest_version":    latestVersion,
+			"server_lease_active":      leaseActive,
+			"server_workspace_id":      stringFromMap(remote, "workspace_id"),
+			"server_workspace_agent":   stringFromMap(remote, "agent_id"),
+			"server_workspace_expires": stringFromMap(remote, "expires_at"),
+		}
+		encoded, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(encoded))
+		return nil
+	}
+	fmt.Printf("Workspace: %s\n", root)
+	fmt.Printf("Workspace ID: %s\n", firstNonEmpty(state.WorkspaceID, "(not opened)"))
+	fmt.Printf("Local unsynced changes: %d\n", dirty)
+	fmt.Printf("Local base version: %d\n", state.BaseVersionNumber)
+	fmt.Printf("Server latest version: %d\n", latestVersion)
+	fmt.Printf("Server lease active: %t\n", leaseActive)
+	return nil
+}
+
+func runWorkspacePull(args []string) error {
+	fs, server, token, projectID, workspace, agentID := workspaceFlags("pull")
+	force := fs.Bool("force", false, "overwrite local workspace even if it has unsynced changes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, root, err := workspaceConfig(*server, *token, *projectID, *workspace)
+	if err != nil {
+		return err
+	}
+	previous, _ := loadWorkspaceState(root)
+	if !*force {
+		if dirty, err := localWorkspaceChangeCount(root); err != nil {
+			return err
+		} else if dirty > 0 {
+			return fmt.Errorf("local workspace has %d unsynced change(s); run `workspace sync` first or retry pull with --force", dirty)
+		}
+	}
+	meta, err := loadProject(cfg, root)
+	if err != nil {
+		return err
+	}
+	state, err := claimWorkspaceLease(cfg, root, *agentID, previous.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if err := saveWorkspaceState(root, state); err != nil {
+		return err
+	}
+	fmt.Printf("Pulled SmartTeX project %s (#%d) into %s\n", meta.Title, meta.ID, root)
+	fmt.Printf("Workspace lease: %s, server version: %d\n", state.WorkspaceID, state.BaseVersionNumber)
+	return nil
+}
+
+func runWorkspaceRelease(args []string) error {
+	fs, server, token, projectID, workspace, _ := workspaceFlags("release")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, root, err := workspaceConfig(*server, *token, *projectID, *workspace)
+	if err != nil {
+		return err
+	}
+	state, _ := loadWorkspaceState(root)
+	body := map[string]any{"workspace_id": state.WorkspaceID}
+	if _, err := apiJSON("DELETE", cfg.Server, fmt.Sprintf("/api/projects/%d/local-workspace/", cfg.ProjectID), cfg.Token, body); err != nil {
+		return err
+	}
+	if state.WorkspaceID != "" {
+		state.WorkspaceID = ""
+		_ = saveWorkspaceState(root, state)
+	}
+	fmt.Printf("Released SmartTeX workspace lease for project %d\n", cfg.ProjectID)
 	return nil
 }
 
@@ -745,6 +1576,7 @@ func runServe(args []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health", cfg.withCORS(cfg.handleHealth))
 	mux.HandleFunc("/v1/compile", cfg.withCORS(cfg.handleCompile))
+	mux.HandleFunc("/v1/preview/refresh", cfg.withCORS(cfg.handlePreviewRefresh))
 	mux.HandleFunc("/v1/preview", cfg.withCORS(cfg.handlePreview))
 	mux.HandleFunc("/v1/preview/", cfg.withCORS(cfg.handlePreview))
 	mux.HandleFunc("/v1/lsp", cfg.handleLSP)
@@ -1092,6 +1924,37 @@ func (cfg serveConfig) handlePreview(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+func (cfg serveConfig) handlePreviewRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !cfg.authorizePreviewRequest(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	projectID := 0
+	_, _ = fmt.Sscanf(r.URL.Query().Get("project_id"), "%d", &projectID)
+	if projectID <= 0 {
+		http.Error(w, "project_id is required", http.StatusBadRequest)
+		return
+	}
+	session, restarted, err := cfg.restartPreview(projectID, previewInvertColorsFromRequest(r))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":           true,
+		"project_id":   projectID,
+		"restarted":    restarted,
+		"root":         session.Root,
+		"root_uri":     fileURI(session.Root),
+		"started_at":   session.StartedAt,
+		"invertColors": session.InvertColors,
+	})
+}
+
 func (cfg serveConfig) handlePreviewDataWebSocket(w http.ResponseWriter, r *http.Request) {
 	cfg.handlePreviewWebSocket(w, r, false)
 }
@@ -1236,6 +2099,9 @@ func (cfg serveConfig) allowWebSocketOrigin(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
+	if originURL.Scheme == "vscode-webview" {
+		return true
+	}
 	if isLoopbackHost(originURL.Hostname()) {
 		return true
 	}
@@ -1250,13 +2116,18 @@ func (cfg serveConfig) ensurePreview(projectID int, invertColors string) (*previ
 	previewSessionsMu.Lock()
 	defer previewSessionsMu.Unlock()
 
+	root, pullPreview, err := cfg.previewRoot(projectID)
+	if err != nil {
+		return nil, err
+	}
 	if session := previewSessions[projectID]; session != nil {
 		if processAlive(session.Process) {
 			if strings.TrimSpace(invertColors) == "" {
-				return session, nil
+				invertColors = session.InvertColors
+			} else {
+				invertColors = normalizePreviewInvertColors(invertColors)
 			}
-			invertColors = normalizePreviewInvertColors(invertColors)
-			if session.InvertColors == invertColors {
+			if session.InvertColors == invertColors && session.Root == root {
 				return session, nil
 			}
 			_ = session.Process.Kill()
@@ -1264,17 +2135,13 @@ func (cfg serveConfig) ensurePreview(projectID int, invertColors string) (*previ
 		delete(previewSessions, projectID)
 	}
 	invertColors = normalizePreviewInvertColors(invertColors)
-	root, err := workspaceRootFor(cfg.Workspace, projectID, "preview")
-	if err != nil {
-		return nil, err
-	}
 	token, err := cfg.authToken()
 	if err != nil {
 		return nil, err
 	}
 	compileCfg := config{
 		Server: cfg.Server, Token: token, ProjectID: projectID,
-		Workspace: cfg.Workspace, TypstBin: cfg.TypstBin, Timeout: cfg.Timeout, Pull: true,
+		Workspace: cfg.Workspace, TypstBin: cfg.TypstBin, Timeout: cfg.Timeout, Pull: pullPreview,
 	}
 	meta, err := loadProject(compileCfg, root)
 	if err != nil {
@@ -1335,6 +2202,50 @@ func (cfg serveConfig) ensurePreview(projectID int, invertColors string) (*previ
 		previewSessionsMu.Unlock()
 	}()
 	return session, nil
+}
+
+// restartPreview rebuilds the preview process when its content is backed by a
+// pulled server snapshot. When the preview is backed by the live local
+// workspace, tinymist already watches the files on disk and streams incremental
+// updates over the data WebSocket, so killing and relaunching it would only
+// blank the preview and drop the connection. The returned bool reports whether
+// the process was actually restarted, so the client knows whether it must
+// reconnect (reload the iframe) or can keep its live session untouched.
+func (cfg serveConfig) restartPreview(projectID int, invertColors string) (*previewSession, bool, error) {
+	_, pull, err := cfg.previewRoot(projectID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !pull {
+		session, err := cfg.ensurePreview(projectID, invertColors)
+		return session, false, err
+	}
+	previewSessionsMu.Lock()
+	if session := previewSessions[projectID]; session != nil {
+		if strings.TrimSpace(invertColors) == "" {
+			invertColors = session.InvertColors
+		}
+		_ = session.Process.Kill()
+		delete(previewSessions, projectID)
+	}
+	previewSessionsMu.Unlock()
+	session, err := cfg.ensurePreview(projectID, invertColors)
+	return session, true, err
+}
+
+func (cfg serveConfig) previewRoot(projectID int) (root string, pull bool, err error) {
+	workspaceRoot, err := workspaceRootFor(cfg.Workspace, projectID, "workspace")
+	if err != nil {
+		return "", false, err
+	}
+	if state, stateErr := loadWorkspaceState(workspaceRoot); stateErr == nil && state.ProjectID == projectID && state.WorkspaceID != "" {
+		return workspaceRoot, false, nil
+	}
+	previewRoot, err := workspaceRootFor(cfg.Workspace, projectID, "preview")
+	if err != nil {
+		return "", false, err
+	}
+	return previewRoot, true, nil
 }
 
 func writeJSON(w http.ResponseWriter, payload any) {
@@ -1645,6 +2556,378 @@ func loadProject(cfg config, root string) (projectMeta, error) {
 		return projectMeta{}, fmt.Errorf("workspace does not exist: %s. Run without --no-pull first", root)
 	}
 	return meta, nil
+}
+
+func workspaceConfig(server, token string, projectID int, workspace string) (config, string, error) {
+	cfg := config{
+		Server:    server,
+		ProjectID: projectID,
+		Workspace: workspace,
+		Pull:      true,
+	}
+	if cfg.ProjectID <= 0 {
+		return config{}, "", errors.New("--project is required")
+	}
+	resolvedToken, err := resolveToken(cfg.Server, token)
+	if err != nil {
+		return config{}, "", err
+	}
+	cfg.Token = resolvedToken
+	root, err := workspaceRootFor(cfg.Workspace, cfg.ProjectID, "workspace")
+	if err != nil {
+		return config{}, "", err
+	}
+	return cfg, root, nil
+}
+
+func claimWorkspaceLease(cfg config, root, agentID, existingWorkspaceID string) (workspaceState, error) {
+	state, _ := loadWorkspaceState(root)
+	workspaceID := strings.TrimSpace(existingWorkspaceID)
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(state.WorkspaceID)
+	}
+	if workspaceID == "" {
+		workspaceID = randomURLSafe(18)
+	}
+	body := map[string]any{
+		"workspace_id":        workspaceID,
+		"agent_id":            agentID,
+		"base_version_number": state.BaseVersionNumber,
+		"ttl_seconds":         180,
+	}
+	raw, err := apiJSON("POST", cfg.Server, fmt.Sprintf("/api/projects/%d/local-workspace/", cfg.ProjectID), cfg.Token, body)
+	if err != nil {
+		return workspaceState{}, err
+	}
+	var payload struct {
+		WorkspaceID         string `json:"workspace_id"`
+		LatestVersionNumber int    `json:"latest_version_number"`
+		BaseVersionNumber   int    `json:"base_version_number"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return workspaceState{}, err
+	}
+	files, err := scanWorkspaceFiles(root)
+	if err != nil {
+		return workspaceState{}, err
+	}
+	hashes := make(map[string]string, len(files))
+	for path, item := range files {
+		hashes[path] = item.Hash
+	}
+	if payload.WorkspaceID != "" {
+		workspaceID = payload.WorkspaceID
+	}
+	version := payload.LatestVersionNumber
+	if version == 0 {
+		version = payload.BaseVersionNumber
+	}
+	return workspaceState{
+		ProjectID:          cfg.ProjectID,
+		Server:             cfg.Server,
+		WorkspaceID:        workspaceID,
+		BaseVersionNumber:  version,
+		LastSyncUnixMillis: time.Now().UnixMilli(),
+		Files:              hashes,
+	}, nil
+}
+
+func syncWorkspaceOnce(cfg config, root string, state workspaceState, agentID string, force bool) (string, error) {
+	return syncWorkspaceOnceRetry(cfg, root, state, agentID, force, true)
+}
+
+func syncWorkspaceOnceRetry(cfg config, root string, state workspaceState, agentID string, force bool, retryInactiveLease bool) (string, error) {
+	if state.WorkspaceID == "" {
+		return "", errors.New("workspace is not opened yet; run `smarttex-local workspace open --project ID` first")
+	}
+	current, err := scanWorkspaceFiles(root)
+	if err != nil {
+		return "", err
+	}
+	changes := workspaceChanges(state, current)
+	body := map[string]any{
+		"workspace_id":        state.WorkspaceID,
+		"base_version_number": state.BaseVersionNumber,
+		"changes":             changes,
+		"ttl_seconds":         180,
+		"summary":             fmt.Sprintf("Synced local workspace from %s", agentID),
+		"force":               force,
+	}
+	raw, err := apiJSON("POST", cfg.Server, fmt.Sprintf("/api/projects/%d/local-workspace/sync/", cfg.ProjectID), cfg.Token, body)
+	if err != nil {
+		if retryInactiveLease && isLocalWorkspaceNotActiveError(err) {
+			claimed, claimErr := claimWorkspaceLease(cfg, root, agentID, state.WorkspaceID)
+			if claimErr != nil {
+				return "", err
+			}
+			retryState := state
+			retryState.WorkspaceID = claimed.WorkspaceID
+			if retryState.BaseVersionNumber == 0 {
+				retryState.BaseVersionNumber = claimed.BaseVersionNumber
+			}
+			return syncWorkspaceOnceRetry(cfg, root, retryState, agentID, force, false)
+		}
+		return "", err
+	}
+	var payload struct {
+		LatestVersionNumber int      `json:"latest_version_number"`
+		ChangedPaths        []string `json:"changed_paths"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", err
+	}
+	next := workspaceState{
+		ProjectID:          cfg.ProjectID,
+		Server:             cfg.Server,
+		WorkspaceID:        state.WorkspaceID,
+		BaseVersionNumber:  payload.LatestVersionNumber,
+		LastSyncUnixMillis: time.Now().UnixMilli(),
+		Files:              map[string]string{},
+	}
+	for path, item := range current {
+		next.Files[path] = item.Hash
+	}
+	if err := saveWorkspaceState(root, next); err != nil {
+		return "", err
+	}
+	if len(payload.ChangedPaths) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("Synced %d file(s): %s", len(payload.ChangedPaths), strings.Join(payload.ChangedPaths, ", ")), nil
+}
+
+func isLocalWorkspaceNotActiveError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "LOCAL_WORKSPACE_NOT_ACTIVE")
+}
+
+func workspaceChanges(state workspaceState, current map[string]workspaceFileSnapshot) []map[string]any {
+	prev := state.Files
+	if prev == nil {
+		prev = map[string]string{}
+	}
+	changes := []map[string]any{}
+	for path, item := range current {
+		if prev[path] == item.Hash {
+			continue
+		}
+		change := map[string]any{
+			"path":    path,
+			"action":  "upsert",
+			"is_text": item.IsText,
+		}
+		if item.IsText {
+			change["content"] = item.Content
+		} else {
+			change["content_base64"] = base64.StdEncoding.EncodeToString(item.RawBytes)
+		}
+		changes = append(changes, change)
+	}
+	for path := range prev {
+		if shouldSkipWorkspacePath(path, false) {
+			continue
+		}
+		if _, ok := current[path]; !ok {
+			changes = append(changes, map[string]any{"path": path, "action": "delete"})
+		}
+	}
+	return changes
+}
+
+func localWorkspaceChangeCount(root string) (int, error) {
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return 0, nil
+	} else if err != nil {
+		return 0, err
+	}
+	current, err := scanWorkspaceFiles(root)
+	if err != nil {
+		return 0, err
+	}
+	state, err := loadWorkspaceState(root)
+	if err != nil || state.Files == nil {
+		return len(current), nil
+	}
+	return len(workspaceChanges(state, current)), nil
+}
+
+func workspaceStatePath(root string) string {
+	return filepath.Join(root, ".smarttex", "local_workspace_state.json")
+}
+
+func loadWorkspaceState(root string) (workspaceState, error) {
+	raw, err := os.ReadFile(workspaceStatePath(root))
+	if err != nil {
+		return workspaceState{}, err
+	}
+	var state workspaceState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return workspaceState{}, err
+	}
+	if state.Files == nil {
+		state.Files = map[string]string{}
+	}
+	return state, nil
+}
+
+func saveWorkspaceState(root string, state workspaceState) error {
+	path := workspaceStatePath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
+}
+
+func scanWorkspaceFiles(root string) (map[string]workspaceFileSnapshot, error) {
+	items := map[string]workspaceFileSnapshot{}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if shouldSkipWorkspacePath(rel, entry.IsDir()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		isText := isWorkspaceTextFile(rel)
+		item := workspaceFileSnapshot{Path: rel, Hash: fmt.Sprintf("%x", sum[:]), IsText: isText, RawBytes: raw}
+		if isText {
+			item.Content = string(raw)
+			item.RawBytes = nil
+		}
+		items[rel] = item
+		return nil
+	})
+	return items, err
+}
+
+func shouldSkipWorkspacePath(rel string, isDir bool) bool {
+	parts := strings.Split(rel, "/")
+	if len(parts) == 0 {
+		return true
+	}
+	switch parts[0] {
+	case ".git", ".smarttex-git", "__MACOSX":
+		return true
+	case ".smarttex":
+		// The server only accepts hidden paths under .smarttex/context/ (see
+		// projects/services.py). Everything else under .smarttex/ is local-only
+		// state and artifacts — workspace lease state, compile output (main.pdf,
+		// main.log), caches, and the tinymist preview log — and must never be
+		// synced, or the server rejects the whole push with "hidden files not
+		// allowed". Allow-list context only; skip the rest.
+		if len(parts) == 1 {
+			return false
+		}
+		if parts[1] == "context" {
+			return false
+		}
+		return true
+	}
+	if strings.HasPrefix(parts[0], ".") {
+		return true
+	}
+	if isDir {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(rel))
+	if ext == ".aux" || ext == ".out" || ext == ".toc" || ext == ".fls" || ext == ".fdb_latexmk" || ext == ".xdv" || ext == ".bbl" || ext == ".blg" || ext == ".nav" || ext == ".snm" || ext == ".vrb" || ext == ".log" {
+		return true
+	}
+	return false
+}
+
+func isWorkspaceTextFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".tex", ".typ", ".sty", ".cls", ".bib", ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".csl", ".puml":
+		return true
+	default:
+		return false
+	}
+}
+
+func apiJSON(method, server, path, token string, payload any) ([]byte, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return apiRequest(method, server, path, token, bytes.NewReader(raw), "application/json")
+}
+
+func prettyJSON(raw []byte) []byte {
+	var out bytes.Buffer
+	if err := json.Indent(&out, raw, "", "  "); err != nil {
+		return raw
+	}
+	return out.Bytes()
+}
+
+func numberFromMap(values map[string]any, key string) float64 {
+	switch value := values[key].(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	case json.Number:
+		out, _ := value.Float64()
+		return out
+	default:
+		return 0
+	}
+}
+
+func stringFromMap(values map[string]any, key string) string {
+	switch value := values[key].(type) {
+	case string:
+		return value
+	case fmt.Stringer:
+		return value.String()
+	default:
+		return ""
+	}
+}
+
+func boolFromMap(values map[string]any, key string) bool {
+	value, _ := values[key].(bool)
+	return value
+}
+
+func openVSCodeWorkspace(root string) error {
+	if path, err := exec.LookPath("code"); err == nil {
+		return exec.Command(path, root).Start()
+	}
+	if runtime.GOOS == "darwin" {
+		if err := exec.Command("open", "-a", "Visual Studio Code", root).Start(); err == nil {
+			return nil
+		}
+		if err := exec.Command("open", root).Start(); err == nil {
+			return nil
+		}
+	}
+	return errors.New("VS Code CLI `code` is not available in PATH")
 }
 
 func lockWorkspace(root string) func() {
@@ -2078,6 +3361,13 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func maxDuration(value, minimum time.Duration) time.Duration {
+	if value < minimum {
+		return minimum
+	}
+	return value
 }
 
 func binaryAvailable(name string) bool {

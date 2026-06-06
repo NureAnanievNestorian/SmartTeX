@@ -34,6 +34,12 @@ function syncTabContent(name, text, filename) {
   activateTab(name, text, targetFilename, true, !!s.activeTabName);
 }
 
+function applyLocalWorkspaceUpdate(localWorkspace) {
+  if (!s.projectMeta) s.projectMeta = {};
+  s.projectMeta.local_workspace = localWorkspace || { active: false };
+  import("./longdoc.js").then(m => m.applyProjectEditLock?.()).catch(() => {});
+}
+
 // ── Compile state helpers ─────────────────────────────────────────────────────
 
 export function queueCompile(mode = "manual") {
@@ -367,6 +373,12 @@ export function connectProjectUpdatesSse() {
     if (!data || typeof data !== "object") return;
     if (data.type === "connected") {
       s.lastSeenMcpVersionId = Number(data.latest_project_version_id || 0);
+      applyLocalWorkspaceUpdate(data.local_workspace);
+      return;
+    }
+    if (data.type === "local_workspace_updated") {
+      applyLocalWorkspaceUpdate(data.local_workspace);
+      import("./app.js").then(m => m.loadProjectMeta?.()).catch(() => {});
       return;
     }
     if (data.type === "compile_updated") {

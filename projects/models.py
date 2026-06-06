@@ -57,6 +57,23 @@ class ProjectLocalRuntime(models.Model):
         return f"Local runtime for project {self.project_id}: {'on' if self.enabled else 'off'}"
 
 
+class ProjectLocalWorkspaceLease(models.Model):
+    project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="local_workspace_lease")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="local_workspace_leases")
+    workspace_id = models.CharField(max_length=128, db_index=True)
+    agent_id = models.CharField(max_length=128, blank=True, default="")
+    base_version_number = models.PositiveIntegerField(default=0)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["project_id"]
+
+    def __str__(self) -> str:
+        return f"Local workspace {self.workspace_id} for project {self.project_id}"
+
+
 class LocalCompileJob(models.Model):
     class Status(models.TextChoices):
         QUEUED = "queued", "Queued"

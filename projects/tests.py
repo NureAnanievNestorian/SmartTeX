@@ -14,7 +14,7 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from SmartTeX.markup import MarkupType
-from projects.models import LocalCompileJob, Project, ProjectLocalRuntime, ProjectVersion
+from projects.models import LocalCompileJob, Project, ProjectLocalRuntime, ProjectLocalWorkspaceLease, ProjectVersion
 from projects.pdf_embed_job import _IMPORT_LINE
 from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from projects.services import (
@@ -498,6 +498,76 @@ class ProjectTypstSupportTests(TestCase):
         offline_payload = offline_response.json()
         self.assertEqual(offline_payload["connection_state"], "offline")
         self.assertGreaterEqual(offline_payload["last_seen_age_seconds"], 180)
+
+    def test_local_workspace_lease_blocks_regular_web_writes(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Local Workspace Lock", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+        root.mkdir(parents=True, exist_ok=True)
+        source_file_path(project).write_text("= Original\n", encoding="utf-8")
+        ProjectLocalWorkspaceLease.objects.create(
+            project=project,
+            owner=self.user,
+            workspace_id="workspace-1",
+            agent_id="agent-1",
+            expires_at=timezone.now() + timezone.timedelta(minutes=3),
+        )
+
+        response = self.client.put(
+            f"/api/projects/{project.id}/files/{main_source_filename(project)}/content/",
+            data=json.dumps({"content": "= Web edit\n"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 423)
+        self.assertEqual(response.json()["error"], "PROJECT_LOCKED")
+        self.assertTrue(response.json()["local_workspace"]["active"])
+
+    def test_local_workspace_sync_records_single_version_event(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Local Workspace Sync", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+        root.mkdir(parents=True, exist_ok=True)
+        source_file_path(project).write_text("= Original\n", encoding="utf-8")
+        ProjectLocalWorkspaceLease.objects.create(
+            project=project,
+            owner=self.user,
+            workspace_id="workspace-sync",
+            agent_id="agent-sync",
+            expires_at=timezone.now() + timezone.timedelta(minutes=3),
+        )
+
+        response = self.client.post(
+            f"/api/projects/{project.id}/local-workspace/sync/",
+            data=json.dumps(
+                {
+                    "workspace_id": "workspace-sync",
+                    "changes": [
+                        {
+                            "path": main_source_filename(project),
+                            "action": "upsert",
+                            "is_text": True,
+                            "content": "= Local edit\n",
+                        },
+                        {
+                            "path": "notes.md",
+                            "action": "upsert",
+                            "is_text": True,
+                            "content": "Local note\n",
+                        },
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(read_source_content(project), "= Local edit\n")
+        self.assertTrue((root / "notes.md").exists())
+        version = ProjectVersion.objects.filter(project=project, operation="local_workspace_sync").first()
+        self.assertIsNotNone(version)
+        self.assertEqual(version.snapshot_kind, ProjectVersion.SnapshotKind.EVENT)
+        self.assertEqual(version.event_payload["workspace_id"], "workspace-sync")
+        self.assertIn(main_source_filename(project), version.event_payload["files"])
+        self.assertIn("notes.md", version.event_payload["files"])
 
     @override_settings(LOCAL_RUNTIME_ENABLED=False)
     def test_local_runtime_global_kill_switch_blocks_agent_paths(self) -> None:

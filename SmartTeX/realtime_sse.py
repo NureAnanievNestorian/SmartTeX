@@ -13,14 +13,54 @@ from django.contrib.auth import SESSION_KEY
 SSE_PROJECT_UPDATES_RE = re.compile(r"^/sse/projects/(?P<project_id>\d+)/updates/?$")
 
 
-def _cookie_header(scope: dict[str, Any]) -> str:
+def _header(scope: dict[str, Any], name: bytes) -> str:
     for key, value in scope.get("headers", []):
-        if key == b"cookie":
+        if key == name:
             try:
                 return value.decode("utf-8", errors="ignore")
             except Exception:
                 return ""
     return ""
+
+
+def _cookie_header(scope: dict[str, Any]) -> str:
+    return _header(scope, b"cookie")
+
+
+def _query_param(scope: dict[str, Any], name: str) -> str:
+    raw = scope.get("query_string", b"")
+    try:
+        text = raw.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+    from urllib.parse import parse_qs
+
+    values = parse_qs(text).get(name, [])
+    return str(values[0] or "") if values else ""
+
+
+def _user_id_from_api_token(scope: dict[str, Any]) -> int | None:
+    raw = _header(scope, b"authorization").strip()
+    token = ""
+    lowered = raw.lower()
+    if lowered.startswith("bearer "):
+        token = raw[7:].strip()
+    elif lowered.startswith("token "):
+        token = raw[6:].strip()
+    if not token:
+        token = _query_param(scope, "access_token").strip()
+    if not token:
+        return None
+
+    from accounts.auth_helpers import _resolve_mcp_token_user, _resolve_oauth_access_user
+
+    user = _resolve_oauth_access_user(token) or _resolve_mcp_token_user(token)
+    if user is None:
+        return None
+    try:
+        return int(user.id)
+    except (TypeError, ValueError):
+        return None
 
 
 def _session_user_id_from_cookie(scope: dict[str, Any]) -> int | None:
@@ -141,6 +181,23 @@ def _active_proposal_signature_for_owner(project_id: int, owner_id: int) -> dict
     }
 
 
+def _local_workspace_signature_for_owner(project_id: int, owner_id: int) -> dict[str, Any] | None:
+    from django.utils import timezone
+    from projects.models import Project, ProjectLocalWorkspaceLease
+
+    if not Project.objects.filter(id=project_id, owner_id=owner_id).exists():
+        return None
+    lease = ProjectLocalWorkspaceLease.objects.filter(project_id=project_id, owner_id=owner_id).first()
+    if lease is None or lease.expires_at <= timezone.now():
+        return {"active": False, "workspace_id": "", "agent_id": "", "expires_at": ""}
+    return {
+        "active": True,
+        "workspace_id": str(lease.workspace_id or ""),
+        "agent_id": str(lease.agent_id or ""),
+        "expires_at": lease.expires_at.isoformat() if lease.expires_at else "",
+    }
+
+
 async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
     path = str(scope.get("path", ""))
     match = SSE_PROJECT_UPDATES_RE.match(path)
@@ -158,6 +215,8 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
 
     user_id = await sync_to_async(_session_user_id_from_cookie)(scope)
     if not user_id:
+        user_id = await sync_to_async(_user_id_from_api_token)(scope)
+    if not user_id:
         await send({"type": "http.response.start", "status": 401, "headers": []})
         await send({"type": "http.response.body", "body": b"Unauthorized"})
         return
@@ -166,7 +225,8 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
     proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
     compile_signature = await sync_to_async(_compile_signature_for_owner)(project_id, user_id)
     annotation_signature = await sync_to_async(_annotation_signature_for_owner)(project_id, user_id)
-    if latest_project is None or proposal_signature is None or compile_signature is None or annotation_signature is None:
+    local_workspace_signature = await sync_to_async(_local_workspace_signature_for_owner)(project_id, user_id)
+    if latest_project is None or proposal_signature is None or compile_signature is None or annotation_signature is None or local_workspace_signature is None:
         await send({"type": "http.response.start", "status": 403, "headers": []})
         await send({"type": "http.response.body", "body": b"Forbidden"})
         return
@@ -195,12 +255,14 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
         "latest_project_version_id": latest_project["id"],
         "latest_project_version_source": latest_project["source"],
         "active_proposal": proposal_signature,
+        "local_workspace": local_workspace_signature,
     })
 
     last_seen_project = int(latest_project["id"])
     last_seen_proposal = dict(proposal_signature)
     last_seen_compile = dict(compile_signature)
     last_seen_annotation = annotation_signature
+    last_seen_local_workspace = dict(local_workspace_signature)
     while True:
         try:
             event = await asyncio.wait_for(receive(), timeout=1.5)
@@ -213,7 +275,8 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
         proposal_signature = await sync_to_async(_active_proposal_signature_for_owner)(project_id, user_id)
         compile_signature = await sync_to_async(_compile_signature_for_owner)(project_id, user_id)
         annotation_signature = await sync_to_async(_annotation_signature_for_owner)(project_id, user_id)
-        if latest_project is None or proposal_signature is None or compile_signature is None or annotation_signature is None:
+        local_workspace_signature = await sync_to_async(_local_workspace_signature_for_owner)(project_id, user_id)
+        if latest_project is None or proposal_signature is None or compile_signature is None or annotation_signature is None or local_workspace_signature is None:
             break
         if compile_signature != last_seen_compile:
             last_seen_compile = dict(compile_signature)
@@ -240,6 +303,13 @@ async def sse_project_updates(scope: dict[str, Any], receive, send) -> None:
             await send_event({
                 "type": "longdoc_updated",
                 "project_id": project_id,
+            })
+        if local_workspace_signature != last_seen_local_workspace:
+            last_seen_local_workspace = dict(local_workspace_signature)
+            await send_event({
+                "type": "local_workspace_updated",
+                "project_id": project_id,
+                "local_workspace": local_workspace_signature,
             })
 
     await send({"type": "http.response.body", "body": b"", "more_body": False})

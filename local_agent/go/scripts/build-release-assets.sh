@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 GO_DIR="$ROOT_DIR/local_agent/go"
+VSCODE_EXTENSION_DIR="$ROOT_DIR/vscode_extension"
 CHANNEL="${SMARTTEX_LOCAL_UPDATE_CHANNEL:-stable}"
 VERSION="${SMARTTEX_LOCAL_VERSION:-$(cd "$GO_DIR" && go run ./cmd/smarttex-local-go version 2>/dev/null || true)}"
 
@@ -11,7 +12,41 @@ if [[ -z "${VERSION}" ]]; then
 fi
 
 OUT_DIR="$ROOT_DIR/projects/static/local-agent/$CHANNEL"
+rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
+
+extension_json="null"
+if [[ -d "$VSCODE_EXTENSION_DIR" && -f "$VSCODE_EXTENSION_DIR/package.json" ]]; then
+  extension_version="$(python3 - <<PY
+import json
+from pathlib import Path
+payload = json.loads(Path("$VSCODE_EXTENSION_DIR/package.json").read_text(encoding="utf-8"))
+print(payload.get("version") or "$VERSION")
+PY
+)"
+  extension_name="smarttex-vscode-${extension_version}.vsix"
+  echo "Packaging VS Code extension $extension_name"
+  (
+    cd "$VSCODE_EXTENSION_DIR"
+    npx --yes @vscode/vsce@latest package \
+      --allow-missing-repository \
+      --allow-star-activation \
+      --out "$OUT_DIR/$extension_name"
+  )
+  extension_sha="$(shasum -a 256 "$OUT_DIR/$extension_name" | awk '{print $1}')"
+  extension_json="$(python3 - <<PY
+import json
+print(json.dumps({
+    "id": "smarttex.smarttex",
+    "name": "smarttex",
+    "publisher": "smarttex",
+    "version": "$extension_version",
+    "url": "/static/local-agent/$CHANNEL/$extension_name",
+    "sha256": "$extension_sha",
+}))
+PY
+)"
+fi
 
 platforms=(
   "darwin arm64"
@@ -71,6 +106,7 @@ print(json.dumps({
     "version": "$VERSION",
     "channel": "$CHANNEL",
     "assets": [$assets_json],
+    "vscode_extension": $extension_json,
     "toolchains": toolchains,
 }, indent=2, ensure_ascii=False))
 PY
@@ -145,6 +181,16 @@ print(payload.get("version", ""))
 PY
 )"
 
+extension_json="$(python3 - "$tmp_dir/manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+extension = manifest.get("vscode_extension") or None
+print(json.dumps(extension) if extension else "")
+PY
+)"
+
 if [[ "$asset_url" != http://* && "$asset_url" != https://* ]]; then
   asset_url="${server%/}${asset_url}"
 fi
@@ -166,6 +212,52 @@ fi
 mkdir -p "$bin_dir"
 install_path="$bin_dir/smarttex-local"
 install -m 0755 "$tmp_dir/smarttex-local" "$install_path"
+
+install_extension_status="VS Code CLI not found; install the extension manually from the VSIX URL below."
+extension_url=""
+if [[ -n "$extension_json" ]]; then
+  extension_url="$(python3 - <<PY
+import json
+payload = json.loads('''$extension_json''')
+print(payload["url"])
+PY
+)"
+  extension_sha="$(python3 - <<PY
+import json
+payload = json.loads('''$extension_json''')
+print(payload["sha256"])
+PY
+)"
+  extension_version="$(python3 - <<PY
+import json
+payload = json.loads('''$extension_json''')
+print(payload.get("version", ""))
+PY
+)"
+  if [[ "$extension_url" != http://* && "$extension_url" != https://* ]]; then
+    extension_url="${server%/}${extension_url}"
+  fi
+  echo "Downloading SmartTeX VS Code extension ${extension_version:-latest}: $extension_url"
+  curl -fsSL "$extension_url" -o "$tmp_dir/smarttex.vsix"
+  if command -v shasum >/dev/null 2>&1; then
+    actual_extension_sha="$(shasum -a 256 "$tmp_dir/smarttex.vsix" | awk '{print $1}')"
+  else
+    actual_extension_sha="$(sha256sum "$tmp_dir/smarttex.vsix" | awk '{print $1}')"
+  fi
+  if [[ "$actual_extension_sha" != "$extension_sha" ]]; then
+    echo "Checksum mismatch for SmartTeX VS Code extension" >&2
+    echo "expected: $extension_sha" >&2
+    echo "actual:   $actual_extension_sha" >&2
+    exit 1
+  fi
+  if command -v code >/dev/null 2>&1; then
+    code --install-extension "$tmp_dir/smarttex.vsix" --force
+    install_extension_status="Installed SmartTeX VS Code extension ${extension_version:-latest}."
+  elif [[ "$(uname -s)" == "Darwin" && -x "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" ]]; then
+    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension "$tmp_dir/smarttex.vsix" --force
+    install_extension_status="Installed SmartTeX VS Code extension ${extension_version:-latest}."
+  fi
+fi
 
 path_hint=""
 case ":$PATH:" in
@@ -195,6 +287,10 @@ esac
 echo
 echo "Installed: $install_path"
 echo "Version: $("$install_path" version)"
+echo "$install_extension_status"
+if [[ -n "$extension_url" && "$install_extension_status" == VS\ Code\ CLI\ not\ found* ]]; then
+  echo "VSIX: $extension_url"
+fi
 if [[ -n "$path_hint" ]]; then
   echo "$path_hint"
 fi
@@ -266,6 +362,48 @@ try {
   Write-Host ""
   Write-Host "Installed: $InstallPath"
   & $InstallPath version
+
+  $ExtensionStatus = "VS Code CLI not found; install the extension manually from the VSIX URL below."
+  $ExtensionUrl = ""
+  if ($Manifest.vscode_extension) {
+    $ExtensionUrl = [string]$Manifest.vscode_extension.url
+    if (-not ($ExtensionUrl.StartsWith("http://") -or $ExtensionUrl.StartsWith("https://"))) {
+      $ExtensionUrl = "$Server$ExtensionUrl"
+    }
+    $ExtensionPath = Join-Path $TempDir "smarttex.vsix"
+    Write-Host "Downloading SmartTeX VS Code extension $($Manifest.vscode_extension.version): $ExtensionUrl"
+    Invoke-WebRequest -Uri $ExtensionUrl -OutFile $ExtensionPath
+    $ActualExtensionSha = (Get-FileHash -Algorithm SHA256 -Path $ExtensionPath).Hash.ToLowerInvariant()
+    $ExpectedExtensionSha = ([string]$Manifest.vscode_extension.sha256).ToLowerInvariant()
+    if ($ActualExtensionSha -ne $ExpectedExtensionSha) {
+      throw "VS Code extension checksum mismatch. Expected $ExpectedExtensionSha, got $ActualExtensionSha"
+    }
+
+    $CodeCommand = Get-Command code -ErrorAction SilentlyContinue
+    $CodePath = if ($CodeCommand) { $CodeCommand.Source } else { "" }
+    if (-not $CodePath) {
+      $Candidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
+        (Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd"),
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft VS Code\bin\code.cmd")
+      )
+      foreach ($Candidate in $Candidates) {
+        if ($Candidate -and (Test-Path $Candidate)) {
+          $CodePath = $Candidate
+          break
+        }
+      }
+    }
+    if ($CodePath) {
+      & $CodePath --install-extension $ExtensionPath --force
+      $ExtensionStatus = "Installed SmartTeX VS Code extension $($Manifest.vscode_extension.version)."
+    }
+  }
+
+  Write-Host $ExtensionStatus
+  if ($ExtensionUrl -and $ExtensionStatus.StartsWith("VS Code CLI not found")) {
+    Write-Host "VSIX: $ExtensionUrl"
+  }
   Write-Host ""
   Write-Host "Next:"
   Write-Host "  smarttex-local login --server $Server"

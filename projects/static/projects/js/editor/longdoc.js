@@ -21,6 +21,7 @@ const centerEl = document.getElementById("drop-zone");
 const waTabBtnEl = document.getElementById("wa-tab-btn");
 const readonlyOverlayEl = document.getElementById("readonly-overlay");
 const readonlyDiscardSessionBtn = document.getElementById("readonly-discard-session-btn");
+const readonlyUseWebBtn = document.getElementById("readonly-use-web-btn");
 const annotationRailToggleBtn = document.getElementById("annotation-rail-toggle");
 const annotationRailEl = document.getElementById("annotation-rail");
 
@@ -2050,7 +2051,11 @@ function isSessionVisibleInUi(session) {
 }
 
 function isProjectLockedForEditing() {
-  return Boolean(cfg.sessionReview || s.longdoc.settings?.locked || s.projectMeta?.longdoc?.locked);
+  return Boolean(cfg.sessionReview || s.longdoc.settings?.locked || s.projectMeta?.longdoc?.locked || s.projectMeta?.local_workspace?.active);
+}
+
+function hasActiveLocalWorkspace() {
+  return Boolean(s.projectMeta?.local_workspace?.active);
 }
 
 function hasHiddenLockingSession() {
@@ -2061,6 +2066,10 @@ function hasHiddenLockingSession() {
 
 function readonlyReasonText() {
   if (cfg.sessionReview) return "Перегляд зміни доступний тільки для читання";
+  if (hasActiveLocalWorkspace()) {
+    const agent = s.projectMeta?.local_workspace?.agent_id || "локальному редакторі";
+    return `Проєкт зараз редагується у ${agent}. Натисніть “Редагувати у вебі”, щоб зупинити локальний lock і продовжити тут`;
+  }
   const session = s.longdoc.activeSession;
   if (session && !isSessionVisibleInUi(session)) {
     return "AI готує запропоновану зміну. Редагування тимчасово заблоковано";
@@ -2074,16 +2083,33 @@ function readonlyReasonText() {
   return "Редактор доступний тільки для читання, доки запропонована зміна активна";
 }
 
-function applyProjectEditLock() {
+export function applyProjectEditLock() {
   const locked = isProjectLockedForEditing();
   if (editorWrapEl) editorWrapEl.classList.toggle("project-locked", locked);
   if (readonlyOverlayEl) {
     readonlyOverlayEl.setAttribute("aria-hidden", locked ? "false" : "true");
     readonlyOverlayEl.classList.toggle("can-discard-lock", Boolean(locked && hasHiddenLockingSession()));
+    readonlyOverlayEl.classList.toggle("can-use-web", Boolean(locked && hasActiveLocalWorkspace()));
     const label = readonlyOverlayEl.querySelector("[data-readonly-label]");
     if (label) label.textContent = readonlyReasonText();
   }
   cm.setReadOnly?.(locked);
+}
+
+async function releaseLocalWorkspaceForWeb() {
+  if (!hasActiveLocalWorkspace()) return;
+  readonlyUseWebBtn?.setAttribute("disabled", "disabled");
+  try {
+    const workspaceId = s.projectMeta?.local_workspace?.workspace_id || "";
+    await api(`/api/projects/${cfg.projectId}/local-workspace/`, {
+      method: "DELETE",
+      body: JSON.stringify({ workspace_id: workspaceId }),
+    });
+    await refreshProjectMeta();
+    applyProjectEditLock();
+  } finally {
+    readonlyUseWebBtn?.removeAttribute("disabled");
+  }
 }
 
 function isSessionAcceptable(session) {
@@ -2774,6 +2800,7 @@ export function initSessionUI() {
   document.getElementById("session-diff-footer-accept-btn")?.addEventListener("click", acceptSession);
   document.getElementById("session-diff-footer-discard-btn")?.addEventListener("click", discardSession);
   readonlyDiscardSessionBtn?.addEventListener("click", discardSession);
+  readonlyUseWebBtn?.addEventListener("click", releaseLocalWorkspaceForWeb);
   annotationRailToggleBtn?.addEventListener("click", () => toggleAnnotationRail());
   document.getElementById("session-diff-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeSessionDiffModal();

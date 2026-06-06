@@ -1116,6 +1116,7 @@ export async function loadProjectMeta() {
   }
   renderSmallModelWarning();
   search.syncSearchTabVisibility?.();
+  longdoc.applyProjectEditLock?.();
 }
 
 export async function loadMainFile() {

@@ -1,0 +1,590 @@
+{
+  "name": "smarttex",
+  "displayName": "SmartTeX",
+  "description": "Edit SmartTeX projects locally while syncing through smarttex-local.",
+  "version": "0.1.0",
+  "publisher": "smarttex",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:smarttex.login",
+    "onCommand:smarttex.openProject",
+    "onCommand:smarttex.watchWorkspace",
+    "onCommand:smarttex.syncWorkspace",
+    "onCommand:smarttex.pullWorkspace",
+    "onCommand:smarttex.releaseWorkspace",
+    "onCommand:smarttex.workspaceStatus",
+    "onCommand:smarttex.refreshAll",
+    "onCommand:smarttex.compile",
+    "onCommand:smarttex.showCompileLog",
+    "onCommand:smarttex.showProblems",
+    "onView:smarttex.problems",
+    "onView:smarttex.pdfEmbeds",
+    "onCommand:smarttex.refreshPdfEmbeds",
+    "onCommand:smarttex.enablePdfEmbed",
+    "onCommand:smarttex.disablePdfEmbed",
+    "onCommand:smarttex.insertPdfEmbedSnippet",
+    "onCommand:smarttex.openWebEditor",
+    "onCommand:smarttex.openPreview",
+    "onCommand:smarttex.startLocalAgent",
+    "onCommand:smarttex.refreshAnnotations",
+    "onCommand:smarttex.addAnnotation",
+    "onCommand:smarttex.addQuickAnnotation",
+    "onCommand:smarttex.openAnnotation",
+    "onCommand:smarttex.markAnnotationDone",
+    "onCommand:smarttex.dismissAnnotation",
+    "onCommand:smarttex.keepAiAnnotation",
+    "onCommand:smarttex.refreshAiChanges",
+    "onCommand:smarttex.openAiChanges",
+    "onCommand:smarttex.acceptAiChanges",
+    "onCommand:smarttex.discardAiChanges",
+    "onCommand:smarttex.refreshHistory",
+    "onCommand:smarttex.openHistoryVersion",
+    "onCommand:smarttex.rollbackHistoryVersion",
+    "onView:smarttex.dashboard",
+    "onView:smarttex.preview",
+    "onView:smarttex.aiChanges",
+    "onView:smarttex.fileAnnotations",
+    "onView:smarttex.history",
+    "onView:smarttex.settings",
+    "onView:smarttex.annotations",
+    "workspaceContains:.smarttex/local_workspace_state.json"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "smarttex.login",
+        "title": "SmartTeX: Login"
+      },
+      {
+        "command": "smarttex.openProject",
+        "title": "SmartTeX: Open Project Locally"
+      },
+      {
+        "command": "smarttex.watchWorkspace",
+        "title": "SmartTeX: Watch and Sync Workspace"
+      },
+      {
+        "command": "smarttex.syncWorkspace",
+        "title": "SmartTeX: Sync Workspace Now",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "smarttex.pullWorkspace",
+        "title": "SmartTeX: Pull Server Snapshot"
+      },
+      {
+        "command": "smarttex.releaseWorkspace",
+        "title": "SmartTeX: Release Local Workspace"
+      },
+      {
+        "command": "smarttex.workspaceStatus",
+        "title": "SmartTeX: Workspace Status",
+        "icon": "$(info)"
+      },
+      {
+        "command": "smarttex.refreshAll",
+        "title": "SmartTeX: Refresh All",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "smarttex.compile",
+        "title": "SmartTeX: Compile Project",
+        "icon": "$(play)"
+      },
+      {
+        "command": "smarttex.showCompileLog",
+        "title": "SmartTeX: Show Compile Log",
+        "icon": "$(output)"
+      },
+      {
+        "command": "smarttex.showProblems",
+        "title": "SmartTeX: Show Problems",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "smarttex.refreshPdfEmbeds",
+        "title": "SmartTeX: Refresh PDF Embeds",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "smarttex.enablePdfEmbed",
+        "title": "SmartTeX: Enable PDF Embed",
+        "icon": "$(file-pdf)"
+      },
+      {
+        "command": "smarttex.disablePdfEmbed",
+        "title": "SmartTeX: Disable PDF Embed",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "smarttex.insertPdfEmbedSnippet",
+        "title": "SmartTeX: Insert PDF Embed Snippet",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "smarttex.openWebEditor",
+        "title": "SmartTeX: Open Web Editor"
+      },
+      {
+        "command": "smarttex.openPreview",
+        "title": "SmartTeX: Open Local Preview",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "smarttex.startLocalAgent",
+        "title": "SmartTeX: Start Local Agent"
+      },
+      {
+        "command": "smarttex.refreshAnnotations",
+        "title": "SmartTeX: Refresh Annotations",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "smarttex.addAnnotation",
+        "title": "SmartTeX: Add Annotation",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "smarttex.addQuickAnnotation",
+        "title": "SmartTeX: Add Quick Annotation",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "smarttex.openAnnotation",
+        "title": "SmartTeX: Open Annotation"
+      },
+      {
+        "command": "smarttex.markAnnotationDone",
+        "title": "SmartTeX: Mark Annotation Done",
+        "icon": "$(check)"
+      },
+      {
+        "command": "smarttex.dismissAnnotation",
+        "title": "SmartTeX: Dismiss Annotation",
+        "icon": "$(x)"
+      },
+      {
+        "command": "smarttex.keepAiAnnotation",
+        "title": "SmartTeX: Keep AI Annotation",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "smarttex.refreshAiChanges",
+        "title": "SmartTeX: Refresh AI Changes",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "smarttex.openAiChanges",
+        "title": "SmartTeX: Open AI Changes Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "smarttex.acceptAiChanges",
+        "title": "SmartTeX: Accept AI Changes",
+        "icon": "$(check)"
+      },
+      {
+        "command": "smarttex.discardAiChanges",
+        "title": "SmartTeX: Discard AI Changes",
+        "icon": "$(x)"
+      },
+      {
+        "command": "smarttex.refreshHistory",
+        "title": "SmartTeX: Refresh History",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "smarttex.openHistoryVersion",
+        "title": "SmartTeX: Open Version Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "smarttex.rollbackHistoryVersion",
+        "title": "SmartTeX: Roll Back To Version",
+        "icon": "$(history)"
+      }
+    ],
+    "configuration": {
+      "title": "SmartTeX",
+      "properties": {
+        "smarttex.localAgentPath": {
+          "type": "string",
+          "default": "smarttex-local",
+          "description": "Path to the smarttex-local executable."
+        },
+        "smarttex.serverUrl": {
+          "type": "string",
+          "default": "https://smart-tex.pp.ua",
+          "description": "SmartTeX server URL."
+        },
+        "smarttex.workspaceRoot": {
+          "type": "string",
+          "default": "~/.smarttex-local",
+          "description": "Root directory used by smarttex-local workspace commands."
+        },
+        "smarttex.autoWatchAfterOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start smarttex-local workspace watch after opening a project."
+        },
+        "smarttex.syncOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run smarttex-local workspace sync after saving files in an opened SmartTeX workspace."
+        },
+        "smarttex.autoSaveAndSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save changed SmartTeX workspace files after a short debounce and sync them to the server."
+        },
+        "smarttex.autoSaveDebounceMs": {
+          "type": "number",
+          "default": 1200,
+          "minimum": 250,
+          "description": "Delay before auto-saving and syncing a changed SmartTeX workspace file."
+        },
+        "smarttex.annotationRefreshIntervalMs": {
+          "type": "number",
+          "default": 45000,
+          "minimum": 5000,
+          "description": "Fallback polling interval for SmartTeX annotations. Server events refresh faster when available."
+        },
+        "smarttex.annotationCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show clickable SmartTeX annotation actions inline above annotated lines."
+        },
+        "smarttex.quickAnnotationTemplates": {
+          "type": "array",
+          "default": [
+            "Не подобається формулювання",
+            "Дублює існуючий текст",
+            "Потрібно конкретизувати"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Reusable quick annotation texts shown by SmartTeX: Add Quick Annotation."
+        },
+        "smarttex.showResolvedAnnotations": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show done and dismissed annotations in the VS Code tree, editor decorations, and CodeLens."
+        },
+        "smarttex.localBridgeUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "Local smarttex-local serve bridge URL used for Typst preview."
+        },
+        "smarttex.previewFollowCursor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reveal the active VS Code cursor location in SmartTeX local preview."
+        },
+        "smarttex.previewClickToCode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Navigate VS Code to source text when clicking text inside SmartTeX local preview."
+        },
+        "smarttex.previewTheme": {
+          "type": "string",
+          "enum": ["auto", "light", "dark"],
+          "default": "auto",
+          "description": "SmartTeX local preview color mode."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "smarttex",
+          "title": "SmartTeX",
+          "icon": "assets/smarttex.svg"
+        }
+      ]
+    },
+    "views": {
+      "smarttex": [
+        {
+          "id": "smarttex.dashboard",
+          "name": "Project",
+          "type": "webview"
+        },
+        {
+          "id": "smarttex.preview",
+          "name": "Preview",
+          "type": "webview"
+        },
+        {
+          "id": "smarttex.problems",
+          "name": "Problems",
+          "type": "webview"
+        },
+        {
+          "id": "smarttex.pdfEmbeds",
+          "name": "PDF Embeds",
+          "type": "webview"
+        },
+        {
+          "id": "smarttex.aiChanges",
+          "name": "AI Changes",
+          "type": "webview"
+        },
+        {
+          "id": "smarttex.fileAnnotations",
+          "name": "File Notes",
+          "type": "webview"
+        },
+        {
+          "id": "smarttex.history",
+          "name": "History",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "smarttex.settings",
+          "name": "Settings",
+          "type": "webview",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "smarttex.annotations",
+          "name": "Annotations",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "smarttex.login"
+        },
+        {
+          "command": "smarttex.openProject"
+        },
+        {
+          "command": "smarttex.watchWorkspace"
+        },
+        {
+          "command": "smarttex.syncWorkspace"
+        },
+        {
+          "command": "smarttex.pullWorkspace"
+        },
+        {
+          "command": "smarttex.releaseWorkspace"
+        },
+        {
+          "command": "smarttex.workspaceStatus"
+        },
+        {
+          "command": "smarttex.refreshAll"
+        },
+        {
+          "command": "smarttex.compile"
+        },
+        {
+          "command": "smarttex.showCompileLog"
+        },
+        {
+          "command": "smarttex.showProblems"
+        },
+        {
+          "command": "smarttex.refreshPdfEmbeds"
+        },
+        {
+          "command": "smarttex.enablePdfEmbed"
+        },
+        {
+          "command": "smarttex.disablePdfEmbed"
+        },
+        {
+          "command": "smarttex.insertPdfEmbedSnippet"
+        },
+        {
+          "command": "smarttex.openWebEditor"
+        },
+        {
+          "command": "smarttex.openPreview"
+        },
+        {
+          "command": "smarttex.startLocalAgent"
+        },
+        {
+          "command": "smarttex.refreshAnnotations"
+        },
+        {
+          "command": "smarttex.addAnnotation"
+        },
+        {
+          "command": "smarttex.addQuickAnnotation"
+        },
+        {
+          "command": "smarttex.refreshAiChanges"
+        },
+        {
+          "command": "smarttex.openAiChanges"
+        },
+        {
+          "command": "smarttex.acceptAiChanges"
+        },
+        {
+          "command": "smarttex.discardAiChanges"
+        },
+        {
+          "command": "smarttex.refreshHistory"
+        },
+        {
+          "command": "smarttex.openHistoryVersion"
+        },
+        {
+          "command": "smarttex.rollbackHistoryVersion"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "smarttex.openPreview",
+          "when": "view == smarttex.dashboard",
+          "group": "navigation@1"
+        },
+        {
+          "command": "smarttex.syncWorkspace",
+          "when": "view == smarttex.dashboard",
+          "group": "navigation@2"
+        },
+        {
+          "command": "smarttex.workspaceStatus",
+          "when": "view == smarttex.dashboard",
+          "group": "navigation@3"
+        },
+        {
+          "command": "smarttex.refreshAll",
+          "when": "view == smarttex.dashboard",
+          "group": "navigation@4"
+        },
+        {
+          "command": "smarttex.compile",
+          "when": "view == smarttex.problems",
+          "group": "navigation@1"
+        },
+        {
+          "command": "smarttex.showCompileLog",
+          "when": "view == smarttex.problems",
+          "group": "navigation@2"
+        },
+        {
+          "command": "smarttex.refreshPdfEmbeds",
+          "when": "view == smarttex.pdfEmbeds",
+          "group": "navigation@1"
+        },
+        {
+          "command": "smarttex.openAiChanges",
+          "when": "view == smarttex.aiChanges",
+          "group": "navigation@1"
+        },
+        {
+          "command": "smarttex.refreshAiChanges",
+          "when": "view == smarttex.aiChanges",
+          "group": "navigation@2"
+        },
+        {
+          "command": "smarttex.refreshHistory",
+          "when": "view == smarttex.history",
+          "group": "navigation@1"
+        },
+        {
+          "command": "smarttex.refreshAnnotations",
+          "when": "view == smarttex.annotations",
+          "group": "navigation"
+        },
+        {
+          "command": "smarttex.addAnnotation",
+          "when": "view == smarttex.annotations",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "smarttex.openAnnotation",
+          "when": "view == smarttex.annotations && viewItem =~ /^annotation/",
+          "group": "inline@1"
+        },
+        {
+          "command": "smarttex.keepAiAnnotation",
+          "when": "view == smarttex.annotations && viewItem == annotationAiDraft",
+          "group": "inline@2"
+        },
+        {
+          "command": "smarttex.markAnnotationDone",
+          "when": "view == smarttex.annotations && viewItem =~ /^annotation/",
+          "group": "inline@3"
+        },
+        {
+          "command": "smarttex.dismissAnnotation",
+          "when": "view == smarttex.annotations && viewItem =~ /^annotation/",
+          "group": "inline@4"
+        },
+        {
+          "command": "smarttex.openHistoryVersion",
+          "when": "view == smarttex.history && viewItem == version",
+          "group": "inline@1"
+        },
+        {
+          "command": "smarttex.rollbackHistoryVersion",
+          "when": "view == smarttex.history && viewItem == versionRevertible",
+          "group": "inline@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "smarttex.addAnnotation",
+          "when": "resourceScheme == file",
+          "group": "navigation@20"
+        },
+        {
+          "command": "smarttex.addQuickAnnotation",
+          "when": "resourceScheme == file",
+          "group": "navigation@21"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "smarttex.enablePdfEmbed",
+          "when": "resourceScheme == file && resourceExtname == .pdf",
+          "group": "smarttex@1"
+        },
+        {
+          "command": "smarttex.disablePdfEmbed",
+          "when": "resourceScheme == file && resourceExtname == .pdf",
+          "group": "smarttex@2"
+        },
+        {
+          "command": "smarttex.insertPdfEmbedSnippet",
+          "when": "resourceScheme == file && resourceExtname == .pdf",
+          "group": "smarttex@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "smarttex.addAnnotation",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "smarttex.addQuickAnnotation",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "editorTextFocus"
+      }
+    ]
+  }
+}

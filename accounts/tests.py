@@ -213,6 +213,22 @@ class OAuthRefreshTokenTests(TestCase):
         )
         self.assertEqual(replay.status_code, 400)
 
+
+class RealtimeSseTokenAuthTests(TestCase):
+    def test_sse_user_id_can_be_resolved_from_bearer_oauth_token(self):
+        user = User.objects.create_user(username="sse-user", email="sse@example.com", password="secret123")
+        OAuthAccessToken.objects.create(
+            token="sse-access-token",
+            user=user,
+            scope="smarttex:read smarttex:write",
+            expires_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+
+        from SmartTeX.realtime_sse import _user_id_from_api_token
+
+        scope = {"headers": [(b"authorization", b"Bearer sse-access-token")]}
+        self.assertEqual(_user_id_from_api_token(scope), user.id)
+
 class ProfileViewTests(TestCase):
     def test_profile_shows_ai_limits_for_small_model_user(self):
         user = User.objects.create_user(username="profile-user", email="profile@example.com", password="secret123")

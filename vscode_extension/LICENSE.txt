@@ -1,0 +1,4 @@
+Copyright (c) SmartTeX.
+
+All rights reserved. This extension is distributed for SmartTeX users and may
+not be copied, modified, or redistributed except as permitted by SmartTeX.

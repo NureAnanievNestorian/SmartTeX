@@ -48,6 +48,11 @@ export SMARTTEX_SERVER="http://localhost:8000"
 ./bin/smarttex-local doctor
 ./bin/smarttex-local projects
 ./bin/smarttex-local compile --project 142
+./bin/smarttex-local workspace open --project 142 --code
+./bin/smarttex-local workspace watch --project 142
+./bin/smarttex-local workspace status --project 142
+./bin/smarttex-local workspace pull --project 142
+./bin/smarttex-local workspace release --project 142
 ```
 
 `login` performs a browser OAuth flow with PKCE and stores an access token plus
@@ -100,6 +105,38 @@ SmartTeX compile requests, including MCP `compile_project`, create a local
 compile job. The agent polls for that job, compiles locally, and uploads the
 result. Preview and LSP connect to the localhost bridge directly from the
 browser.
+
+## Local Workspace Editing
+
+`workspace open` is the first proof-of-concept for using SmartTeX from a local
+editor such as VS Code while keeping the server as the source of truth:
+
+```bash
+smarttex-local workspace open --project 142 --code
+smarttex-local workspace watch --project 142
+smarttex-local workspace status --project 142
+smarttex-local workspace pull --project 142
+smarttex-local workspace release --project 142
+```
+
+The agent pulls a compile-support project ZIP into a normal local folder under
+`~/.smarttex-local/project-<id>-workspace`, claims a short-lived editing lease
+on the server, and records file hashes in `.smarttex/local_workspace_state.json`.
+`workspace watch` polls the folder, batches changed/deleted files, and uploads
+one `local_workspace_sync` event per batch. The server applies the batch through
+the existing project file services, commits it through the internal git-backed
+versioning layer, and marks the project out of date.
+`workspace status` shows local dirty state and the latest server version.
+`workspace pull` refreshes the local folder from the server, but refuses to
+overwrite unsynced local edits unless `--force` is passed.
+
+While a local workspace lease is active, regular web/MCP writes are blocked with
+`PROJECT_LOCKED` unless they come from the same workspace id. This prevents the
+web editor and a local editor from writing the same project at the same time.
+`workspace release` unlocks the project explicitly; otherwise the lease expires
+automatically if the local agent disappears.
+The future VS Code extension should use this local workspace API rather than
+implementing its own file transport.
 
 To disable Local mode for MCP/server compiles, use the editor `Local` control or:
 
@@ -179,9 +216,10 @@ To build the static update bundle for deployment:
 SMARTTEX_LOCAL_UPDATE_CHANNEL=stable local_agent/go/scripts/build-release-assets.sh
 ```
 
-The script writes precompiled binaries, `manifest.json`, the macOS/Linux
-`install.sh` bootstrapper, and the Windows PowerShell `install.ps1`
-bootstrapper to `projects/static/local-agent/stable/`.
+The script writes precompiled binaries, `manifest.json`, the SmartTeX VS Code
+extension `.vsix`, the macOS/Linux `install.sh` bootstrapper, and the Windows
+PowerShell `install.ps1` bootstrapper to
+`projects/static/local-agent/stable/`.
 
 The GitHub Actions workflow `.github/workflows/smarttex-local-agent-release.yml`
 builds the same bundle and deploys it to the VPS static volume at:
@@ -205,12 +243,22 @@ $env:SMARTTEX_SERVER='https://smart-tex.pp.ua'; iwr -useb https://smart-tex.pp.u
 smarttex-local login --serve --server https://smart-tex.pp.ua
 ```
 
-The release bundle includes macOS, Linux, and Windows binaries in the manifest.
-Both bootstrappers verify SHA-256 before installing. `install.sh` installs to
-`~/.local/bin` by default and adds it to the shell profile when needed.
-`install.ps1` installs to `%LOCALAPPDATA%\SmartTeX\bin` by default and adds it
-to the current user's PATH. A terminal restart may be needed for existing
-shells to pick up the updated PATH.
+The release bundle includes macOS, Linux, and Windows binaries plus
+`vscode_extension` metadata in the manifest. Both bootstrappers verify SHA-256
+before installing the local agent and the VS Code extension. `install.sh`
+installs the agent to `~/.local/bin` by default and adds it to the shell profile
+when needed. `install.ps1` installs to `%LOCALAPPDATA%\SmartTeX\bin` by default
+and adds it to the current user's PATH. A terminal restart may be needed for
+existing shells to pick up the updated PATH.
+
+If the VS Code `code` CLI is not available, the bootstrapper still installs the
+agent and prints the VSIX URL. Users can install the extension manually from VS
+Code with `Extensions: Install from VSIX...`, or from a terminal after enabling
+the `code` command:
+
+```bash
+code --install-extension smarttex-vscode-<version>.vsix --force
+```
 
 To include toolchain assets in the generated manifest, pass a JSON file:
 

@@ -3,6 +3,7 @@ import base64
 import binascii
 import time
 import mimetypes
+import uuid
 import posixpath
 import urllib.error
 import urllib.request
@@ -27,7 +28,7 @@ from small_model.services.quota_service import SmallModelQuotaService
 from templates_lib.models import Template
 from templates_lib.services import normalize_template_main_file
 
-from .models import GitHubInstallation, LocalCompileJob, Project, ProjectLocalRuntime, ProjectVersion
+from .models import GitHubInstallation, LocalCompileJob, Project, ProjectLocalRuntime, ProjectLocalWorkspaceLease, ProjectVersion
 from .services import (
     ALLOWED_UPLOAD_EXTENSIONS,
     build_project_zip,
@@ -394,12 +395,58 @@ def _unauthorized() -> JsonResponse:
     return JsonResponse({"detail": "Authentication required"}, status=401)
 
 
-def _check_project_lock(project: Project) -> JsonResponse | None:
-    """Return a 423 response if the project is locked by a suggested change, else None."""
+def _latest_project_version_number(project: Project) -> int:
+    return (
+        ProjectVersion.objects.filter(project=project)
+        .order_by("-number")
+        .values_list("number", flat=True)
+        .first()
+        or 0
+    )
+
+
+def _active_local_workspace_lease(project: Project) -> ProjectLocalWorkspaceLease | None:
+    lease = getattr(project, "local_workspace_lease", None)
+    if lease is None:
+        return None
+    if lease.expires_at <= timezone.now():
+        lease.delete()
+        return None
+    return lease
+
+
+def _workspace_lease_payload(project: Project) -> dict:
+    lease = _active_local_workspace_lease(project)
+    if lease is None:
+        return {"active": False}
+    return {
+        "active": True,
+        "workspace_id": lease.workspace_id,
+        "agent_id": lease.agent_id,
+        "base_version_number": lease.base_version_number,
+        "latest_version_number": _latest_project_version_number(project),
+        "last_seen_at": lease.last_seen_at.isoformat(),
+        "expires_at": lease.expires_at.isoformat(),
+    }
+
+
+def _check_project_lock(project: Project, *, allow_workspace_id: str = "") -> JsonResponse | None:
+    """Return a 423 response if project writes should currently be blocked."""
     proposal = get_locking_change_proposal(project)
     session = get_locking_session(project)
     if proposal is None and session is None:
-        return None
+        lease = _active_local_workspace_lease(project)
+        if lease is None or (allow_workspace_id and lease.workspace_id == allow_workspace_id):
+            return None
+        return JsonResponse(
+            {
+                "error": "PROJECT_LOCKED",
+                "message": f"Project {project.id} is being edited from a local workspace.",
+                "local_workspace": _workspace_lease_payload(project),
+                "suggestion": "Close, release, or reconnect to the active local workspace before editing.",
+            },
+            status=423,
+        )
     return JsonResponse(
         {
             "error": "PROJECT_LOCKED",
@@ -449,6 +496,7 @@ def _project_payload(project: Project, user=None) -> dict:
             "local_bundle_channel": str(getattr(settings, "LOCAL_RUNTIME_TOOLCHAIN_CHANNEL", "stable")),
         },
         "local_runtime": _local_runtime_payload(project),
+        "local_workspace": _workspace_lease_payload(project),
         "last_status": project.last_status,
         "longdoc": {
             "enabled": bool(longdoc_settings and longdoc_settings.enabled),
@@ -1841,6 +1889,194 @@ def api_project_local_runtime_jobs(request: HttpRequest, project_id: int) -> Jso
                 }
                 for job in jobs
             ],
+        }
+    )
+
+
+def _normalize_workspace_path(value: object) -> str:
+    raw = str(value or "").replace("\\", "/").strip()
+    normalized = posixpath.normpath(raw).lstrip("/")
+    if normalized in {"", "."} or normalized.startswith("../") or normalized == "..":
+        raise ValueError("invalid project path")
+    return normalized
+
+
+def _workspace_text_change_content(change: dict) -> str:
+    content = change.get("content")
+    if content is None:
+        content = change.get("text_content")
+    if not isinstance(content, str):
+        raise ValueError("text upsert requires content")
+    return content
+
+
+def _apply_workspace_change(project: Project, change: dict) -> str:
+    path = _normalize_workspace_path(change.get("path"))
+    action = str(change.get("action") or "upsert").strip().lower()
+    main_file = main_source_filename(project)
+    if action == "delete":
+        if path == main_file:
+            raise ValueError("main file cannot be deleted")
+        delete_project_asset(project, path)
+        return path
+    if action != "upsert":
+        raise ValueError("action must be upsert or delete")
+
+    is_text = bool(change.get("is_text"))
+    if path == main_file or is_text:
+        content = _workspace_text_change_content(change)
+        if is_source_too_large(content):
+            raise ValueError("File exceeds 1MB")
+        if path == main_file:
+            write_source_content(project, content)
+        else:
+            try:
+                write_project_asset_text(project, path, content)
+            except ValueError as exc:
+                if str(exc) != "file not found":
+                    raise
+                create_project_text_file(project, path, content)
+        return path
+
+    raw_b64 = str(change.get("content_base64") or "").strip()
+    if not raw_b64:
+        raise ValueError("binary upsert requires content_base64")
+    try:
+        data = base64.b64decode(raw_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("content_base64 is not valid base64") from exc
+    save_project_asset(project, path, data)
+    return path
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST", "DELETE"])
+def api_project_local_workspace(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+
+    if request.method == "GET":
+        payload = _workspace_lease_payload(project)
+        payload["latest_version_number"] = _latest_project_version_number(project)
+        return JsonResponse(payload)
+
+    body = _json_body(request)
+    workspace_id = str(body.get("workspace_id") or request.headers.get("X-SmartTeX-Workspace-ID") or "").strip()
+    if request.method == "DELETE":
+        if workspace_id:
+            ProjectLocalWorkspaceLease.objects.filter(project=project, workspace_id=workspace_id).delete()
+        else:
+            ProjectLocalWorkspaceLease.objects.filter(project=project).delete()
+        return JsonResponse({"active": False, "latest_version_number": _latest_project_version_number(project)})
+
+    if lock_resp := _check_project_lock(project, allow_workspace_id=workspace_id):
+        return lock_resp
+    if not workspace_id:
+        workspace_id = uuid.uuid4().hex
+    agent_id = str(body.get("agent_id") or "").strip()[:128]
+    ttl_seconds = min(max(int(body.get("ttl_seconds") or 120), 30), 3600)
+    lease, _ = ProjectLocalWorkspaceLease.objects.update_or_create(
+        project=project,
+        defaults={
+            "owner": user,
+            "workspace_id": workspace_id[:128],
+            "agent_id": agent_id,
+            "base_version_number": int(body.get("base_version_number") or _latest_project_version_number(project)),
+            "expires_at": timezone.now() + timezone.timedelta(seconds=ttl_seconds),
+        },
+    )
+    return JsonResponse(_workspace_lease_payload(project) | {"workspace_id": lease.workspace_id})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_project_local_workspace_sync(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    project = _project_with_owner(project_id, user)
+    body = _json_body(request)
+    workspace_id = str(body.get("workspace_id") or request.headers.get("X-SmartTeX-Workspace-ID") or "").strip()
+    if not workspace_id:
+        return JsonResponse({"detail": "workspace_id is required"}, status=400)
+    if lock_resp := _check_project_lock(project, allow_workspace_id=workspace_id):
+        return lock_resp
+    lease = _active_local_workspace_lease(project)
+    if lease is None or lease.workspace_id != workspace_id:
+        return JsonResponse({"error": "LOCAL_WORKSPACE_NOT_ACTIVE", "local_workspace": _workspace_lease_payload(project)}, status=409)
+
+    changes = body.get("changes")
+    if not isinstance(changes, list):
+        return JsonResponse({"detail": "changes must be a list"}, status=400)
+    if len(changes) > 200:
+        return JsonResponse({"detail": "too many changes in one sync batch"}, status=400)
+    base_version = int(body.get("base_version_number") or 0)
+    latest_before = _latest_project_version_number(project)
+    if base_version and latest_before > base_version and not body.get("force"):
+        return JsonResponse(
+            {
+                "error": "LOCAL_WORKSPACE_OUT_OF_DATE",
+                "base_version_number": base_version,
+                "latest_version_number": latest_before,
+                "suggestion": "Pull the latest server snapshot before syncing local edits.",
+            },
+            status=409,
+        )
+
+    changed_paths: list[str] = []
+    try:
+        with transaction.atomic():
+            for item in changes:
+                if not isinstance(item, dict):
+                    raise ValueError("each change must be an object")
+                changed_paths.append(_apply_workspace_change(project, item))
+            if changed_paths:
+                project.last_status = Project.CompileStatus.PENDING
+                project.save(update_fields=["last_status", "updated_at"])
+                summary = str(body.get("summary") or f"Synced {len(set(changed_paths))} local workspace file(s)").strip()
+                commit_info = commit_project_changes(
+                    project,
+                    summary=summary,
+                    operation="local_workspace_sync",
+                    source=ProjectVersion.Source.API,
+                    target_files=changed_paths,
+                )
+                if commit_info.commit_hash:
+                    create_project_version(
+                        project=project,
+                        actor=user,
+                        source=ProjectVersion.Source.API,
+                        operation="local_workspace_sync",
+                        target=", ".join(sorted(set(changed_paths))[:5]),
+                        target_file=sorted(set(changed_paths))[0],
+                        summary=summary,
+                        before_content="",
+                        after_content="",
+                        snapshot_kind=ProjectVersion.SnapshotKind.EVENT,
+                        event_payload={
+                            "kind": "local_workspace_sync",
+                            "workspace_id": workspace_id,
+                            "agent_id": lease.agent_id,
+                            "files": sorted(set(changed_paths)),
+                            "git_commit": commit_info.commit_hash,
+                            "before_commit": commit_info.before_commit or "",
+                        },
+                        is_revertible=bool(commit_info.before_commit),
+                    )
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    lease.base_version_number = _latest_project_version_number(project)
+    lease.expires_at = timezone.now() + timezone.timedelta(seconds=min(max(int(body.get("ttl_seconds") or 120), 30), 3600))
+    lease.save(update_fields=["base_version_number", "expires_at", "last_seen_at"])
+    return JsonResponse(
+        {
+            "ok": True,
+            "changed_paths": sorted(set(changed_paths)),
+            "latest_version_number": lease.base_version_number,
+            "local_workspace": _workspace_lease_payload(project),
         }
     )
 
