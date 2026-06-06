@@ -184,7 +184,8 @@ local_agent/go/scripts/install-local-agent.sh --start
 
 ## Updates
 
-The agent can update itself from a server-published manifest:
+The agent can update itself and the SmartTeX VS Code extension from a
+server-published manifest:
 
 ```bash
 smarttex-local update --server https://smart-tex.pp.ua
@@ -192,8 +193,11 @@ smarttex-local update --server https://smart-tex.pp.ua
 
 `update` downloads `/static/local-agent/<channel>/manifest.json`, selects the
 binary for the current OS/architecture, verifies SHA-256, and atomically
-replaces the current executable. Use `--install-path` when updating a specific
-binary path, and `--channel beta` for non-stable release channels.
+replaces the current executable. If `vscode_extension` is present in the same
+manifest, it also downloads the VSIX, verifies SHA-256, and installs it through
+the VS Code `code --install-extension --force` CLI. Use `--skip-vscode-extension`
+for headless/server installs, `--install-path` when updating a specific binary
+path, and `--channel beta` for non-stable release channels.
 
 Typst and Tinymist can be managed from the same manifest:
 

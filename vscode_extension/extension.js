@@ -99,8 +99,7 @@ function expandConfigPath(value) {
 }
 
 function serverUrl() {
-  const fallback = devAgentPath() && !hasExplicitSetting("serverUrl") ? "http://localhost:8000" : "https://smart-tex.pp.ua";
-  return String(configuredSetting("serverUrl") || fallback).replace(/\/+$/, "");
+  return String(configuredSetting("serverUrl") || "https://smart-tex.pp.ua").replace(/\/+$/, "");
 }
 
 function agentPath() {

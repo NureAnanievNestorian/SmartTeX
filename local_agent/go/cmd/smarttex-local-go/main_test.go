@@ -1,6 +1,21 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
+
+func TestDefaultServerFallsBackToProduction(t *testing.T) {
+	t.Setenv("SMARTTEX_SERVER", "")
+	t.Setenv("SMARTTEX_LOCAL_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
+
+	if got := defaultServer(); got != "https://smart-tex.pp.ua" {
+		t.Fatalf("defaultServer() = %q, want production SmartTeX URL", got)
+	}
+	if got := apiURL("", "/api/projects/"); got != "https://smart-tex.pp.ua/api/projects/" {
+		t.Fatalf("apiURL fallback = %q, want production SmartTeX URL", got)
+	}
+}
 
 func TestWorkspaceChangesSkipsLocalSmarttexArtifactsButKeepsContext(t *testing.T) {
 	state := workspaceState{Files: map[string]string{

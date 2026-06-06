@@ -339,10 +339,11 @@ type claimedJob struct {
 }
 
 type updateManifest struct {
-	Version    string           `json:"version"`
-	Channel    string           `json:"channel"`
-	Assets     []updateAsset    `json:"assets"`
-	Toolchains []toolchainAsset `json:"toolchains"`
+	Version         string                `json:"version"`
+	Channel         string                `json:"channel"`
+	Assets          []updateAsset         `json:"assets"`
+	VSCodeExtension *vscodeExtensionAsset `json:"vscode_extension"`
+	Toolchains      []toolchainAsset      `json:"toolchains"`
 }
 
 type updateAsset struct {
@@ -350,6 +351,15 @@ type updateAsset struct {
 	Arch   string `json:"arch"`
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
+}
+
+type vscodeExtensionAsset struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Publisher string `json:"publisher"`
+	Version   string `json:"version"`
+	URL       string `json:"url"`
+	SHA256    string `json:"sha256"`
 }
 
 type toolchainAsset struct {
@@ -443,7 +453,7 @@ Usage:
   smarttex-local-go version
 
 Environment:
-  SMARTTEX_SERVER defaults to http://localhost:8000
+  SMARTTEX_SERVER defaults to https://smart-tex.pp.ua
   SMARTTEX_TOKEN  overrides the saved OAuth token when set
   SMARTTEX_LOCAL_SECRET optionally overrides the saved localhost bridge secret
   TINYMIST_BIN points local preview to a host tinymist binary`)
@@ -1411,6 +1421,7 @@ func runUpdate(args []string) error {
 	installPath := fs.String("install-path", "", "binary path to replace; defaults to current executable")
 	channel := fs.String("channel", envOr("SMARTTEX_LOCAL_UPDATE_CHANNEL", "stable"), "release channel")
 	force := fs.Bool("force", false, "install even when the manifest version matches the current binary")
+	skipExtension := fs.Bool("skip-vscode-extension", false, "do not update the SmartTeX VS Code extension")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1433,25 +1444,35 @@ func runUpdate(args []string) error {
 	if asset == nil {
 		return fmt.Errorf("no SmartTeX local agent binary is published for %s/%s on channel %s", runtime.GOOS, runtime.GOARCH, *channel)
 	}
+	updatedBinary := false
 	if !*force && manifest.Version == toolVersion {
 		fmt.Printf("SmartTeX local agent is up to date (%s).\n", toolVersion)
-		return nil
+	} else {
+		raw, err := downloadUpdateAsset(*server, asset.URL)
+		if err != nil {
+			return err
+		}
+		if asset.SHA256 != "" {
+			sum := sha256.Sum256(raw)
+			actual := fmt.Sprintf("%x", sum[:])
+			if !strings.EqualFold(actual, asset.SHA256) {
+				return fmt.Errorf("downloaded binary checksum mismatch: got %s, expected %s", actual, asset.SHA256)
+			}
+		}
+		if err := installBinary(absTarget, raw); err != nil {
+			return err
+		}
+		updatedBinary = true
+		fmt.Printf("Updated SmartTeX local agent %s -> %s at %s\n", toolVersion, manifest.Version, absTarget)
 	}
-	raw, err := downloadUpdateAsset(*server, asset.URL)
-	if err != nil {
-		return err
-	}
-	if asset.SHA256 != "" {
-		sum := sha256.Sum256(raw)
-		actual := fmt.Sprintf("%x", sum[:])
-		if !strings.EqualFold(actual, asset.SHA256) {
-			return fmt.Errorf("downloaded binary checksum mismatch: got %s, expected %s", actual, asset.SHA256)
+	if !*skipExtension {
+		if err := installVSCodeExtensionFromManifest(*server, manifest.VSCodeExtension); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN SmartTeX VS Code extension update skipped: %v\n", err)
 		}
 	}
-	if err := installBinary(absTarget, raw); err != nil {
-		return err
+	if !updatedBinary && *skipExtension {
+		fmt.Println("No updates installed.")
 	}
-	fmt.Printf("Updated SmartTeX local agent %s -> %s at %s\n", toolVersion, manifest.Version, absTarget)
 	return nil
 }
 
@@ -3136,7 +3157,7 @@ func apiRequest(method, server, path, token string, body io.Reader, contentType 
 func apiURL(server, path string) string {
 	root := strings.TrimRight(strings.TrimSpace(server), "/")
 	if root == "" {
-		root = "http://localhost:8000"
+		root = defaultServer()
 	}
 	if !strings.HasPrefix(root, "http://") && !strings.HasPrefix(root, "https://") {
 		root = "https://" + root
@@ -3169,6 +3190,83 @@ func fetchManifest(server, channel string) (updateManifest, error) {
 		return updateManifest{}, fmt.Errorf("server returned invalid local agent manifest: %w", err)
 	}
 	return manifest, nil
+}
+
+func installVSCodeExtensionFromManifest(server string, asset *vscodeExtensionAsset) error {
+	if asset == nil || strings.TrimSpace(asset.URL) == "" {
+		return nil
+	}
+	codePath, err := findVSCodeCLI()
+	if err != nil {
+		return fmt.Errorf("%w; VSIX: %s", err, absoluteAssetURL(server, asset.URL))
+	}
+	raw, err := downloadUpdateAsset(server, asset.URL)
+	if err != nil {
+		return err
+	}
+	if asset.SHA256 != "" {
+		sum := sha256.Sum256(raw)
+		actual := fmt.Sprintf("%x", sum[:])
+		if !strings.EqualFold(actual, asset.SHA256) {
+			return fmt.Errorf("downloaded VS Code extension checksum mismatch: got %s, expected %s", actual, asset.SHA256)
+		}
+	}
+	tmp, err := os.CreateTemp("", "smarttex-vscode-*.vsix")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	cmd := exec.Command(codePath, "--install-extension", tmpPath, "--force")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("code --install-extension failed: %w", err)
+	}
+	fmt.Printf("Installed SmartTeX VS Code extension %s.\n", firstNonEmpty(asset.Version, "latest"))
+	return nil
+}
+
+func findVSCodeCLI() (string, error) {
+	if path, err := exec.LookPath("code"); err == nil {
+		return path, nil
+	}
+	candidates := []string{}
+	switch runtime.GOOS {
+	case "darwin":
+		candidates = append(candidates, "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code")
+	case "windows":
+		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+			candidates = append(candidates, filepath.Join(localAppData, "Programs", "Microsoft VS Code", "bin", "code.cmd"))
+		}
+		if programFiles := os.Getenv("ProgramFiles"); programFiles != "" {
+			candidates = append(candidates, filepath.Join(programFiles, "Microsoft VS Code", "bin", "code.cmd"))
+		}
+		if programFilesX86 := os.Getenv("ProgramFiles(x86)"); programFilesX86 != "" {
+			candidates = append(candidates, filepath.Join(programFilesX86, "Microsoft VS Code", "bin", "code.cmd"))
+		}
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("VS Code CLI `code` was not found")
+}
+
+func absoluteAssetURL(server, assetURL string) string {
+	target := strings.TrimSpace(assetURL)
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		return target
+	}
+	return apiURL(server, target)
 }
 
 func selectToolchainAsset(manifest updateManifest, tool string) *toolchainAsset {
@@ -3424,7 +3522,7 @@ func defaultServer() string {
 	if cfg, err := loadLocalConfig(); err == nil && cfg.Server != "" {
 		return cfg.Server
 	}
-	return "http://localhost:8000"
+	return "https://smart-tex.pp.ua"
 }
 
 func defaultTypstBin() string {
