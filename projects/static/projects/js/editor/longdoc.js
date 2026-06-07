@@ -2032,6 +2032,11 @@ const sessionDiffFooterAcceptBtn = document.getElementById("session-diff-footer-
 const sessionDiffFooterDiscardBtn = document.getElementById("session-diff-footer-discard-btn");
 const sessionDiffDetailsBtn = document.getElementById("session-diff-details-btn");
 const sessionDiffFooterDetailsBtn = document.getElementById("session-diff-footer-details-btn");
+const sessionAcceptButtons = [
+  document.getElementById("session-btn-accept"),
+  sessionDiffHeaderAcceptBtn,
+  sessionDiffFooterAcceptBtn,
+].filter(Boolean);
 let diffContextMenuEl = null;
 
 function activeSessionSignature(session) {
@@ -2119,15 +2124,24 @@ async function releaseLocalWorkspaceForWeb() {
 }
 
 function isSessionAcceptable(session) {
-  return Boolean(session && session.status === "ready_for_review");
+  return Boolean(session && ["ready_for_review", "failed_compile"].includes(session.status));
+}
+
+function sessionAcceptButtonLabel(session, button) {
+  const base = button?.id === "session-diff-accept-btn" ? "Прийняти зміни" : "Прийняти";
+  return session?.status === "failed_compile" ? "Прийняти попри помилки" : base;
 }
 
 function updateSessionModalActions(session) {
   const canAccept = isSessionAcceptable(session);
-  [sessionDiffHeaderAcceptBtn, sessionDiffFooterAcceptBtn].forEach(btn => {
+  sessionAcceptButtons.forEach(btn => {
     if (!btn) return;
     btn.disabled = !canAccept;
-    btn.title = canAccept ? "" : "Зміну можна прийняти після підготовки diff і успішної перевірки.";
+    btn.textContent = sessionAcceptButtonLabel(session, btn);
+    btn.classList.toggle("compile-warning", Boolean(session?.status === "failed_compile"));
+    btn.title = session?.status === "failed_compile"
+      ? "Зміна має compile errors. Можна прийняти тільки після окремого підтвердження."
+      : canAccept ? "" : "Зміну можна прийняти після підготовки diff.";
     btn.style.display = cfg.sessionReview || session ? "" : "none";
   });
   [sessionDiffHeaderDiscardBtn, sessionDiffFooterDiscardBtn].forEach(btn => {
@@ -2731,10 +2745,18 @@ function switchPdfTab(tab) {
 }
 
 async function acceptSession() {
+  const session = s.longdoc.activeSession;
+  const acceptCompileErrors = session?.status === "failed_compile";
+  const message = acceptCompileErrors
+    ? "Ця запропонована зміна зараз не компілюється. Прийняти її попри помилки? PDF може не оновитися, доки помилки не будуть виправлені вручну."
+    : "Прийняти запропоновану зміну? Її буде об'єднано з проєктом.";
+  if (!(await showConfirm(message))) return;
   closeSessionDiffModal()
-  if (!(await showConfirm("Прийняти запропоновану зміну? Її буде об'єднано з проєктом."))) return;
   try {
-    const payload = await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, { method: "POST" });
+    const payload = await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, {
+      method: "POST",
+      body: acceptCompileErrors ? JSON.stringify({ accept_compile_errors: true }) : undefined,
+    });
     if (cfg.sessionReview) {
       window.location.href = `/projects/${cfg.projectId}/`;
       return;
