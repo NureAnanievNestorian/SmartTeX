@@ -32,7 +32,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const toolVersion = "0.3.1-local-preview-root"
+const toolVersion = "0.3.2"
 
 const maxUploadedCompileLogBytes = 1536 * 1024
 
