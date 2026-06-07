@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 SESSION_IDLE_TIMEOUT: int = int(getattr(settings, "TINYMIST_SESSION_IDLE_TIMEOUT", 600))
 _TINYMIST_STDERR_LEVEL_RE = re.compile(r"\b(TRACE|DEBUG|INFO|WARN|ERROR)\b")
+_TINYMIST_LISTEN_RE = re.compile(r"listening on http://127\.0\.0\.1:(?P<port>\d+)")
 
 
 def _tinymist_bin() -> str:
@@ -33,7 +34,14 @@ def _reserve_local_port() -> int:
         return int(sock.getsockname()[1])
 
 
-async def _wait_until_ready(port: int, timeout: float = 30.0) -> None:
+async def _wait_until_ready(port: int, ready_event: asyncio.Event | None = None, timeout: float = 30.0) -> None:
+    if ready_event is not None:
+        try:
+            await asyncio.wait_for(ready_event.wait(), timeout=timeout)
+            return
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("Tinymist preview did not start in time") from exc
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -79,6 +87,8 @@ class TinymistPreviewSession:
         self._stderr_task: asyncio.Task | None = None
         self._last_activity = time.monotonic()
         self._stderr_lines: deque[str] = deque(maxlen=40)
+        self._data_plane_ready = asyncio.Event()
+        self._control_plane_ready = asyncio.Event()
 
     @property
     def data_plane_port(self) -> int:
@@ -99,10 +109,11 @@ class TinymistPreviewSession:
             "--no-open",
         ]
         logger.info(
-            "tinymist preview: starting project=%s user=%s port=%s",
+            "tinymist preview: starting project=%s user=%s data_port=%s control_port=%s",
             self.project_id,
             self.user_id,
             self.port,
+            self.control_plane_port,
         )
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -113,7 +124,10 @@ class TinymistPreviewSession:
         )
         self._stderr_task = asyncio.create_task(self._stderr_reader())
         try:
-          await _wait_until_ready(self.port)
+          await asyncio.gather(
+              _wait_until_ready(self.port, self._data_plane_ready),
+              _wait_until_ready(self.control_plane_port, self._control_plane_ready),
+          )
         except Exception as exc:
           if self._proc and self._proc.returncode is not None:
             tail = self.stderr_tail()
@@ -151,6 +165,8 @@ class TinymistPreviewSession:
         await self.stop()
         self.port = _reserve_local_port()
         self.control_plane_port = _reserve_local_port()
+        self._data_plane_ready = asyncio.Event()
+        self._control_plane_ready = asyncio.Event()
         await self.start()
 
     async def _stderr_reader(self) -> None:
@@ -163,11 +179,25 @@ class TinymistPreviewSession:
                     return
                 text = line.decode(errors="replace").rstrip()
                 self._stderr_lines.append(text)
+                self._mark_ready_from_stderr(text)
                 logger.log(_tinymist_stderr_level(text), "tinymist preview stderr: %s", text)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 return
+
+    def _mark_ready_from_stderr(self, text: str) -> None:
+        match = _TINYMIST_LISTEN_RE.search(text)
+        if not match:
+            return
+        try:
+            port = int(match.group("port"))
+        except (TypeError, ValueError):
+            return
+        if port == self.port:
+            self._data_plane_ready.set()
+        if port == self.control_plane_port:
+            self._control_plane_ready.set()
 
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None

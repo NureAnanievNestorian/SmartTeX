@@ -4,10 +4,13 @@ import * as apiMod from "./api.js";
 import * as cm from "./cm.js";
 import * as tinymist from "./tinymist.js";
 import * as localRuntime from "./local_runtime.js";
+import * as ui from "./ui.js";
+import * as longdoc from "./longdoc.js";
 
 const { s, cfg } = state;
 const { api } = apiMod;
 const { jumpToLine } = cm;
+const { escHtml, showAnnotationPopover } = ui;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
@@ -40,6 +43,7 @@ let _previewLastRevealKey = "";
 let _previewMemorySyncTimer = null;
 let _previewUserInteractingUntil = 0;
 let _previewStatusEl = null;
+let _previewAnnotationResolverEl = null;
 let _localPreviewRootUri = "";
 const PREVIEW_THEME_KEY = "smarttex.typst.previewTheme";
 const PREVIEW_FOLLOW_KEY = "smarttex.typst.previewFollowCursor";
@@ -662,6 +666,21 @@ function scoreTextMatch(lineText, target) {
   return 0;
 }
 
+function scorePreviewWindow(windowText, target) {
+  const hay = normalizePreviewText(windowText).toLowerCase();
+  if (!hay || !target) return 0;
+  if (hay === target) return 220;
+  if (hay.includes(target)) return 180 - Math.min(60, hay.length - target.length);
+  if (target.includes(hay) && hay.length >= 16) return 115;
+  const targetWords = target.split(" ").filter(word => word.length >= 4);
+  if (targetWords.length >= 4) {
+    const hits = targetWords.filter(word => hay.includes(word)).length;
+    const ratio = hits / targetWords.length;
+    if (ratio >= 0.72) return 80 + Math.round(ratio * 40);
+  }
+  return 0;
+}
+
 async function fetchTypstFileText(filename) {
   const target = String(filename || "");
   if (!target) return "";
@@ -676,10 +695,10 @@ async function fetchTypstFileText(filename) {
   return String(payload.text_content || "");
 }
 
-async function locateTextInProject(rawText, headingText = "") {
+async function locateTextCandidatesInProject(rawText, headingText = "") {
   const target = normalizePreviewText(rawText).toLowerCase();
   const heading = normalizePreviewText(headingText).toLowerCase();
-  if (!target) return null;
+  if (!target) return [];
   const candidates = [];
   const typstFiles = [
     s.mainFileName,
@@ -707,17 +726,32 @@ async function locateTextInProject(rawText, headingText = "") {
         }
       }
     }
+    const maxWindow = Math.min(8, Math.max(1, Math.ceil(target.length / 120) + 1));
     for (let i = 0; i < lines.length; i++) {
-      const score = scoreTextMatch(lines[i], target);
+      let score = scoreTextMatch(lines[i], target);
+      let lineEnd = i + 1;
+      for (let span = 2; span <= maxWindow && i + span <= lines.length; span++) {
+        const windowScore = scorePreviewWindow(lines.slice(i, i + span).join("\n"), target);
+        if (windowScore > score) {
+          score = windowScore;
+          lineEnd = i + span;
+        }
+      }
       if (!score) continue;
       candidates.push({
         filename,
         line: i + 1,
+        lineEnd,
         score: score + headingBoost + (filename === s.activeTabName ? 20 : 0) + (filename === s.mainFileName ? 8 : 0),
       });
     }
   }
   candidates.sort((a, b) => b.score - a.score || a.line - b.line);
+  return candidates.slice(0, 8);
+}
+
+async function locateTextInProject(rawText, headingText = "") {
+  const candidates = await locateTextCandidatesInProject(rawText, headingText);
   return candidates[0] || null;
 }
 
@@ -782,7 +816,154 @@ function onPreviewFrameMessage(event) {
       return;
     }
     runFallback();
+    return;
   }
+  if (data.type === "smarttex-preview-annotation-request") {
+    const requestId = data.requestId || data.payload?.requestId || "";
+    const reply = (status, message = "") => {
+      try {
+        event.source?.postMessage({
+          type: "smarttex-preview-annotation-response",
+          requestId,
+          status,
+          message,
+        }, event.origin);
+      } catch (_) {}
+    };
+    reply("received");
+    handlePreviewAnnotationRequest(data.payload || {}, event).then(created => {
+      if (created === false) reply("cancelled");
+      else reply("done");
+    }).catch(err => {
+      const message = err.message || String(err);
+      reply("failed", message);
+      window.alert(message);
+    });
+  }
+}
+
+function previewPayloadRect(payload = {}) {
+  const rect = payload.rect || {};
+  const frameRect = typstPreviewFrameEl?.getBoundingClientRect?.();
+  if (!frameRect) return null;
+  const left = frameRect.left + Number(rect.left || 0);
+  const top = frameRect.top + Number(rect.top || 0);
+  const right = frameRect.left + Number(rect.right || rect.left || 0);
+  const bottom = frameRect.top + Number(rect.bottom || rect.top || 0);
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  };
+}
+
+function closePreviewAnnotationResolver(result = null) {
+  const resolver = _previewAnnotationResolverEl;
+  if (!resolver) return;
+  resolver.remove();
+  _previewAnnotationResolverEl = null;
+  const resolve = resolver._resolve;
+  if (resolve) resolve(result);
+}
+
+function placePreviewResolver(popover, rect) {
+  if (!popover) return;
+  const margin = 12;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const safeRect = rect || {
+    left: viewportWidth / 2,
+    right: viewportWidth / 2,
+    top: viewportHeight / 2,
+    bottom: viewportHeight / 2,
+  };
+  const anchorLeft = (safeRect.left + safeRect.right) / 2;
+  const prefersBottom = safeRect.bottom + 16 + popover.offsetHeight <= viewportHeight - margin;
+  const top = prefersBottom
+    ? Math.min(safeRect.bottom + 14, viewportHeight - popover.offsetHeight - margin)
+    : Math.max(safeRect.top - popover.offsetHeight - 14, margin);
+  const left = Math.max(margin, Math.min(anchorLeft - popover.offsetWidth / 2, viewportWidth - popover.offsetWidth - margin));
+  popover.dataset.placement = prefersBottom ? "bottom" : "top";
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+  popover.style.setProperty("--preview-annotation-arrow-left", `${Math.round(anchorLeft - left)}px`);
+}
+
+function choosePreviewAnnotationTarget(candidates, rect) {
+  return new Promise(resolve => {
+    closePreviewAnnotationResolver(null);
+    const popover = document.createElement("div");
+    popover.className = "preview-annotation-resolver";
+    popover.innerHTML = `
+      <div class="preview-annotation-resolver-card">
+        <div class="preview-annotation-resolver-head">
+          <div>
+            <div class="preview-annotation-resolver-title">Куди привʼязати помітку?</div>
+            <div class="preview-annotation-resolver-hint">У превʼю знайшлося кілька схожих місць.</div>
+          </div>
+          <button class="preview-annotation-resolver-close" type="button" aria-label="Закрити">×</button>
+        </div>
+        <div class="preview-annotation-resolver-list">
+          ${candidates.map((item, index) => `
+            <button class="preview-annotation-resolver-item" type="button" data-index="${index}">
+              <span class="preview-annotation-resolver-path">${escHtml(item.filename)}</span>
+              <span class="preview-annotation-resolver-line">${escHtml(String(item.line))}${item.lineEnd && item.lineEnd !== item.line ? `-${escHtml(String(item.lineEnd))}` : ""}</span>
+            </button>
+          `).join("")}
+        </div>
+      </div>
+    `;
+    popover._resolve = resolve;
+    document.body.appendChild(popover);
+    _previewAnnotationResolverEl = popover;
+    requestAnimationFrame(() => placePreviewResolver(popover, rect));
+    popover.querySelector(".preview-annotation-resolver-close")?.addEventListener("click", () => closePreviewAnnotationResolver(null));
+    popover.querySelectorAll("[data-index]").forEach(button => {
+      button.addEventListener("click", () => {
+        const index = Number(button.getAttribute("data-index") || 0);
+        closePreviewAnnotationResolver(candidates[index] || null);
+      });
+    });
+  });
+}
+
+async function handlePreviewAnnotationRequest(payload = {}) {
+  if (s.previewMode !== "web") throw new Error("Web Preview зараз не активний.");
+  const selectedText = String(payload.text || "").trim();
+  if (selectedText.length < 3) throw new Error("Не вдалося прочитати текст із превʼю.");
+  const rect = previewPayloadRect(payload);
+  const candidates = await locateTextCandidatesInProject(selectedText, payload.heading || "");
+  if (!candidates.length) {
+    window.alert("Не вдалося знайти цей фрагмент у файлах проєкту. Спробуйте виділити трохи більше тексту або перейти з превʼю в код кліком.");
+    return false;
+  }
+  const topScore = Number(candidates[0]?.score || 0);
+  const ambiguous = candidates
+    .filter(item => Number(item.score || 0) >= topScore - 18)
+    .slice(0, 5);
+  const chosen = ambiguous.length > 1
+    ? await choosePreviewAnnotationTarget(ambiguous, rect)
+    : candidates[0];
+  if (!chosen) return false;
+  const target = {
+    fileName: chosen.filename,
+    lineStart: chosen.line,
+    lineEnd: chosen.lineEnd || chosen.line,
+    selectedText,
+  };
+  const instruction = await showAnnotationPopover({
+    title: "Помітка з превʼю",
+    hint: "Фрагмент знайдено у вихідному файлі. Напишіть, що треба змінити.",
+    target: `${target.fileName}:${target.lineStart}${target.lineEnd !== target.lineStart ? `-${target.lineEnd}` : ""}`,
+    selectedText,
+    rect,
+  });
+  if (!instruction) return false;
+  await longdoc.createAnnotationFromTarget(target, instruction, { openPanel: false });
+  return true;
 }
 
 function previewFrameOrigin() {

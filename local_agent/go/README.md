@@ -187,7 +187,7 @@ local_agent/go/scripts/install-local-agent.sh --start
 The agent can update itself and the SmartTeX VS Code extension from a
 server-published manifest:
 
-```bash
+```bash 
 smarttex-local update --server https://smart-tex.pp.ua
 ```
 

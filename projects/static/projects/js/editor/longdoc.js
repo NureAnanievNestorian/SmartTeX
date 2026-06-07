@@ -370,6 +370,12 @@ export function openAnnotationsPanel(annotationId = null) {
 export async function createAnnotationFromEditorSelection(instruction, { taskId = null, openPanel = false } = {}) {
   const draft = activeAnnotationDraft();
   if (!draft) throw new Error("Відкрийте текстовий файл, щоб створити помітку.");
+  await createAnnotationFromTarget(draft, instruction, { taskId, openPanel });
+}
+
+export async function createAnnotationFromTarget(target, instruction, { taskId = null, openPanel = false } = {}) {
+  const draft = target || null;
+  if (!draft) throw new Error("Не вдалося визначити місце для помітки.");
   if (!longdocEnabled() || !featureEnabled("annotations_enabled")) {
     throw new Error("Помітки вимкнені для цього проєкту.");
   }

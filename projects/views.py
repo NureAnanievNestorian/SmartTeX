@@ -111,6 +111,8 @@ _TINYMIST_PREVIEW_BRIDGE = """
 
   const STYLE_ID = "smarttex-preview-sync-style";
   const HIGHLIGHT_CLASS = "smarttex-preview-sync-highlight";
+  const ANNOTATE_BUTTON_ID = "smarttex-preview-annotate-button";
+  const CONTEXT_MENU_ID = "smarttex-preview-context-menu";
 
   function debugEnabled() {
     try {
@@ -156,6 +158,70 @@ _TINYMIST_PREVIEW_BRIDGE = """
         outline-offset: 4px !important;
         border-radius: 6px !important;
         transition: outline-color .18s ease;
+      }
+      #${ANNOTATE_BUTTON_ID} {
+        position: fixed;
+        z-index: 2147483647;
+        display: none;
+        align-items: center;
+        gap: 7px;
+        padding: 8px 11px;
+        border: 1px solid rgba(34,197,94,.45);
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(20,184,166,.96), rgba(34,197,94,.96));
+        color: #04130a;
+        box-shadow: 0 12px 32px rgba(0,0,0,.26), 0 0 0 1px rgba(255,255,255,.14) inset;
+        font: 700 13px/1.1 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: .01em;
+        cursor: pointer;
+        user-select: none;
+        backdrop-filter: blur(10px);
+      }
+      #${ANNOTATE_BUTTON_ID}:hover {
+        filter: brightness(1.04);
+        transform: translateY(-1px);
+      }
+      #${ANNOTATE_BUTTON_ID} svg {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+      }
+      #${CONTEXT_MENU_ID} {
+        position: fixed;
+        z-index: 2147483647;
+        display: none;
+        min-width: 188px;
+        padding: 7px;
+        border: 1px solid rgba(148,163,184,.22);
+        border-radius: 13px;
+        background: linear-gradient(145deg, rgba(31,41,55,.98), rgba(15,23,42,.98));
+        color: #e5e7eb;
+        box-shadow: 0 18px 48px rgba(0,0,0,.38);
+        font: 700 13px/1.2 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        backdrop-filter: blur(12px);
+      }
+      #${CONTEXT_MENU_ID} button {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        padding: 10px 11px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      #${CONTEXT_MENU_ID} button:hover {
+        background: rgba(34,197,94,.18);
+        color: #bbf7d0;
+      }
+      #${CONTEXT_MENU_ID} svg {
+        width: 16px;
+        height: 16px;
+        color: #22c55e;
       }
     `;
     document.head.appendChild(style);
@@ -321,9 +387,210 @@ _TINYMIST_PREVIEW_BRIDGE = """
     return "";
   }
 
+  function nearestHeadingFromNode(node) {
+    let current = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    while (current && current !== document.body) {
+      let probe = current;
+      while (probe?.previousElementSibling) {
+        probe = probe.previousElementSibling;
+        if (/^(H[1-6]|text)$/i.test(probe.tagName || "")) {
+          const text = normalize(probe.textContent || "");
+          if (text.length >= 3) return text.slice(0, 220);
+        }
+      }
+      current = current.parentElement;
+    }
+    return "";
+  }
+
+  let lastSelectionPayload = null;
+  let annotationRequestSeq = 0;
+  const pendingAnnotationRequests = new Map();
+  function ensureAnnotateButton() {
+    ensureStyle();
+    let button = document.getElementById(ANNOTATE_BUTTON_ID);
+    if (button) return button;
+    button = document.createElement("button");
+    button.id = ANNOTATE_BUTTON_ID;
+    button.type = "button";
+    button.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M7 8h10M7 12h7M20 11.5c0 4.14-3.58 7.5-8 7.5a8.7 8.7 0 0 1-3.33-.66L4 20l1.2-4.15A7.18 7.18 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Помітка</span>
+    `;
+    button.addEventListener("mousedown", event => event.preventDefault());
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!lastSelectionPayload?.text) return;
+      sendAnnotationRequest(lastSelectionPayload);
+    });
+    document.body.appendChild(button);
+    return button;
+  }
+
+  function hideAnnotateButton() {
+    const button = document.getElementById(ANNOTATE_BUTTON_ID);
+    if (button) button.style.display = "none";
+  }
+
+  function hideContextMenu() {
+    const menu = document.getElementById(CONTEXT_MENU_ID);
+    if (menu) menu.style.display = "none";
+  }
+
+  function sendAnnotationRequest(payload) {
+    if (!payload?.text) return;
+    hideAnnotateButton();
+    hideContextMenu();
+    if (window.parent === window) {
+      window.alert("Помітки з превʼю створюються з редактора SmartTeX. Відкрийте це превʼю всередині редактора.");
+      return;
+    }
+    const requestId = `preview-annotation-${Date.now()}-${++annotationRequestSeq}`;
+    const timer = setTimeout(() => {
+      if (!pendingAnnotationRequests.has(requestId)) return;
+      pendingAnnotationRequests.delete(requestId);
+      window.alert("Редактор не відповів на запит помітки. Переконайтесь, що превʼю відкрите всередині SmartTeX і перезавантажте preview.");
+    }, 1800);
+    pendingAnnotationRequests.set(requestId, timer);
+    window.parent.postMessage({
+      type: "smarttex-preview-annotation-request",
+      requestId,
+      payload,
+    }, window.location.origin);
+  }
+
+  function updateSelectionAnnotationButton() {
+    const selection = window.getSelection?.();
+    const selectedText = String(selection?.toString?.() || "").replace(/\\s+/g, " ").trim();
+    if (!selection || selection.rangeCount === 0 || selectedText.length < 3) {
+      lastSelectionPayload = null;
+      hideAnnotateButton();
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const rects = Array.from(range.getClientRects ? range.getClientRects() : []).filter(rect => rect.width > 1 && rect.height > 1);
+    const rect = rects[0] || range.getBoundingClientRect?.();
+    if (!rect || !rect.width || !rect.height) {
+      hideAnnotateButton();
+      return;
+    }
+    const button = ensureAnnotateButton();
+    const buttonWidth = 98;
+    const left = Math.max(10, Math.min(rect.left + rect.width / 2 - buttonWidth / 2, window.innerWidth - buttonWidth - 10));
+    const top = Math.max(10, rect.top - 44);
+    lastSelectionPayload = {
+      text: selectedText.slice(0, 2000),
+      heading: nearestHeadingFromNode(range.commonAncestorContainer),
+      rect: {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      },
+    };
+    button.style.left = `${Math.round(left)}px`;
+    button.style.top = `${Math.round(top)}px`;
+    button.style.display = "inline-flex";
+  }
+
+  function payloadFromContextEvent(event) {
+    const selection = window.getSelection?.();
+    const selectedText = String(selection?.toString?.() || "").replace(/\\s+/g, " ").trim();
+    if (selection && selection.rangeCount > 0 && selectedText.length >= 3) {
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect?.();
+      return {
+        text: selectedText.slice(0, 2000),
+        heading: nearestHeadingFromNode(range.commonAncestorContainer),
+        rect: rect ? {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        } : {
+          left: event.clientX,
+          top: event.clientY,
+          right: event.clientX,
+          bottom: event.clientY,
+          width: 1,
+          height: 1,
+        },
+      };
+    }
+    const text = bestClickableText(event);
+    if (text.length < 3) return null;
+    return {
+      text,
+      heading: nearestHeadingText(event),
+      rect: {
+        left: event.clientX,
+        top: event.clientY,
+        right: event.clientX,
+        bottom: event.clientY,
+        width: 1,
+        height: 1,
+      },
+    };
+  }
+
+  function ensureContextMenu() {
+    ensureStyle();
+    let menu = document.getElementById(CONTEXT_MENU_ID);
+    if (menu) return menu;
+    menu = document.createElement("div");
+    menu.id = CONTEXT_MENU_ID;
+    menu.innerHTML = `
+      <button type="button" data-action="annotate">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M7 8h10M7 12h7M20 11.5c0 4.14-3.58 7.5-8 7.5a8.7 8.7 0 0 1-3.33-.66L4 20l1.2-4.15A7.18 7.18 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Додати помітку</span>
+      </button>
+    `;
+    menu.addEventListener("mousedown", event => event.preventDefault());
+    menu.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.target?.closest?.("[data-action='annotate']")) {
+        sendAnnotationRequest(lastSelectionPayload);
+      }
+    });
+    document.body.appendChild(menu);
+    return menu;
+  }
+
+  function showContextMenu(event, payload) {
+    lastSelectionPayload = payload;
+    const menu = ensureContextMenu();
+    const width = 204;
+    const height = 54;
+    const left = Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8));
+    const top = Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8));
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.display = "block";
+  }
+
   window.addEventListener("message", event => {
     if (event.origin !== window.location.origin) return;
     const data = event.data || {};
+    if (data?.type === "smarttex-preview-annotation-response") {
+      const requestId = String(data.requestId || "");
+      const timer = pendingAnnotationRequests.get(requestId);
+      if (timer) clearTimeout(timer);
+      pendingAnnotationRequests.delete(requestId);
+      if (data.status === "failed" && data.message) {
+        window.alert(String(data.message));
+      }
+      return;
+    }
     if (data?.type !== "smarttex-preview-reveal") return;
     const payload = data.payload || {};
     debug("reveal request", payload);
@@ -341,6 +608,8 @@ _TINYMIST_PREVIEW_BRIDGE = """
   });
 
   document.addEventListener("click", event => {
+    if (event.target?.closest?.("#" + ANNOTATE_BUTTON_ID)) return;
+    hideContextMenu();
     const visualOnly = isVisualOnlyTarget(event);
     if (visualOnly || !isTextNavigationTarget(event)) {
       debug("click ignored visual target", event.target);
@@ -360,6 +629,24 @@ _TINYMIST_PREVIEW_BRIDGE = """
       payload
     }, window.location.origin);
   }, true);
+
+  document.addEventListener("contextmenu", event => {
+    const payload = payloadFromContextEvent(event);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation();
+    showContextMenu(event, payload);
+  }, true);
+
+  document.addEventListener("mouseup", () => setTimeout(updateSelectionAnnotationButton, 0), true);
+  document.addEventListener("keyup", event => {
+    if (event.key === "Escape") {
+      hideAnnotateButton();
+      hideContextMenu();
+    }
+    else setTimeout(updateSelectionAnnotationButton, 0);
+  }, true);
+  document.addEventListener("selectionchange", () => setTimeout(updateSelectionAnnotationButton, 80));
 
   debug("bridge ready");
   window.parent.postMessage({ type: "smarttex-preview-ready" }, window.location.origin);
