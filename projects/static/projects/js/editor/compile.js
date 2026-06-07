@@ -11,7 +11,15 @@ const { api } = apiMod;
 const { getContent, saveTabState, activateTab, hasTabState, getTabStateContent, setEditorDiagnostics, replaceContentPreservingViewport } = cm;
 const { utf8ByteSize, refreshOpenAsset } = files;
 const { setSaveHint, setCompileState, openLog, parseDiagnostics, renderDiagnostics } = ui;
-const { loadPdfViewer, pdfEmpty, getPreviewMode, resyncTypstPreview, refreshTypstPreviewStatus } = pdfviewer;
+const {
+  loadPdfViewer,
+  pdfEmpty,
+  getPreviewMode,
+  resyncTypstPreview,
+  refreshTypstPreviewFromProjectUpdate,
+  refreshTypstPreviewStatus,
+  syncPreviewMemoryFile,
+} = pdfviewer;
 
 const openPdfLink = document.getElementById("open-pdf");
 const logEl       = document.getElementById("log");
@@ -32,6 +40,13 @@ function syncTabContent(name, text, filename) {
     return;
   }
   activateTab(name, text, targetFilename, true, !!s.activeTabName);
+}
+
+function syncTypstPreviewMemoryIfNeeded(filename, content) {
+  const name = String(filename || "");
+  if (s.projectMeta?.markup_type !== "typst" || !name.toLowerCase().endsWith(".typ")) return;
+  if (getPreviewMode() !== "web") return;
+  syncPreviewMemoryFile(name, String(content || ""));
 }
 
 function applyLocalWorkspaceUpdate(localWorkspace) {
@@ -294,12 +309,14 @@ async function handleMcpUpdate() {
   try {
     if (!s.hasUnsavedChanges && !s.saving) {
       await loadMainFile();
+      syncTypstPreviewMemoryIfNeeded(s.mainFileName, s.mainFileContent);
       // Refresh non-main text file if currently open
       if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
         try {
           const params = new URLSearchParams({ include_text: "1" });
           const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
           syncTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
+          syncTypstPreviewMemoryIfNeeded(s.selectedFile.name, fd.text_content || "");
           s.hasUnsavedChanges = false;
         } catch (_) {}
       }
@@ -309,6 +326,7 @@ async function handleMcpUpdate() {
     await Promise.all([loadFiles(), loadVersions(true)]);
     refreshOpenAsset();
     await pollUntilCompileDone();
+    await refreshTypstPreviewFromProjectUpdate();
   } catch (err) {
     setSaveHint(`MCP: помилка оновлення: ${err.message}`, "error");
   }
@@ -325,11 +343,13 @@ async function handleProjectUpdate(source = "web") {
     // jumps in the normal post-compile case where content is already in sync.
     if (!s.hasUnsavedChanges && !s.saving) {
       await main.loadMainFile();
+      syncTypstPreviewMemoryIfNeeded(s.mainFileName, s.mainFileContent);
       if (s.selectedFile?.is_text && !s.selectedFile?.is_dir && s.selectedFile?.name !== s.mainFileName) {
         try {
           const params = new URLSearchParams({ include_text: "1" });
           const fd = await api(`/api/projects/${cfg.projectId}/files/${encodeURIComponent(s.selectedFile.name)}/content/?${params}`);
           syncTabContent(s.selectedFile.name, fd.text_content || "", s.selectedFile.name);
+          syncTypstPreviewMemoryIfNeeded(s.selectedFile.name, fd.text_content || "");
           s.hasUnsavedChanges = false;
         } catch (_) {}
       }
@@ -343,6 +363,7 @@ async function handleProjectUpdate(source = "web") {
     refreshOpenAsset();
     if (source === "mcp") {
       await pollUntilCompileDone();
+      await refreshTypstPreviewFromProjectUpdate();
       return;
     }
     await main.refreshLivePdfPreview();

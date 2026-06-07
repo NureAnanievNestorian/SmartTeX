@@ -539,6 +539,42 @@ export async function refreshTypstPreview(force = false) {
   applyPreviewModeUi();
 }
 
+async function restartTypstPreviewSessionForProjectUpdate() {
+  if (!typstPreviewEnabled() || s.previewMode !== "web") return false;
+  if (localRuntime.isLocalRuntimeActive()) {
+    const local = localRuntime.localRuntimeConfig();
+    const params = new URLSearchParams({
+      project_id: String(cfg.projectId || ""),
+      theme: currentPreviewThemeParam(),
+    });
+    const response = await fetch(`${local.url}/v1/preview/refresh?${params.toString()}`, {
+      method: "POST",
+      headers: { "X-SmartTeX-Local-Secret": local.secret || "" },
+    });
+    if (!response.ok) throw new Error(`Local preview refresh failed: HTTP ${response.status}`);
+    const payload = await response.json().catch(() => ({}));
+    if (payload.root_uri) _localPreviewRootUri = String(payload.root_uri || "");
+    return Boolean(payload.restarted);
+  }
+  await api(`/api/projects/${cfg.projectId}/typst-preview/restart/`, {
+    method: "POST",
+    body: JSON.stringify({ theme: currentPreviewThemeParam() }),
+  });
+  return true;
+}
+
+export async function refreshTypstPreviewFromProjectUpdate() {
+  if (!typstPreviewEnabled() || s.previewMode !== "web") return;
+  try {
+    await restartTypstPreviewSessionForProjectUpdate();
+  } catch (err) {
+    previewDebug("preview restart after project update failed; falling back to iframe refresh", err);
+  }
+  await refreshTypstPreview(true);
+  setTimeout(() => resyncTypstPreview({ reveal: false }), 220);
+  setTimeout(() => resyncTypstPreview({ reveal: false }), 900);
+}
+
 function normalizePreviewText(text) {
   return String(text || "")
     .replace(/\s+/g, " ")
