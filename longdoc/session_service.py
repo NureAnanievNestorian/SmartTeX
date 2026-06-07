@@ -258,10 +258,44 @@ def _append_to_file(
     *,
     content: str,
     anchor_section: str | None = None,
+    anchor_after: str | None = None,
+    anchor_before: str | None = None,
     project: Project | None = None,
 ) -> dict[str, Any]:
+    if not isinstance(content, str):
+        raise SessionWriteError(error="INVALID_CONTENT", message="content must be a string")
     existing = path.read_text(encoding="utf-8", errors="ignore")
-    if anchor_section and project:
+    if anchor_after is not None or anchor_before is not None:
+        if anchor_after is not None and anchor_before is not None:
+            raise SessionWriteError(
+                error="INVALID_PARAMS",
+                message="append_to_file accepts only one of anchor_after or anchor_before.",
+                suggestion="Use exactly one anchor direction.",
+            )
+        anchor = str(anchor_after if anchor_after is not None else anchor_before)
+        if not anchor.strip():
+            raise SessionWriteError(error="INVALID_PARAMS", message="append_to_file anchor cannot be empty.")
+        lines = existing.splitlines(keepends=True)
+        matches = [idx for idx, line in enumerate(lines) if anchor.strip() in line]
+        if len(matches) != 1:
+            if matches:
+                message = f"Anchor appears {len(matches)} times in {path.name}; exact-once match required."
+                suggestion = "Choose a unique anchor line."
+            else:
+                message = f"Anchor was not found in {path.name}; file may have changed since it was read."
+                suggestion = "Re-read the file and choose an exact existing line as the append anchor."
+            raise SessionWriteError(
+                error="ANCHOR_MISMATCH",
+                message=message,
+                status_code=409,
+                suggestion=f"{suggestion} Anchor: {anchor[:200]}",
+            )
+        insertion = content if content.endswith("\n") else content + "\n"
+        idx = matches[0]
+        insert_at = idx + 1 if anchor_after is not None else idx
+        updated = "".join(lines[:insert_at] + [insertion] + lines[insert_at:])
+        appended_at = insert_at + 1
+    elif anchor_section and project:
         chunks = _split_source_sections(project, existing)
         target = next(
             (c for c in chunks if c.title.strip().lower() == anchor_section.strip().lower()),

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.http import JsonResponse
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
@@ -99,6 +100,22 @@ class ProjectTypstSupportTests(TestCase):
         self.assertEqual(project.markup_type, MarkupType.TYPST)
         self.assertEqual(read_source_content(project), "= Template\n")
         self.assertEqual(project.project_mode, Project.ProjectMode.LEGACY)
+
+    def test_editor_upload_accepts_puml_files_as_text_assets(self) -> None:
+        project = Project.objects.create(owner=self.user, title="PUML Upload", markup_type=MarkupType.TYPST)
+        upload = SimpleUploadedFile(
+            "flow.puml",
+            b"@startuml\nAlice -> Bob: hello\n@enduml\n",
+            content_type="text/plain",
+        )
+
+        response = self.client.post(f"/api/projects/{project.id}/files/", data={"file": upload})
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["name"], "flow.puml")
+        self.assertTrue(payload["is_text"])
+        self.assertEqual((source_file_path(project).parent / "flow.puml").read_text(encoding="utf-8"), "@startuml\nAlice -> Bob: hello\n@enduml\n")
 
     def test_project_detail_exposes_small_model_quota_warning_for_enabled_project(self) -> None:
         from decimal import Decimal

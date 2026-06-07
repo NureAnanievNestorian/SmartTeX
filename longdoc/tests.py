@@ -926,6 +926,25 @@ class AISessionServiceTests(TestCase):
         content = (Path(session.worktree_path) / "main.tex").read_text()
         self.assertIn("appended comment", content)
 
+    def test_write_append_to_file_supports_anchor_after(self) -> None:
+        from longdoc.session_service import create_session, write_to_session
+
+        session = create_session(self.project, goal="Append after anchor")
+        target = Path(session.worktree_path) / "main.tex"
+        target.write_text("before\n% anchor line\nafter\n", encoding="utf-8")
+
+        result = write_to_session(
+            session,
+            "main.tex",
+            op="append_to_file",
+            content="% inserted\n",
+            anchor_after="% anchor line",
+            change_summary="Append after anchor",
+        )
+
+        self.assertEqual(result["appended_at_line"], 3)
+        self.assertEqual(target.read_text(encoding="utf-8"), "before\n% anchor line\n% inserted\nafter\n")
+
     def test_write_commits_change_to_session_branch(self) -> None:
         from projects.services import _run_project_git
         from longdoc.session_service import create_session, write_to_session

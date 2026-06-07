@@ -24,7 +24,7 @@ export function setFileContextMenuRef(fn) { _openFileContextMenu = fn; }
 const FTYPE_MAP = {
   typ: "ft-typ", tex: "ft-tex", sty: "ft-tex", cls: "ft-tex",
   md: "ft-md", pdf: "ft-pdf", yaml: "ft-yaml", yml: "ft-yaml",
-  json: "ft-json", bib: "ft-bib", csl: "ft-csl",
+  json: "ft-json", bib: "ft-bib", csl: "ft-csl", puml: "ft-data",
   png: "ft-img", jpg: "ft-img", jpeg: "ft-img", gif: "ft-img",
   svg: "ft-img", webp: "ft-img", csv: "ft-data", txt: "ft-txt",
 };
@@ -42,7 +42,7 @@ export function isImageFile(file) {
 
 export function isTextFile(file) {
   const name = String(file?.name || "").toLowerCase();
-  const textExts = /\.(tex|typ|bib|md|txt|yaml|yml|json|sty|cls|csl|csv|tsv|html|htm|xml|toml|ini|cfg|conf|sh|py|js|ts)$/;
+  const textExts = /\.(tex|typ|bib|md|txt|yaml|yml|json|sty|cls|csl|csv|tsv|puml|html|htm|xml|toml|ini|cfg|conf|sh|py|js|ts)$/;
   return textExts.test(name) || (String(file?.type || "").startsWith("text/"));
 }
 
