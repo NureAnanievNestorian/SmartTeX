@@ -117,6 +117,25 @@ class ProjectTypstSupportTests(TestCase):
         self.assertTrue(payload["is_text"])
         self.assertEqual((source_file_path(project).parent / "flow.puml").read_text(encoding="utf-8"), "@startuml\nAlice -> Bob: hello\n@enduml\n")
 
+    def test_multipart_upload_uses_explicit_target_filename(self) -> None:
+        project = Project.objects.create(owner=self.user, title="Nested Upload", markup_type=MarkupType.TYPST)
+        upload = SimpleUploadedFile(
+            "clipboard.png",
+            b"\x89PNG\r\n\x1a\n",
+            content_type="image/png",
+        )
+
+        response = self.client.post(
+            f"/api/projects/{project.id}/files/",
+            data={"file": upload, "filename": "assets/pasted-image.png"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["name"], "assets/pasted-image.png")
+        self.assertTrue((source_file_path(project).parent / "assets" / "pasted-image.png").exists())
+        self.assertFalse((source_file_path(project).parent / "clipboard.png").exists())
+
     def test_project_detail_exposes_small_model_quota_warning_for_enabled_project(self) -> None:
         from decimal import Decimal
         project = Project.objects.create(owner=self.user, title="Quota Warning", markup_type=MarkupType.TYPST)

@@ -1503,7 +1503,8 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
 
     if request.FILES.get("file"):
         upload = request.FILES["file"]
-        upload_ext = _ext_from_name(getattr(upload, "name", ""))
+        upload_name = str(request.POST.get("filename") or getattr(upload, "name", "")).strip()
+        upload_ext = _ext_from_name(upload_name)
 
         if upload_ext == ".zip":
             try:
@@ -1519,9 +1520,9 @@ def api_project_assets(request: HttpRequest, project_id: int) -> JsonResponse:
         try:
             if upload_ext in TEXT_EXTENSIONS:
                 text_content = upload.read().decode("utf-8")
-                asset = create_project_text_file(project, upload.name, text_content)
+                asset = create_project_text_file(project, upload_name, text_content)
             else:
-                asset = save_project_asset(project, upload.name, upload.read())
+                asset = save_project_asset(project, upload_name, upload.read())
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=400)
         project.last_status = Project.CompileStatus.PENDING

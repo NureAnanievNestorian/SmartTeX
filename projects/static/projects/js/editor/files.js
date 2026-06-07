@@ -522,25 +522,19 @@ export async function uploadFile(file, targetFolderPath = "") {
     throw new Error("Allowed uploads: images, PDFs, and supported text files");
   }
   const uploadName = joinProjectPath(String(targetFolderPath || "").replace(/\/+$/, ""), pathBaseName(file.name));
-  let uploadFileObj = file;
-  if (uploadName && uploadName !== file.name) {
-    try {
-      uploadFileObj = new File([file], uploadName, {
-        type: file.type || "application/octet-stream",
-        lastModified: file.lastModified || Date.now(),
-      });
-    } catch (_) {}
-  }
-  const fd = new FormData(); fd.append("file", uploadFileObj);
-  await api(`/api/projects/${cfg.projectId}/files/`, { method: "POST", body: fd });
-  setSaveHint(`Завантажено: ${uploadName || file.name}`, "saved");
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("filename", uploadName || pathBaseName(file.name));
+  const asset = await api(`/api/projects/${cfg.projectId}/files/`, { method: "POST", body: fd });
+  setSaveHint(`Завантажено: ${asset?.name || uploadName || file.name}`, "saved");
+  return asset;
 }
 
 export async function uploadImageWithRename(file, targetFolderPath = "") {
   const basePath = String(targetFolderPath || "").replace(/\/+$/, "");
-  await uploadFile(file, basePath);
+  const asset = await uploadFile(file, basePath);
   const { showRenameDialog } = await import("./ui.js");
-  const uploadedName = joinProjectPath(basePath, pathBaseName(file.name));
+  const uploadedName = String(asset?.name || joinProjectPath(basePath, pathBaseName(file.name)));
   const newName = await showRenameDialog(pathBaseName(uploadedName));
   if (!newName) return uploadedName;
   const trimmed = newName.trim();
