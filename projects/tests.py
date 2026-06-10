@@ -31,7 +31,7 @@ from projects.services import (
     split_typst_sections,
     synctex_line_to_pdf,
 )
-from projects.typst_auto_generated import inject_auto_import_into_reachable_typst, remove_auto_imports_from_all_typst
+from projects.typst_auto_generated import remove_auto_imports_from_all_typst, sync_auto_import_for_typst_symbol
 from templates_lib.models import Template
 from templates_lib.services import compile_template_preview, create_template_from_project, template_preview_dir
 
@@ -964,12 +964,13 @@ class ProjectTypstSupportTests(TestCase):
         self.assertEqual(warning_diags[0]["severity"], "warning")
         self.assertEqual(latex_diags[0]["line"], 42)
 
-    def test_pdf_embed_import_is_injected_into_reachable_typst_tree_only(self) -> None:
+    def test_pdf_embed_import_is_injected_only_where_symbol_is_used(self) -> None:
         project = Project.objects.create(owner=self.user, title="PDF Embed Reachable", markup_type=MarkupType.TYPST)
         root = source_file_path(project).parent
         (root / "sections").mkdir(parents=True, exist_ok=True)
+        auto_block = f"// smarttex:auto-begin\n{_IMPORT_LINE}\n// smarttex:auto-end\n"
         (root / "main.typ").write_text(
-            '#include "sections/a.typ"\n',
+            auto_block + '#include "sections/a.typ"\n',
             encoding="utf-8",
         )
         (root / "sections" / "a.typ").write_text(
@@ -985,9 +986,9 @@ class ProjectTypstSupportTests(TestCase):
             encoding="utf-8",
         )
 
-        inject_auto_import_into_reachable_typst(project, root, _IMPORT_LINE)
+        sync_auto_import_for_typst_symbol(project, root, _IMPORT_LINE, "smarttex-include-pdf")
 
-        self.assertIn(_IMPORT_LINE, (root / "main.typ").read_text(encoding="utf-8"))
+        self.assertNotIn(_IMPORT_LINE, (root / "main.typ").read_text(encoding="utf-8"))
         self.assertIn(_IMPORT_LINE, (root / "sections" / "a.typ").read_text(encoding="utf-8"))
         self.assertIn(_IMPORT_LINE, (root / "sections" / "b.typ").read_text(encoding="utf-8"))
         self.assertNotIn(_IMPORT_LINE, (root / "orphan.typ").read_text(encoding="utf-8"))

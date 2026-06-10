@@ -60,6 +60,22 @@ def inject_auto_import_into_reachable_typst(project: Any, workdir: Path, import_
         _inject_block_into_file(path, block)
 
 
+def sync_auto_import_for_typst_symbol(project: Any, workdir: Path, import_line: str, symbol: str) -> None:
+    block = build_auto_import_block(import_line)
+    reachable = set(reachable_typst_sources(project, workdir))
+    symbol_call_re = re.compile(rf"(?:#\s*)?{re.escape(symbol)}\s*\(")
+
+    for path in _iter_project_typ_files(workdir):
+        if not path.exists():
+            continue
+        content = path.read_text(encoding="utf-8")
+        clean = _AUTO_BLOCK_RE.sub("", content)
+        should_import = path in reachable and bool(symbol_call_re.search(clean))
+        next_content = block + clean if should_import else clean
+        if next_content != content:
+            path.write_text(next_content, encoding="utf-8")
+
+
 def remove_auto_imports_from_all_typst(workdir: Path) -> None:
     for path in _iter_project_typ_files(workdir):
         _remove_block_from_file(path)

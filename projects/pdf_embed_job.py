@@ -8,8 +8,8 @@ from typing import Any
 
 from projects.pre_compile import PreCompileJob, PreCompileResult, register
 from projects.typst_auto_generated import (
-    inject_auto_import_into_reachable_typst,
     remove_auto_imports_from_all_typst,
+    sync_auto_import_for_typst_symbol,
 )
 
 _MANIFEST_PATH = ".smarttex/pdf_includes.json"
@@ -162,7 +162,7 @@ class PdfEmbedJob(PreCompileJob):
 
         if page_map:
             _generate_helper(workdir, page_map)
-            inject_auto_import_into_reachable_typst(project, workdir, _IMPORT_LINE)
+            sync_auto_import_for_typst_symbol(project, workdir, _IMPORT_LINE, "smarttex-include-pdf")
 
         if manifest_dirty:
             save_manifest(workdir, manifest)
