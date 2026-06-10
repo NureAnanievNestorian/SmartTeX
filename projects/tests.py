@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from SmartTeX.markup import MarkupType
 from projects.models import LocalCompileJob, Project, ProjectLocalRuntime, ProjectLocalWorkspaceLease, ProjectVersion
-from projects.pdf_embed_job import _IMPORT_LINE
+from projects.pdf_embed_job import _HELPER_PATH, _IMPORT_LINE, _generate_helper
 from small_model.models import ProjectSmallModelSettings, UserSmallModelAccess, UserSmallModelQuota
 from projects.services import (
     analyze_typst_project_import,
@@ -928,6 +928,19 @@ class ProjectTypstSupportTests(TestCase):
             result = compile_template_preview(template)
 
         self.assertEqual(result.status, "success")
+
+    def test_pdf_embed_helper_supports_fit_first_page(self) -> None:
+        project = Project.objects.create(owner=self.user, title="PDF Fit First Page", markup_type=MarkupType.TYPST)
+        root = source_file_path(project).parent
+
+        _generate_helper(root, {"docs/sample.pdf": [".smarttex/cache/pdf-pages/sample/page-001.jpg"]})
+
+        helper = root / _HELPER_PATH
+        content = helper.read_text(encoding="utf-8")
+        self.assertIn("fit-first-page: false", content)
+        self.assertIn("if fit-first-page and idx == 0", content)
+        self.assertIn("height: 1fr", content)
+        self.assertIn('fit: "contain"', content)
 
     def test_parse_compile_diagnostics_extracts_typst_and_latex_locations(self) -> None:
         typst_project = Project.objects.create(owner=self.user, title="Typst Parse", markup_type=MarkupType.TYPST)

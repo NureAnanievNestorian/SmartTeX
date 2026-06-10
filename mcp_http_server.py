@@ -1635,7 +1635,9 @@ async def set_pdf_embed(
 
     After enabling, insert pages into the document with:
         #smarttex-include-pdf("path/to/file.pdf")
-    Optional params: `width` (default `100%`), `pages` (list of 1-based page numbers).
+    Optional params: `width` (default `100%`), `pages` (list of 1-based page numbers),
+    `fit-first-page: true` to stretch the first embedded page into the remaining
+    height of the current Typst page.
 
     `file` — project-relative path to the PDF, e.g. `"appendix/paper.pdf"`.
     `enabled` — `true` to enable embedding, `false` to disable.
@@ -1667,7 +1669,8 @@ async def set_pdf_embed(
     if enabled:
         result["next_step"] = (
             f'Pages will be rendered on next compile. '
-            f'Insert into document with: #smarttex-include-pdf("{file}")'
+            f'Insert into document with: #smarttex-include-pdf("{file}") '
+            f'or #smarttex-include-pdf("{file}", fit-first-page: true)'
         )
     return result
 
