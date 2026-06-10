@@ -2750,8 +2750,8 @@ async function acceptSession() {
   const message = acceptCompileErrors
     ? "Ця запропонована зміна зараз не компілюється. Прийняти її попри помилки? PDF може не оновитися, доки помилки не будуть виправлені вручну."
     : "Прийняти запропоновану зміну? Її буде об'єднано з проєктом.";
+  closeSessionDiffModal();
   if (!(await showConfirm(message))) return;
-  closeSessionDiffModal()
   try {
     const payload = await api(`/api/projects/${cfg.projectId}/change-proposals/accept/`, {
       method: "POST",
