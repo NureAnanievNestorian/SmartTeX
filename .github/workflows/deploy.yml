@@ -107,6 +107,8 @@ jobs:
             docker compose -f docker-compose.prod.yml pull web mcp
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            docker image prune -af
+            # This VPS hosts other projects too. Remove only dangling layers;
+            # never prune tagged images belonging to unrelated deployments.
+            docker image prune -f
 
             echo "Deployment completed successfully"
