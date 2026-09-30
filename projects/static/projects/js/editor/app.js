@@ -39,6 +39,7 @@ const {
   saveCurrentFile, compileProject, updateCompileArtifacts,
   pollCompileStatus, connectProjectUpdatesSse, deleteCurrentProject,
   renameCurrentProject, setOutlineLocationRef, openCreateTemplateDialog,
+  duplicateCurrentProject,
 } = compile;
 
 // ── LSP cross-file navigation callback ───────────────────────────────────────
@@ -1796,6 +1797,7 @@ export function initEditorApp() {
   document.getElementById("menu-file-new-folder")?.addEventListener("click", () => { closeTopMenus(); handleCreateFolder().catch(err => setSaveHint(`Помилка: ${err.message}`, "error")); });
   document.getElementById("menu-file-save")?.addEventListener("click", () => { closeTopMenus(); saveCurrentFile().catch(() => {}); });
   document.getElementById("menu-file-close-tab")?.addEventListener("click", () => { closeTopMenus(); closeActiveTab(); });
+  document.getElementById("menu-file-duplicate-project")?.addEventListener("click", () => { closeTopMenus(); duplicateCurrentProject(); });
   document.getElementById("menu-edit-undo")?.addEventListener("click", () => { closeTopMenus(); runUndo(); });
   document.getElementById("menu-edit-redo")?.addEventListener("click", () => { closeTopMenus(); runRedo(); });
   document.getElementById("menu-edit-command-palette")?.addEventListener("click", () => { closeTopMenus(); openCommandPalette(); });

@@ -178,6 +178,7 @@ export async function saveCurrentFile(opts = {}) {
     }
   } catch (err) {
     setSaveHint(`Помилка: ${err.message}`, "error");
+    if (opts.throwOnError) throw err;
   } finally {
     s.saving = false;
     if (s.saveQueued || s.hasUnsavedChanges) {
@@ -194,6 +195,28 @@ export async function waitUntilSaveIdle(maxWaitMs = 4000) {
   const startedAt = Date.now();
   while (s.saving && Date.now() - startedAt < maxWaitMs) {
     await new Promise(res => setTimeout(res, 60));
+  }
+}
+
+export async function duplicateCurrentProject() {
+  const button = document.getElementById("menu-file-duplicate-project");
+  if (cfg.sessionReview || button?.disabled) return;
+  if (button) button.disabled = true;
+  try {
+    clearTimeout(s.saveTimer);
+    await waitUntilSaveIdle();
+    if (s.saving) throw new Error("Дочекайтеся завершення збереження та спробуйте ще раз.");
+    if (s.hasUnsavedChanges) {
+      if (s.longdoc.activeSession) throw new Error("Спочатку збережіть зміни в редакторі.");
+      await saveCurrentFile({ throwOnError: true });
+      if (s.hasUnsavedChanges) throw new Error("Є незбережені зміни. Спробуйте ще раз після збереження.");
+    }
+    setSaveHint("Створення копії…", "saving");
+    const result = await api(`/api/projects/${cfg.projectId}/duplicate/`, { method: "POST" });
+    window.location.assign(result.url);
+  } catch (err) {
+    setSaveHint(`Помилка: ${err.message}`, "error");
+    if (button) button.disabled = false;
   }
 }
 

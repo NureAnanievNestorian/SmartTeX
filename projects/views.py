@@ -29,6 +29,7 @@ from templates_lib.models import Template
 from templates_lib.services import normalize_template_main_file
 
 from .models import GitHubInstallation, LocalCompileJob, Project, ProjectLocalRuntime, ProjectLocalWorkspaceLease, ProjectVersion
+from .duplication import duplicate_project
 from .services import (
     ALLOWED_UPLOAD_EXTENSIONS,
     build_project_zip,
@@ -1250,6 +1251,23 @@ def api_projects(request: HttpRequest) -> JsonResponse:
             initialize_longdoc_from_template(project, template_obj)
     _compile_project_after_create(project)
     return JsonResponse(_project_payload(project, user), status=201)
+
+
+@require_http_methods(["POST"])
+def api_project_duplicate(request: HttpRequest, project_id: int) -> JsonResponse:
+    user = get_api_user(request)
+    if not user:
+        return _unauthorized()
+    source = _project_with_owner(project_id, user)
+    try:
+        project = duplicate_project(source)
+    except (OSError, ValueError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    return JsonResponse({
+        "id": project.id,
+        "title": project.title,
+        "url": f"/projects/{project.id}/",
+    }, status=201)
 
 
 @csrf_exempt

@@ -14,6 +14,7 @@ from .views import (
     api_project_create_template,
     api_project_download_zip,
     api_project_detail,
+    api_project_duplicate,
     api_project_file,
     api_project_github_sync,
     api_project_insert,
@@ -52,6 +53,7 @@ from .views import (
 urlpatterns = [
     path("projects/", api_projects),
     path("projects/<int:project_id>/", api_project_detail),
+    path("projects/<int:project_id>/duplicate/", api_project_duplicate),
     path("projects/<int:project_id>/file/", api_project_file),
     path("projects/<int:project_id>/search/", api_project_search),
     path("projects/<int:project_id>/read-window/", api_project_read_window),
