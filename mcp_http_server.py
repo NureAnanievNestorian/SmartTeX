@@ -999,6 +999,13 @@ mcp = FastMCP(
     - Never mix LaTeX and Typst syntax in one file.
     - The active main source file is `main_file_name` from project metadata (defaults to `main.tex` or `main.typ`).
 
+    ### Project lifecycle
+    - Use list_templates then create_project_from_template to create a project.
+    - Use duplicate_project to copy current files and data without history;
+      optionally rename_project on the returned id to change its default title.
+    - These three lifecycle tools do not require prepare_document_work. After
+      creation/copying, use the returned id and URL for further work.
+
     ### Preparation before write workflows — mandatory
     Call `prepare_document_work(project_id, user_request)` BEFORE any
     document/project write workflow. This includes every proposal, every
@@ -1213,6 +1220,47 @@ def list_projects(project_id: int | None = None, name_query: str | None = None) 
         results.append(project)
 
     return results
+
+
+def _project_title(title: str) -> str:
+    title = title.strip()
+    if not title or len(title) > 255:
+        raise ValueError("title must contain 1–255 characters")
+    return title
+
+
+@mcp.tool
+def duplicate_project(project_id: int) -> dict[str, Any]:
+    """Copy an explicitly selected project's current files, assistant data and
+    settings into a new project, without history or AI sessions. Default title:
+    'Копія — <original title>'. GitHub sync and local-runtime connections remain
+    disabled. Returns new id and URL; use rename_project to change the title.
+    No prepare_document_work required. Use the returned id for subsequent work.
+    """
+    payload = _call("POST", f"/api/projects/{project_id}/duplicate/")
+    return {**payload, "url": _absolute_url(payload.get("url"))}
+
+
+@mcp.tool
+def rename_project(project_id: int, title: str) -> dict[str, Any]:
+    """Rename an explicitly selected project, preserving its files and data.
+    title must contain 1–255 characters. Returns project metadata and URL.
+    This lifecycle operation does not require prepare_document_work.
+    """
+    payload = _call("PATCH", f"/api/projects/{project_id}/", {"title": _project_title(title)})
+    return {**payload, "url": _absolute_url(f"/projects/{payload['id']}/")}
+
+
+@mcp.tool
+def create_project_from_template(template_id: int, title: str) -> dict[str, Any]:
+    """Create a project from an active template selected using list_templates.
+    Copies template files and assistant defaults, using its markup and main file.
+    title must contain 1–255 characters. Returns new project metadata and URL.
+    Do not select a template on the user's behalf when unclear. No
+    prepare_document_work required. Use the returned id for subsequent work.
+    """
+    payload = _call("POST", "/api/projects/", {"template_id": template_id, "title": _project_title(title)})
+    return {**payload, "url": _absolute_url(f"/projects/{payload['id']}/")}
 
 
 @mcp.tool

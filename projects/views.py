@@ -15,7 +15,7 @@ from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseForbidden, HttpResponseNotFound, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_http_methods
 from asgiref.sync import async_to_sync
 
@@ -1253,8 +1253,17 @@ def api_projects(request: HttpRequest) -> JsonResponse:
     return JsonResponse(_project_payload(project, user), status=201)
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def api_project_duplicate(request: HttpRequest, project_id: int) -> JsonResponse:
+    # Bearer-authenticated MCP calls have no CSRF cookie; browser sessions still
+    # need CSRF validation.
+    if getattr(request, "user", None) and request.user.is_authenticated:
+        return csrf_protect(_duplicate_project_response)(request, project_id)
+    return _duplicate_project_response(request, project_id)
+
+
+def _duplicate_project_response(request: HttpRequest, project_id: int) -> JsonResponse:
     user = get_api_user(request)
     if not user:
         return _unauthorized()

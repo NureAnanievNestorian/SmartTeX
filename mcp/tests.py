@@ -23,6 +23,33 @@ for _base in site.getsitepackages():
 import mcp_http_server as server
 
 
+class ProjectLifecycleToolTests(SimpleTestCase):
+    def test_duplicate_returns_new_project_and_absolute_url(self):
+        with patch.object(server, "_call", return_value={"id": 42, "title": "Копія — Lab", "url": "/projects/42/"}) as call, patch.object(server, "PUBLIC_BASE_URL", "https://smart-tex.pp.ua"):
+            result = server.duplicate_project(7)
+        call.assert_called_once_with("POST", "/api/projects/7/duplicate/")
+        self.assertEqual(result["id"], 42)
+        self.assertEqual(result["url"], "https://smart-tex.pp.ua/projects/42/")
+
+    def test_rename_and_create_use_existing_backend_operations(self):
+        with patch.object(server, "_call", return_value={"id": 42}) as call:
+            server.rename_project(42, "  New title  ")
+            call.assert_called_once_with("PATCH", "/api/projects/42/", {"title": "New title"})
+        with patch.object(server, "_call", return_value={"id": 43}) as call:
+            result = server.create_project_from_template(3, "Lab")
+            call.assert_called_once_with("POST", "/api/projects/", {"template_id": 3, "title": "Lab"})
+            self.assertEqual(result["id"], 43)
+
+    def test_invalid_titles_do_not_reach_backend(self):
+        with patch.object(server, "_call") as call:
+            for title in ("", "   ", "a" * 256):
+                with self.assertRaises(ValueError):
+                    server.rename_project(1, title)
+                with self.assertRaises(ValueError):
+                    server.create_project_from_template(1, title)
+            call.assert_not_called()
+
+
 class ControlledMCPToolTests(SimpleTestCase):
     def setUp(self) -> None:
         super().setUp()

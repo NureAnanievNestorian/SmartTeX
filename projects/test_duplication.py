@@ -19,6 +19,14 @@ from .services import project_dir
 
 
 class ProjectDuplicationTests(TestCase):
+    def test_mcp_bearer_authentication_without_csrf_cookie(self):
+        from accounts.models import MCPToken
+        token = MCPToken.objects.create(user=self.user, token=MCPToken.issue_token())
+        client = Client(enforce_csrf_checks=True)
+        response = client.post(self.url, HTTP_AUTHORIZATION=f"Bearer {token.token}")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(Project.objects.get(pk=response.json()["id"]).owner, self.user)
+
     def setUp(self):
         media = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(override_settings(MEDIA_ROOT=Path(media)))
